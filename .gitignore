@@ -1,0 +1,26 @@
+# pi agent task state (ephemeral)
+.pi/todos/
+
+# build artifacts / archives
+*.tar
+*.tgz
+*.tar.gz
+*.zip
+
+# language / tooling junk
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+build/
+
+# editor / OS
+.DS_Store
+*.swp
+*.swo
+*~
+
+# pi-lens cache (regenerated)
+.pi-lens/

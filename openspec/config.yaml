@@ -1,0 +1,24 @@
+schema: spec-driven
+
+context: |
+  Project: open-webui-terminal2cloudflarecompute
+  Goal: back Open WebUI's "Open Terminal" integration with a runtime derived from
+        Cloudflare's open-source `computer` (github.com/cloudflare/computer), running
+        on PLAIN infrastructure (MicroK8s + Docker/containerd) with NO Cloudflare-
+        proprietary dependencies (no Containers-for-Workers, no Durable Objects).
+  Hard constraints:
+    - Full per-USER isolation (must). Per-CHAT isolation (ideal).
+    - Reuse computerd (in-container FUSE+exec daemon), dofs (SQLite VFS), capnweb (rpc)
+      VERBATIM, vendored under MIT. Do NOT depend on the Cloudflare host facade.
+    - ONE shared long-lived computerd instance serving all sessions (max density, no
+      container/pod per session); per-session isolation via an nsjail jail wrapping exec.
+    - Threat model: trusted internal users (Entra OIDC). Isolation goal is "prevent
+      accidental cross-session leakage + strong practical sandboxing", NOT "resist a
+      dedicated hostile attacker" (single shared kernel is an accepted residual risk).
+  Tech: TypeScript (Node 22) host/gateway; dofs uses node:sqlite; computerd is the
+        published ghcr.io/cloudflare/computer-computerd-linux-x64 SEA image (+nsjail).
+  Sibling repos (prior art / contracts):
+    - ~/git/open-terminal        — the OWUI REST/OpenAPI contract to reproduce
+    - ~/git/open-terminal-k8s-proxy — isolation design baseline (pod-per-session, the
+                                      model we are moving AWAY from for density)
+  Research artifacts live in ./research/ (01..04).

@@ -1,0 +1,24 @@
+# Sandbox-runtime isolation: default-deny ingress+egress, allow only the router
+# (agent-sandbox-system) in on the runtime port, and DNS out. Egress proxy + S3
+# are added in Phase 4. (AgentSandbox.md §13.2/§13.3)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-runtime-default-deny
+  namespace: agent-sandbox-runtime
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent-sandbox-system
+      ports:
+        - { protocol: TCP, port: 8888 }
+  egress:
+    - to:
+        - ipBlock: { cidr: 10.96.0.10/32 }   # kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
