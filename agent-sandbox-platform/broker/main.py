@@ -26,6 +26,7 @@ from typing import Optional, cast
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response, Security
+from openapi_spec import OPENAPI
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from kubernetes import client, config
 
@@ -217,8 +218,30 @@ async def resolve_sandbox(user_id: str, session_id: str, profile: str) -> tuple[
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
        "trailers", "transfer-encoding", "upgrade", "host", "content-length", "authorization"}
 
-app = FastAPI(title="code-standard broker")
+
+app = FastAPI(title="code-standard broker", docs_url=None, redoc_url=None, openapi_url=None)
 _client = httpx.AsyncClient(timeout=httpx.Timeout(PROXY_TIMEOUT), follow_redirects=False)
+
+
+@app.get("/openapi.json", include_in_schema=False)
+async def openapi_json() -> dict:
+    """Curated OpenAPI 3.0 spec (the LLM-facing method surface). Registered before the
+    catch-all proxy so Open WebUI can discover the tools without being forwarded to a
+    sandbox."""
+    return OPENAPI
+
+
+@app.get("/docs", include_in_schema=False)
+async def swagger_ui():
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><title>code-standard broker</title>'
+        '<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">'
+        '</head><body><div id="swagger-ui"></div>'
+        '<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>'
+        '<script>window.ui=SwaggerUIBundle({url:"/openapi.json",dom_id:"#swagger-ui"});</script>'
+        '</body></html>'
+    )
 
 
 @app.get("/healthz")
