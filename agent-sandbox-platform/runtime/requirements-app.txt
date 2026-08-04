@@ -1,0 +1,5 @@
+# Runtime server dependencies (FastAPI/uvicorn). Unpinned for Phase 2;
+# Phase 6 will pin digests for reproducibility.
+fastapi
+uvicorn[standard]
+python-multipart

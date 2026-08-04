@@ -1,6 +1,9 @@
-# Sandbox-runtime isolation: default-deny ingress+egress, allow only the router
-# (agent-sandbox-system) in on the runtime port, and DNS out. Egress proxy + S3
-# are added in Phase 4. (AgentSandbox.md §13.2/§13.3)
+# Sandbox-runtime isolation (revised for dynamic dep installs, pip/npm).
+# default-deny ingress+egress; allow:
+#   ingress  — only the router (agent-sandbox-system) on the runtime port 8888
+#   egress   — DNS, and HTTPS (443) to the internet for package installs,
+#              EXCLUDING cluster pod/service/host CIDRs so a sandbox cannot reach
+#              internal services. (Phase 4 swaps 443 for a domain-allowlisting proxy.)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -22,3 +25,12 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.244.0.0/16      # pod CIDR
+              - 10.96.0.0/24    # service CIDR (apiserver, dns, ...)
+              - 10.0.1.0/24     # node host network
+      ports:
+        - { protocol: TCP, port: 443 }

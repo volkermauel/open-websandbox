@@ -1,0 +1,28 @@
+# Curated "agent-common" libraries — pre-installed in the image so a sandbox
+# claimed from the warm pool is immediately productive (no first-call install).
+# Add/prune here; the set is version-controlled and listed in the spec.
+#
+# data / docs
+numpy
+pandas
+openpyxl
+xlsxwriter
+python-docx
+python-pptx
+pypdf
+pdfplumber
+# parsing / config
+PyYAML
+tomli
+jsonschema
+# http
+requests
+httpx
+# utilities
+python-dateutil
+tqdm
+rich
+tabulate
+# html / scraping
+beautifulsoup4
+lxml

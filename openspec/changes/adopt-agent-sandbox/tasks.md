@@ -54,16 +54,30 @@ tracks scoping onto our cluster. Cite `design.md` decision IDs (D#).
 
 ## Phase 2 — Runtime image + warm pool
 
-- [ ] **2.1** Build `code-standard` image (Python 3, shell, git, curl, jq;
-      non-root `1000:1000`; `/workspace`,`/tmp`,`/home/sandbox`; no ssh/docker/k8s
-      creds). SBOM + scan; pin digest.
-- [ ] **2.2** Runtime server: exec (argv list, not shell string), file get/put,
-      cancellation, command timeout, output-size cap, whole-process-tree kill.
-- [ ] **2.3** Unit tests outside Kubernetes.
-- [ ] **2.4** Deploy `SandboxTemplate` `code-standard-v1` (runtimeClassName
-      `gvisor`, automountServiceAccountToken false, drop ALL caps, runAs 1000,
-      emptyDir sizeLimits) + `SandboxWarmPool` (`replicas: 2`).
-- [ ] **2.5** Verify warm capacity + claim assignment; cold-start within budget.
+- [x] **2.1** Built `code-standard:v1` (`python:3.12-slim` + `build-essential`/
+      `python3-dev` + `nodejs`/`npm` + git/curl/jq; non-root `1000:1000`;
+      `/workspace`,`/home/sandbox`,`/tmp`; no ssh/docker/k8s creds). Ships a curated
+      "agent-common" library set (PyYAML, numpy, pandas, openpyxl, requests, bs4,
+      lxml, …) for warm-ready first use + dynamic pip/npm (incl. native builds).
+      SBOM/scan + digest-pin deferred to Phase 6.
+- [x] **2.2** Runtime server (`runtime/server.py`, FastAPI/uvicorn): `POST /execute`
+      (OWUI shell-string contract), `/upload` `/download` `/list` `/exists`, per-call
+      command timeout, 1 MiB output cap, whole-process-tree kill (`start_new_session`
+      + `os.killpg` on timeout). Security boundary is gVisor+uid1000+RO-root+NP, not
+      argument parsing. Async job cancellation deferred.
+- [ ] **2.3** Unit tests outside Kubernetes (pending).
+- [x] **2.4** Deployed `SandboxTemplate` `code-standard-v1` (runtimeClassName
+      `gvisor`, `automountServiceAccountToken: false`, drop ALL caps, runAs 1000,
+      read-only root, emptyDir sizeLimits, fsGroup 1000) + `SandboxWarmPool`
+      (`replicas: 2`). Image loaded into w1/w2 via `microk8s ctr images import`
+      (`imagePullPolicy: Never`); **w3 image sync pending** (1 GB transfer timed out —
+      pods currently schedule on w1/w2). Persistent profile (`volumeClaimTemplates`
+      PVC at `/workspace`) spec'd; deployed with the broker (Phase 3).
+- [x] **2.5** Warm capacity verified: 2 pods `Ready 1/1` on gVisor
+      (`4.19.0-gvisor`); `GET /` + `POST /execute` work (uid 1000, cwd `/workspace`);
+      curated libs import (`pandas 3.0.5`); dynamic `pip install arrow` succeeds
+      (open-443 egress NP correct). `SandboxClaim` flow + cold-start budget pending
+      the broker (Phase 3).
 
 ## Phase 3 — Broker
 

@@ -1,0 +1,7 @@
+*.pyc
+__pycache__/
+.git
+*.tar
+*.tgz
+Dockerfile
+.dockerignore

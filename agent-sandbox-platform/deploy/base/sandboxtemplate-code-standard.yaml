@@ -1,0 +1,57 @@
+# Ephemeral profile: /workspace is an emptyDir (destroyed on sandbox termination).
+# Hardened: gVisor runtime, non-root uid 1000, drop ALL caps, read-only root FS,
+# no service-account token, emptyDir size limits. The persistent profile
+# (volumeClaimTemplates PVC at /workspace) is a separate template added with the broker.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: code-standard-v1
+  namespace: agent-sandbox-runtime
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        app: code-standard
+        profile: ephemeral
+    spec:
+      automountServiceAccountToken: false
+      runtimeClassName: gvisor
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+      - name: runtime
+        image: code-standard:v1
+        imagePullPolicy: Never
+        ports: [{ containerPort: 8888 }]
+        env:
+        - { name: MAX_TIMEOUT, value: "600" }
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities: { drop: ["ALL"] }
+        readinessProbe:
+          httpGet: { path: "/", port: 8888 }
+          periodSeconds: 2
+        livenessProbe:
+          httpGet: { path: "/", port: 8888 }
+          initialDelaySeconds: 3
+          periodSeconds: 10
+        resources:
+          requests: { cpu: 250m, memory: 512Mi, ephemeral-storage: 1Gi }
+          limits:   { cpu: "2",   memory: 4Gi,  ephemeral-storage: 8Gi }
+        volumeMounts:
+        - { name: workspace, mountPath: /workspace }
+        - { name: home,      mountPath: /home/sandbox }
+        - { name: tmp,       mountPath: /tmp }
+      volumes:
+      - { name: workspace, emptyDir: { sizeLimit: 4Gi } }
+      - { name: home,      emptyDir: { sizeLimit: 2Gi } }
+      - { name: tmp,       emptyDir: { sizeLimit: 1Gi } }
+      restartPolicy: OnFailure
