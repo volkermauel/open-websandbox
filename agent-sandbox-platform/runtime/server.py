@@ -16,12 +16,13 @@ Runs as non-root uid 1000; WORKDIR=/workspace (an emptyDir at runtime).
 import contextlib
 import logging
 import os
+import re
 import signal
 import subprocess
 import urllib.parse
 from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -65,14 +66,42 @@ def _cap(s: str) -> str:
     return s
 
 
-def _safe_path(rel: str) -> str:
-    """Resolve `rel` under WORKDIR, rejecting escapes (../, absolute, symlinks out)."""
+_SUBDIR_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _safe_path(rel: str, base: str = WORKDIR) -> str:
+    """Resolve `rel` under `base` (default WORKDIR), rejecting escapes.
+
+    When a per-chat `X-Workspace-Subdir` is in effect, `base` is WORKDIR/<subdir>;
+    the same confinement applies.
+    """
     rel = urllib.parse.unquote(rel).lstrip("/")
-    base = os.path.realpath(WORKDIR)
+    base = os.path.realpath(base)
     full = os.path.realpath(os.path.join(base, rel))
     if full != base and not full.startswith(base + os.sep):
         raise HTTPException(status_code=400, detail="path escapes workspace")
     return full
+
+
+def _request_base(subdir: Optional[str]) -> str:
+    """Effective workspace base for this request: WORKDIR, or WORKDIR/<subdir>.
+
+    The broker sets X-Workspace-Subdir on persistent-profile requests so each chat
+    runs isolated under its own folder on the shared per-user PVC. The subdir is
+    validated (no slashes / traversal) and created on first use.
+    """
+    if not subdir:
+        return WORKDIR
+    if not _SUBDIR_RE.match(subdir):
+        raise HTTPException(status_code=400, detail="invalid X-Workspace-Subdir")
+    base = os.path.realpath(os.path.join(WORKDIR, subdir))
+    if base != WORKDIR and not base.startswith(WORKDIR + os.sep):
+        raise HTTPException(status_code=400, detail="subdir escapes workspace")
+    try:
+        os.makedirs(base, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"cannot create workspace subdir: {e}") from e
+    return base
 
 
 @app.get("/")
@@ -81,7 +110,8 @@ async def health():
 
 
 @app.post("/execute", response_model=ExecuteResponse)
-async def execute(req: ExecuteRequest):
+async def execute(req: ExecuteRequest, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    base = _request_base(subdir)
     timeout = min(req.timeout or DEFAULT_TIMEOUT, MAX_TIMEOUT)
     timed_out = False
     log.info("exec (timeout=%ss): %s", timeout, req.command[:200])
@@ -93,7 +123,7 @@ async def execute(req: ExecuteRequest):
         proc = subprocess.Popen(  # noqa: S603,S602 - trusted tool surface
             req.command,
             shell=True,
-            cwd=WORKDIR,
+            cwd=base,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -121,29 +151,31 @@ def _kill_group(pid: int) -> None:
 
 
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    full = _safe_path(file.filename or "")
+async def upload_file(file: UploadFile = File(...), subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    base = _request_base(subdir)
+    full = _safe_path(file.filename or "", base)
     try:
-        os.makedirs(os.path.dirname(full) or WORKDIR, exist_ok=True)
+        os.makedirs(os.path.dirname(full) or base, exist_ok=True)
         with open(full, "wb") as f:
             while chunk := await file.read(1 << 20):
                 f.write(chunk)
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"write failed: {e}") from e
-    return {"saved": os.path.relpath(full, WORKDIR), "bytes": os.path.getsize(full)}
+    return {"saved": os.path.relpath(full, base), "bytes": os.path.getsize(full)}
 
 
 @app.get("/download/{file_path:path}")
-async def download_file(file_path: str):
-    full = _safe_path(file_path)
+async def download_file(file_path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    full = _safe_path(file_path, _request_base(subdir))
     if not os.path.isfile(full):
         raise HTTPException(status_code=404, detail="not found")
     return FileResponse(full, filename=os.path.basename(full))
 
 
 @app.get("/list/{file_path:path}")
-async def list_files(file_path: str):
-    full = _safe_path(file_path)
+async def list_files(file_path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    base = _request_base(subdir)
+    full = _safe_path(file_path, base)
     if not os.path.isdir(full):
         raise HTTPException(status_code=404, detail="not a directory")
     entries = []
@@ -156,10 +188,10 @@ async def list_files(file_path: str):
         entries.append(
             {"name": name, "type": "dir" if os.path.isdir(p) else "file", "size": os.path.getsize(p)}
         )
-    return {"path": os.path.relpath(full, WORKDIR), "entries": entries}
+    return {"path": os.path.relpath(full, base), "entries": entries}
 
 
 @app.get("/exists/{file_path:path}")
-async def exists(file_path: str):
-    full = _safe_path(file_path)
+async def exists(file_path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    full = _safe_path(file_path, _request_base(subdir))
     return {"exists": os.path.exists(full), "is_file": os.path.isfile(full), "is_dir": os.path.isdir(full)}

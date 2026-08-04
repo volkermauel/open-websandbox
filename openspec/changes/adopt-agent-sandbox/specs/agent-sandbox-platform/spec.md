@@ -124,23 +124,38 @@ productive without a first-call install penalty.
   library without installing it
 - **THEN** the import SHALL succeed with no network round-trip.
 
-### Requirement: A session may optionally persist files across sessions
+### Requirement: A user may optionally persist a workspace across sessions
 
-The system SHALL offer a per-session persistence profile. **Ephemeral** (default)
-mounts an emptyDir at `/workspace` and destroys all files when the sandbox is
-terminated. **Persistent** (opt-in) uses a `SandboxTemplate` with
-`volumeClaimTemplates` (StatefulSet semantics) to bind a dedicated PVC at
-`/workspace`; the controller SHALL reattach the same PVC if the pod is recreated.
-For the persistent profile the broker SHALL NOT terminate the sandbox when the
-logical session ends — it SHALL retain it and record its `claim_name` keyed by user,
-so a later session for that user SHALL re-acquire the same sandbox (and its files) by
-`claim_name`. The broker SHALL terminate (releasing the PVC) any persistent sandbox
-unused longer than a configurable retention TTL.
+The system SHALL offer two profiles per request, selected by the `X-Persistence`
+header. **Ephemeral** (default) mounts an emptyDir at `/workspace` and destroys all
+files when the sandbox is terminated. **Persistent** (`X-Persistence: persistent`)
+binds a dedicated, per-USER PVC at `/workspace` (a shared ReadWriteMany StorageClass
+so a resumed pod may land on any worker). A persistent sandbox SHALL be **parked**
+when idle — its pod terminated to free node CPU/RAM while its PVC is retained — and
+**resumed** (pod recreated, same PVC re-mounted) on the user's next request, so a user
+SHALL recover their files across sessions. The broker SHALL reap (deleting the claim
+and releasing the PVC) any persistent sandbox unused longer than a configurable
+retention TTL.
 
-#### Scenario: A user resumes a persistent session after it ended
+#### Scenario: A user resumes a parked workspace after idle
 
-- **WHEN** a user ends a persistent session and starts a new one later, within the
-  retention TTL
-- **THEN** the new session SHALL re-acquire the prior sandbox by `claim_name`, its
-  `/workspace` SHALL contain the files and installed dependencies from the prior
-  session, and no other user's files SHALL be visible.
+- **WHEN** a user's persistent sandbox is parked (pod absent, PVC retained) and the
+  user issues a later request within the retention TTL
+- **THEN** the broker SHALL resume the sandbox, the recreated pod SHALL re-mount the
+  same PVC, `/workspace` SHALL contain the files written before the park, and no other
+  user's files SHALL be visible.
+
+### Requirement: Concurrent chats on a persistent workspace shall be folder-isolated
+
+For the persistent profile the broker SHALL scope each request to a per-chat folder
+under `/workspace` derived from the session, so two concurrent chats of the SAME user
+run isolated on the shared PVC: each chat SHALL NOT read another chat's files by
+default, yet all chats SHALL share the user's installed packages and overall
+workspace. The runtime SHALL validate the folder name and confine all file
+operations beneath it.
+
+#### Scenario: Two chats of one user do not see each other's files
+
+- **WHEN** a user runs chat A and chat B concurrently on the persistent profile
+- **THEN** a file written by chat A SHALL NOT be readable from chat B, and both chats
+  SHALL operate on the same per-user PVC.

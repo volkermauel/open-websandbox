@@ -8,6 +8,11 @@ metadata:
   name: code-standard-v1
   namespace: agent-sandbox-runtime
 spec:
+  # Lets a SandboxClaim bring its own per-user PVC (volumeClaimTemplates). The
+  # controller merges a claim's `workspace` VCT into the pod, replacing the
+  # template's same-named emptyDir — so the SAME template serves ephemeral
+  # (emptyDir, warm pool) and persistent (cephfs PVC, cold) profiles.
+  volumeClaimTemplatesPolicy: Allowed
   podTemplate:
     metadata:
       labels:

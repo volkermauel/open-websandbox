@@ -16,9 +16,11 @@ rules:
 - apiGroups: ["extensions.agents.x-k8s.io"]
   resources: ["sandboxclaims"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-- apiGroups: ["extensions.agents.x-k8s.io"]
+# Sandboxes live in the `agents.x-k8s.io` group (not extensions) — the broker reads
+# operatingMode and patches Suspended/Running to park/resume persistent sandboxes.
+- apiGroups: ["agents.x-k8s.io"]
   resources: ["sandboxes"]
-  verbs: ["get", "list", "watch"]
+  verbs: ["get", "list", "watch", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

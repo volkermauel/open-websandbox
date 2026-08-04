@@ -104,9 +104,22 @@ tracks scoping onto our cluster. Cite `design.md` decision IDs (D#).
 - [ ] **3.7** Actual OWUI wiring (point Open WebUI's terminal tool at the broker URL +
       Bearer) — pending; the broker is already contract-compatible.
 
-**Validated end-to-end:** `/execute` auth+proxy (200); session reuse (file persists
-across calls → same sandbox); per-session isolation (bob ≠ alice, empty /workspace);
-dynamic `pip install` through the broker; 2 distinct claims for 2 sessions.
+- [x] **3.8** Persistent profile (`X-Persistence: persistent`): per-USER cephfs PVC
+      via the claim's `volumeClaimTemplates` (template carries
+      `volumeClaimTemplatesPolicy: Allowed`; the controller merges the `workspace`
+      VCT, **replacing** the template's same-named emptyDir — so ONE template serves
+      both profiles). Per-chat folder isolation via `X-Workspace-Subdir` (validated +
+      confined by the runtime). Park = patch Sandbox `spec.operatingMode: Suspended`
+      (pod terminated → node freed, PVC retained); resume = patch `Running` (pod
+      recreated, same PVC re-mounted). Idle-reaper parks > `BROKER_PARK_IDLE_SECONDS`
+      (30 min), reaps > `BROKER_REAP_SECONDS` (7 d). **RBAC gotcha:** the `sandbox`
+      resource is in group `agents.x-k8s.io` (NOT `extensions` like claims); the broker
+      Role grants get/update/patch there. **Proven:** file written → park (pod gone,
+      PVC Bound) → resume → file intact (same per-user PVC, same chat folder).
+
+**Validated end-to-end:** ephemeral `/execute` auth+proxy (200), session reuse,
+per-session isolation, dynamic `pip install`; AND persistent per-user cephfs PVC with
+per-chat folder isolation + suspend→resume (file survives park).
 
 ## Phase 4 — Network + admission controls
 
