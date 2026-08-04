@@ -1,0 +1,72 @@
+# Open WebUI broker: auth + session->sandbox + reverse-proxy to the router.
+# Lives in agent-sandbox-system; needs RBAC in agent-sandbox-runtime to manage
+# SandboxClaims and read Sandboxes.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: owui-broker
+  namespace: agent-sandbox-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: owui-broker
+  namespace: agent-sandbox-runtime
+rules:
+- apiGroups: ["extensions.agents.x-k8s.io"]
+  resources: ["sandboxclaims"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["extensions.agents.x-k8s.io"]
+  resources: ["sandboxes"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: owui-broker
+  namespace: agent-sandbox-runtime
+subjects:
+- kind: ServiceAccount
+  name: owui-broker
+  namespace: agent-sandbox-system
+roleRef:
+  kind: Role
+  name: owui-broker
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: owui-broker
+  namespace: agent-sandbox-system
+  labels: {app.kubernetes.io/name: owui-broker}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: owui-broker}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: owui-broker}}
+    spec:
+      serviceAccountName: owui-broker
+      containers:
+      - name: broker
+        image: owui-broker:dev
+        imagePullPolicy: Never
+        ports: [{containerPort: 8080}]
+        env:
+        - {name: BROKER_SHARED_SECRET, valueFrom: {secretKeyRef: {name: owui-broker-secret, key: shared-secret}}}
+        - {name: BROKER_WARMPOOL, value: "code-standard-warmpool"}
+        - {name: BROKER_RUNTIME_NS, value: "agent-sandbox-runtime"}
+        - {name: BROKER_ROUTER_URL, value: "http://sandbox-router-svc.agent-sandbox-system:8080"}
+        - {name: BROKER_IDLE_TTL_SECONDS, value: "1800"}
+        readinessProbe: {httpGet: {path: /healthz, port: 8080}, periodSeconds: 2}
+        livenessProbe: {httpGet: {path: /healthz, port: 8080}, initialDelaySeconds: 5, periodSeconds: 10}
+        resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: "1", memory: 512Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: owui-broker
+  namespace: agent-sandbox-system
+spec:
+  selector: {app.kubernetes.io/name: owui-broker}
+  ports: [{port: 8080, targetPort: 8080}]

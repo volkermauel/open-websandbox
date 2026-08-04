@@ -81,19 +81,32 @@ tracks scoping onto our cluster. Cite `design.md` decision IDs (D#).
 
 ## Phase 3 — Broker
 
-- [ ] **3.1** Go broker: `/v1` API (sessions, exec, files, delete); auth middleware
-      trusting only the OIDC reverse proxy identity headers.
-- [ ] **3.2** Profile/quota policy (allowed_groups, per-user/per-tenant caps,
-      max_lifetime, idle_timeout).
-- [ ] **3.3** `SandboxClaim` create/watch/delete; signed opaque session tokens;
-      header strip + router-auth inject on proxy.
-- [ ] **3.4** Idle (≥1/min) + absolute-maximum expiry reconciler; quarantine
-      ownerless/overdue claims.
-- [ ] **3.5** Stateless restart recovery: rebuild sessions from broker-owned
-      claims (`sandbox.open-websandbox.local/created-by=broker`).
-- [ ] **3.6** Metrics, structured logs, audit events (no prompts/commands/secrets
-      in logs). Optional MCP adapter (`sandbox_*` tools).
-- [ ] **3.7** OWUI adapter mapping the broker API to Open WebUI's tool surface.
+- [x] **3.1** Broker (`broker/main.py`, **Python/FastAPI** — not Go; matches the
+      runtime server + OWUI stack, `kubernetes` client for CRs). Transparent reverse
+      proxy (any path → router) so the OWUI contract (`/execute`, `/files/*`) maps 1:1
+      to the sandbox runtime. Auth: shared Bearer + required `X-User-Id`/`X-Session-Id`
+      (OIDC-header trust deferred to OWUI integration). **Proven:** auth 401/400
+      correct; `/execute` → 200 through broker→router→sandbox.
+- [ ] **3.2** Profile/quota policy (allowed_groups, per-user caps, max_lifetime,
+      idle_timeout) — pending.
+- [x] **3.3** `SandboxClaim` create/get/delete (warm pool); proxy injects
+      `X-Sandbox-Id`/`X-Sandbox-Namespace`/`X-Sandbox-Pod-IP` (router priority-1
+      resolution). Session→claim via deterministic name `owui-<sha(user|session)[:12]>`
+      (replaces signed opaque tokens — simpler + stateless). RBAC: Role in
+      agent-sandbox-runtime, SA in agent-sandbox-system. Pod IP read from the claim's
+      own `.status.sandbox.podIPs` (avoids a racing extra get).
+- [x] **3.4** Idle-reaper: background loop deletes claims idle >
+      `BROKER_IDLE_TTL_SECONDS` (30 min), so ended sessions don't leave pods.
+      **Absolute-maximum lifetime + quarantine of ownerless claims deferred.**
+- [x] **3.5** Stateless restart recovery: claim name is pure-derived from headers, so
+      a broker restart re-attaches to existing claims (proven: reuse across calls).
+- [ ] **3.6** Metrics/structured-audit/MCP adapter — pending (basic logging only).
+- [ ] **3.7** Actual OWUI wiring (point Open WebUI's terminal tool at the broker URL +
+      Bearer) — pending; the broker is already contract-compatible.
+
+**Validated end-to-end:** `/execute` auth+proxy (200); session reuse (file persists
+across calls → same sandbox); per-session isolation (bob ≠ alice, empty /workspace);
+dynamic `pip install` through the broker; 2 distinct claims for 2 sessions.
 
 ## Phase 4 — Network + admission controls
 
