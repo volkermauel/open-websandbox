@@ -56,7 +56,7 @@ spec:
       serviceAccountName: owui-broker
       containers:
       - name: broker
-        image: owui-broker:dev
+        image: owui-broker:v2
         imagePullPolicy: Never
         ports: [{containerPort: 8080}]
         env:
