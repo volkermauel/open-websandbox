@@ -1,0 +1,99 @@
+name: e2e
+
+# Full gVisor end-to-end: build a runsc-enabled KIND node, deploy the platform via the
+# Helm chart, and run tests/e2e against the live broker. Runs on PRs + main.
+#
+# gVisor cannot run on the host and be selected per-pod, so runsc + its containerd shim
+# are baked into the KIND node image by scripts/setup-kind-gvisor.sh (the same script used
+# locally). The router is self-built from upstream agent-sandbox@v0.5.3 (context = repo
+# root, since its Dockerfile COPYs internal/ api/ extensions/api/).
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  gvisor-kind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: docker/setup-buildx-action@v3
+
+      # kind/kubectl/helm are not guaranteed on the runner; install pinned versions.
+      - name: Install kind, kubectl, helm
+        run: |
+          set -eu
+          curl -sSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/v0.27.0/bin/linux/amd64/kind"
+          chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
+          curl -sSL -o /tmp/kubectl "https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl"
+          chmod +x /tmp/kubectl && sudo mv /tmp/kubectl /usr/local/bin/kubectl
+          curl -sSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar xz -C /tmp
+          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
+
+      # Build a runsc-enabled kindest/node, create the cluster, smoke-test gVisor.
+      # (Includes the nofile wrapper; CI runners usually have a sane docker default so
+      # kube-proxy starts fine — the script fails loudly with a hint if not.)
+      - name: Create gVisor KIND cluster
+        run: bash scripts/setup-kind-gvisor.sh
+
+      - name: Build broker + runtime images
+        run: |
+          docker build -t open-sandbox-broker:v0.1.0 agent-sandbox-platform/broker/
+          docker build -t open-sandbox-runtime:v0.1.0 agent-sandbox-platform/runtime/
+
+      - name: Checkout upstream agent-sandbox@v0.5.3 (router self-build)
+        uses: actions/checkout@v4
+        with:
+          repository: kubernetes-sigs/agent-sandbox
+          ref: v0.5.3
+          path: agent-sandbox
+
+      # Context MUST be the repo root — the Dockerfile COPYs internal/, api/, extensions/api/.
+      - name: Build router image (self-build)
+        run: |
+          docker build -t open-sandbox-router:v0.1.0 \
+            -f agent-sandbox/sandbox-router/Dockerfile agent-sandbox/
+
+      - name: Load images into KIND
+        run: |
+          for img in open-sandbox-broker:v0.1.0 open-sandbox-runtime:v0.1.0 open-sandbox-router:v0.1.0; do
+            kind load docker-image "$img" --name open-sandbox-e2e
+          done
+
+      - name: Apply agent-sandbox controller + CRDs
+        run: kubectl apply -f agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
+
+      - name: Helm install (gVisor profile)
+        run: |
+          kubectl create namespace agent-sandbox-system
+          kubectl create namespace agent-sandbox-runtime
+          helm install open-sandbox agent-sandbox-platform/chart/ \
+            -f agent-sandbox-platform/chart/values-kind-gvisor.yaml \
+            -n agent-sandbox-system
+          kubectl -n agent-sandbox-system rollout status deploy/owui-broker --timeout=180s
+          kubectl -n agent-sandbox-runtime wait sandboxwarmpool code-standard-warmpool \
+            --for=condition=Ready --timeout=300s
+
+      - name: Install test deps
+        run: pip install -r requirements-test.txt
+
+      - name: Run e2e suite
+        run: |
+          kubectl -n agent-sandbox-system port-forward svc/owui-broker 8889:8080 &
+          PF=$!
+          # wait for the forward to accept connections
+          for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
+          BROKER_URL=http://localhost:8889 \
+          BROKER_SECRET=dev-shared-secret-change-me \
+          pytest tests/e2e -v
+          kill $PF || true
