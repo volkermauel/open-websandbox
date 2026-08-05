@@ -322,7 +322,9 @@ async def _resolve_chat_sandbox(user_id: str, session_id: str) -> tuple[str, str
     claim), resuming if parked, then wait for the pod IP. /workspace is the chat's
     folder via subPath — no per-chat subfolders are visible inside the sandbox."""
     name = _chat_sandbox_name(user_id, session_id)
-    sbx = _get_sandbox(name) or _create_chat_sandbox(name, user_id, session_id)
+    pre = _get_sandbox(name)
+    sbx = pre or _create_chat_sandbox(name, user_id, session_id)
+    just_created = pre is None
     if sbx is None:
         raise HTTPException(status_code=500, detail=f"chat sandbox {name} could not be created")
     deadline = time.time() + CLAIM_READY_TIMEOUT
@@ -336,6 +338,8 @@ async def _resolve_chat_sandbox(user_id: str, session_id: str) -> tuple[str, str
                 _touch_sandbox(name)
                 log.info("session user=%s chat=%s profile=persistent mode=%s -> sandbox=%s pod=%s",
                          user_id[:32], session_id[:16], PERSISTENT_MODE, name, pod_ip)
+                if just_created and session_id != user_id:
+                    await _migrate_staging_to_chat(user_id, pod_ip)
                 return name, pod_ip
         if time.time() > deadline:
             raise HTTPException(status_code=504, detail=f"chat sandbox {name} not ready in {CLAIM_READY_TIMEOUT}s")
@@ -343,6 +347,96 @@ async def _resolve_chat_sandbox(user_id: str, session_id: str) -> tuple[str, str
         sbx = _get_sandbox(name)
         if sbx is None:
             raise HTTPException(status_code=500, detail=f"chat sandbox {name} vanished during resolve")
+
+
+async def _ensure_sandbox_running_ip(name: str, timeout: float = 90.0) -> Optional[str]:
+    """Resume a parked sandbox (if needed) and wait for its pod IP. None on timeout/missing."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        sbx = _get_sandbox(name)
+        if sbx is None:
+            return None
+        if _sandbox_operating_mode(name) == "Suspended":
+            _set_sandbox_operating_mode(name, "Running")
+        if _sandbox_ready(sbx):
+            ip = _sandbox_pod_ip(sbx)
+            if ip:
+                return ip
+        await asyncio.sleep(1)
+    return None
+
+
+_MIGRATE_ZIP = "__broker_migrate.zip"
+_migrate_locks: dict = {}
+
+
+async def _clear_workspace(pod_ip: str) -> None:
+    """Best-effort wipe of a sandbox's /workspace contents (keeps the mount point)."""
+    with contextlib.suppress(Exception):
+        await _client.post(
+            f"http://{pod_ip}:8888/execute",
+            json={"command": "find /workspace -mindepth 1 -delete"},
+            timeout=60,
+        )
+
+
+async def _migrate_staging_to_chat(user_id: str, chat_pod_ip: str) -> None:
+    """Carry the user's staging /workspace into the freshly-created chat sandbox, then
+    wipe staging. Fires once per new chat (session != user) — moves files uploaded
+    BEFORE the chat had a chatId, and guarantees no A->B cross-chat leak.
+
+    Best-effort: failures are logged, never fatal. Clearing staging ALWAYS runs when the
+    staging pod is reachable, so leak prevention does not depend on the move succeeding."""
+    staging = _chat_sandbox_name(user_id, user_id)
+    lock = _migrate_locks.setdefault(user_id, asyncio.Lock())
+    async with lock:
+        try:
+            if _get_sandbox(staging) is None:
+                return  # user never used a no-session (staging) sandbox
+            sip = await _ensure_sandbox_running_ip(staging, timeout=90.0)
+            if not sip:
+                log.warning("staging migrate: %s not reachable; cannot clear (leak risk) user=%s",
+                            staging, user_id[:16])
+                return
+            moved = 0
+            try:
+                lr = await _client.get(f"http://{sip}:8888/files/list",
+                                      params={"directory": "/workspace"}, timeout=30)
+                names = [e["name"] for e in lr.json().get("entries", [])] if lr.status_code == 200 else []
+                if names:
+                    ar = await _client.post(f"http://{sip}:8888/files/archive",
+                                           json={"paths": names}, timeout=120)
+                    if ar.status_code == 200 and ar.content:
+                        ur = await _client.post(
+                            f"http://{chat_pod_ip}:8888/files/upload",
+                            files={"file": (_MIGRATE_ZIP, ar.content, "application/zip")},
+                            data={"directory": "/workspace"}, timeout=120,
+                        )
+                        if ur.status_code == 200:
+                            extract_cmd = (
+                                "cd /workspace && python3 -c \""
+                                "import zipfile,os;"
+                                " zipfile.ZipFile('" + _MIGRATE_ZIP + "').extractall('.');"
+                                " os.remove('" + _MIGRATE_ZIP + "')\""
+                            )
+                            await _client.post(f"http://{chat_pod_ip}:8888/execute",
+                                               json={"command": extract_cmd}, timeout=60)
+                            moved = len(names)
+                        else:
+                            log.warning("staging migrate: chat upload -> %s", ur.status_code)
+                    else:
+                        log.warning("staging migrate: staging archive -> %s", ar.status_code)
+                else:
+                    log.info("staging migrate: staging empty, nothing to move")
+            except Exception as exc:
+                log.warning("staging migrate: move phase failed (will still clear): %s", exc)
+            # ALWAYS clear staging once reachable — anti-leak, independent of the move.
+            await _clear_workspace(sip)
+            log.info("staging migrate user=%s staging=%s -> chat=%s moved=%d entries",
+                     user_id[:16], staging, chat_pod_ip, moved)
+        except Exception as exc:
+            log.warning("staging migrate failed (non-fatal): %s", exc)
+
 
 
 async def resolve_sandbox(user_id: str, session_id: str, profile: str) -> tuple[str, str]:
@@ -557,6 +651,11 @@ async def proxy(path: str, request: Request, _=Security(_auth)):
 
     fwd = {k: v for k, v in request.headers.items() if k.lower() not in HOP}
     fwd.update({"X-Sandbox-Id": sandbox_id, "X-Sandbox-Namespace": RUNTIME_NS, "X-Sandbox-Pod-IP": pod_ip})
+    # Inject the RESOLVED session (chatId, or user when OWUI omits X-Session-Id) so the
+    # runtime echoes it as the terminal id. Otherwise a no-chatId createTerminal mints a
+    # random id and the terminal WS lands on a rogue sandbox that disagrees with the
+    # file/tool API (and spawns a throwaway sandbox per terminal open).
+    fwd["X-Session-Id"] = session
     # No X-Workspace-Subdir: each chat's folder IS /workspace (per-chat subPath).
     body = await request.body()
     upstream = httpx.Request(request.method, f"{ROUTER_URL}/{path}",
