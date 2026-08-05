@@ -18,9 +18,13 @@ rules:
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # Sandboxes live in the `agents.x-k8s.io` group (not extensions). The broker reads
 # operatingMode and patches Suspended/Running to park/resume persistent sandboxes,
-# and (shared-subpath mode) creates + deletes per-user Sandbox objects directly.
+# and (persistent mode) creates + deletes per-chat Sandbox objects directly.
 - apiGroups: ["agents.x-k8s.io"]
   resources: ["sandboxes"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# per-user-pvc mode: the broker creates/reads per-user PVCs directly (CoreV1).
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

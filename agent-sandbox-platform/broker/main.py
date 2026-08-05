@@ -81,6 +81,8 @@ if PERSISTENT_MODE not in ("per-user-pvc", "shared-subpath"):
     PERSISTENT_MODE = "per-user-pvc"
 SHARED_PVC = os.environ.get("BROKER_SHARED_PVC", "workspace-shared")
 SHARED_PREFIX = os.environ.get("BROKER_SHARED_PREFIX", "owui-s-")
+CHAT_PREFIX = os.environ.get("BROKER_CHAT_PREFIX", "owui-c-")
+PER_USER_PVC_PREFIX = os.environ.get("BROKER_PER_USER_PVC_PREFIX", "workspace-p-")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("broker")
@@ -91,6 +93,7 @@ try:
 except Exception:                      # pragma: no cover - local dev fallback
     config.load_kube_config()
 api = client.CustomObjectsApi()
+core = client.CoreV1Api()  # per-user-pvc mode: manage per-user PVCs
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -201,11 +204,49 @@ def _touch(name: str) -> None:
     except client.ApiException:        # pragma: no cover - non-fatal
         pass
 
-# --- shared-subPath persistent profile (one RWX PVC, per-user subPath) --------
+# --- persistent profile: per-chat direct Sandbox, chat folder mounted at /workspace --
 
-def _shared_sandbox_name(user_id: str) -> str:
-    """Deterministic per-USER shared-subPath sandbox name."""
-    return f"{SHARED_PREFIX}{hashlib.sha256(user_id.encode()).hexdigest()[:12]}"
+def _chat_sandbox_name(user_id: str, session_id: str) -> str:
+    """Deterministic per-CHAT persistent sandbox name (one sandbox per chat)."""
+    h = hashlib.sha256(f"{user_id}/{session_id}".encode()).hexdigest()[:12]
+    return f"{CHAT_PREFIX}{h}"
+
+
+def _user_pvc_name(user_id: str) -> str:
+    return f"{PER_USER_PVC_PREFIX}{hashlib.sha256(user_id.encode()).hexdigest()[:12]}"
+
+
+def _ensure_user_pvc(user_id: str) -> str:
+    """per-user-pvc mode: get-or-create the user's dedicated PVC (cephfs RWX)."""
+    name = _user_pvc_name(user_id)
+    try:
+        core.read_namespaced_persistent_volume_claim(name, RUNTIME_NS)
+        return name
+    except client.ApiException as exc:
+        if exc.status != 404:
+            raise
+    body = {
+        "apiVersion": "v1", "kind": "PersistentVolumeClaim",
+        "metadata": {"name": name, "namespace": RUNTIME_NS, "labels": {**MANAGED_BY, PROFILE: PERSISTENT}},
+        "spec": {"accessModes": ["ReadWriteMany"], "storageClassName": PERSISTENT_SC,
+                 "resources": {"requests": {"storage": PERSISTENT_SIZE}}},
+    }
+    try:
+        core.create_namespaced_persistent_volume_claim(RUNTIME_NS, body)
+    except client.ApiException as exc:
+        if exc.status != 409:
+            raise
+    return name
+
+
+def _persistent_volume(user_id: str) -> tuple[str, str]:
+    """Return (pvc_name, subpath_prefix) for the active persistent mode.
+
+    shared-subpath: the static shared PVC, prefix users/<user_id>/.
+    per-user-pvc:   the user's dedicated PVC (ensured), prefix '' (chat is top-level)."""
+    if PERSISTENT_MODE == "shared-subpath":
+        return SHARED_PVC, f"users/{user_id}/"
+    return _ensure_user_pvc(user_id), ""
 
 
 def _get_sandbox(name: str) -> Optional[dict]:
@@ -217,24 +258,24 @@ def _get_sandbox(name: str) -> Optional[dict]:
         raise
 
 
-def _create_shared_sandbox(name: str, user_id: str) -> Optional[dict]:
-    """Create a per-user Sandbox whose /workspace is a subPath slice of the shared PVC.
+def _create_chat_sandbox(name: str, user_id: str, session_id: str) -> Optional[dict]:
+    """Create a per-chat Sandbox whose /workspace IS the chat's folder (subPath slice).
 
-    The podTemplate is cloned from the base SandboxTemplate (image/env/resources/
-    gVisor/non-root securityContext stay in sync); then the `workspace` volume is
-    pointed at the static shared PVC and its mount gets subPath=users/<user_id>/.
-    Created directly (not via SandboxClaim) because claims are warm-pool-bound and
-    cannot set a per-user volumeMount subPath."""
+    The podTemplate is cloned from the base SandboxTemplate; the `workspace` volume is
+    pointed at the persistent volume (shared PVC or per-user PVC) and its mount gets
+    subPath=<prefix><chat-id>/, so /workspace is this chat's folder only — other chats
+    and other users are invisible (hard isolation)."""
+    pvc_name, prefix = _persistent_volume(user_id)
     tmpl = cast(dict, api.get_namespaced_custom_object(GROUP, VER, RUNTIME_NS, "sandboxtemplates", BASE_TEMPLATE))
     pod_tmpl = json.loads(json.dumps(tmpl["spec"]["podTemplate"]))
     pod_spec = pod_tmpl.setdefault("spec", {})
-    pod_tmpl.setdefault("metadata", {}).setdefault("labels", {})["profile"] = "persistent-shared"
-    sub_path = f"users/{user_id}/"
+    pod_tmpl.setdefault("metadata", {}).setdefault("labels", {})["profile"] = "persistent"
+    sub_path = f"{prefix}{_subdir_for(session_id)}/"
     for v in pod_spec.get("volumes", []):
         if v.get("name") == "workspace":
             v.clear()
             v["name"] = "workspace"
-            v["persistentVolumeClaim"] = {"claimName": SHARED_PVC}
+            v["persistentVolumeClaim"] = {"claimName": pvc_name}
     for c in pod_spec.get("containers", []):
         for vm in c.get("volumeMounts", []):
             if vm.get("name") == "workspace":
@@ -243,8 +284,10 @@ def _create_shared_sandbox(name: str, user_id: str) -> Optional[dict]:
         "apiVersion": f"{SANDBOX_GROUP}/{VER}",
         "kind": "Sandbox",
         "metadata": {"name": name, "namespace": RUNTIME_NS,
-                     "labels": {**MANAGED_BY, PROFILE: PERSISTENT, "broker-persistent-mode": "shared-subpath"},
-                     "annotations": {LAST_USED: str(int(time.time()))}},
+                     "labels": {**MANAGED_BY, PROFILE: PERSISTENT, "broker-persistent-mode": PERSISTENT_MODE,
+                                "broker-chat": "true"},
+                     "annotations": {LAST_USED: str(int(time.time())),
+                                     "broker-user": user_id, "broker-session": session_id}},
         "spec": {"operatingMode": "Running", "shutdownPolicy": "Retain", "podTemplate": pod_tmpl},
     }
     try:
@@ -274,13 +317,14 @@ def _touch_sandbox(name: str) -> None:
         pass
 
 
-async def _resolve_shared_sandbox(user_id: str) -> tuple[str, str]:
-    """shared-subPath persistent path: get-or-create a per-user Sandbox (direct, not a
-    claim), resuming if parked, then wait for the pod IP to appear."""
-    name = _shared_sandbox_name(user_id)
-    sbx = _get_sandbox(name) or _create_shared_sandbox(name, user_id)
+async def _resolve_chat_sandbox(user_id: str, session_id: str) -> tuple[str, str]:
+    """Persistent path (both backends): get-or-create a per-chat Sandbox (direct, not a
+    claim), resuming if parked, then wait for the pod IP. /workspace is the chat's
+    folder via subPath — no per-chat subfolders are visible inside the sandbox."""
+    name = _chat_sandbox_name(user_id, session_id)
+    sbx = _get_sandbox(name) or _create_chat_sandbox(name, user_id, session_id)
     if sbx is None:
-        raise HTTPException(status_code=500, detail=f"shared sandbox {name} could not be created")
+        raise HTTPException(status_code=500, detail=f"chat sandbox {name} could not be created")
     deadline = time.time() + CLAIM_READY_TIMEOUT
     while True:
         sname = sbx.get("metadata", {}).get("name", name)
@@ -290,28 +334,29 @@ async def _resolve_shared_sandbox(user_id: str) -> tuple[str, str]:
             pod_ip = _sandbox_pod_ip(sbx)
             if pod_ip:
                 _touch_sandbox(name)
-                log.info("session user=%s profile=persistent(shared) mode=shared-subpath -> sandbox=%s pod=%s",
-                         user_id[:32], name, pod_ip)
+                log.info("session user=%s chat=%s profile=persistent mode=%s -> sandbox=%s pod=%s",
+                         user_id[:32], session_id[:16], PERSISTENT_MODE, name, pod_ip)
                 return name, pod_ip
         if time.time() > deadline:
-            raise HTTPException(status_code=504, detail=f"shared sandbox {name} not ready in {CLAIM_READY_TIMEOUT}s")
+            raise HTTPException(status_code=504, detail=f"chat sandbox {name} not ready in {CLAIM_READY_TIMEOUT}s")
         await asyncio.sleep(1)
         sbx = _get_sandbox(name)
         if sbx is None:
-            raise HTTPException(status_code=500, detail=f"shared sandbox {name} vanished during resolve")
+            raise HTTPException(status_code=500, detail=f"chat sandbox {name} vanished during resolve")
 
 
 async def resolve_sandbox(user_id: str, session_id: str, profile: str) -> tuple[str, str]:
     """Return (sandbox_id, pod_ip): get-or-create the sandbox for this user/session,
     resuming a parked persistent sandbox if necessary, then wait for the pod IP.
 
-    Persistent has two deploy-selectable backends (BROKER_PERSISTENT_MODE):
-      * per-user-pvc  — SandboxClaim + per-user cephfs PVC (default).
-      * shared-subpath — direct per-user Sandbox whose /workspace is a subPath slice
-        of one shared RWX PVC (hard cross-user isolation, no warm pool)."""
-    if profile == PERSISTENT and PERSISTENT_MODE == "shared-subpath":
-        return await _resolve_shared_sandbox(user_id)
-    name = _persistent_claim_name(user_id) if profile == PERSISTENT else _claim_name(user_id, session_id)
+    Persistent (both backends) provisions a per-CHAT direct Sandbox whose /workspace
+    IS the chat's folder (subPath slice) — other chats and other users are invisible.
+    BROKER_PERSISTENT_MODE selects the backing volume: per-user-pvc (a dedicated
+    per-user PVC) or shared-subpath (one shared RWX PVC, prefix users/<id>/).
+    Ephemeral uses a warm-pool SandboxClaim (emptyDir /workspace)."""
+    if profile == PERSISTENT:
+        return await _resolve_chat_sandbox(user_id, session_id)
+    name = _claim_name(user_id, session_id)
     claim = _get_claim(name) or _create_claim(name, profile)
     if claim is None:
         raise HTTPException(status_code=500, detail=f"claim {name} could not be created")
@@ -500,9 +545,7 @@ async def proxy(path: str, request: Request, _=Security(_auth)):
 
     fwd = {k: v for k, v in request.headers.items() if k.lower() not in HOP}
     fwd.update({"X-Sandbox-Id": sandbox_id, "X-Sandbox-Namespace": RUNTIME_NS, "X-Sandbox-Pod-IP": pod_ip})
-    if profile == PERSISTENT:
-        # Isolate each chat under its own folder on the shared per-user PVC.
-        fwd["X-Workspace-Subdir"] = _subdir_for(session)
+    # No X-Workspace-Subdir: each chat's folder IS /workspace (per-chat subPath).
     body = await request.body()
     upstream = httpx.Request(request.method, f"{ROUTER_URL}/{path}",
                              headers=fwd, params=request.query_params, content=body)
@@ -550,10 +593,10 @@ async def _reaper_loop():
                     if idle > IDLE_TTL:
                         log.info("reaping ephemeral claim %s (idle %ds)", name, int(idle))
                         _delete_claim(name)
-            # shared-subPath persistent sandboxes (direct Sandbox objects, not claims)
+            # per-chat persistent sandboxes (direct Sandbox objects, both modes)
             sres = cast(dict, api.list_namespaced_custom_object(
                 SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes",
-                label_selector="broker-persistent-mode=shared-subpath"))
+                label_selector="broker-chat=true"))
             for s in sres.get("items", []):
                 sname = s["metadata"]["name"]
                 slu = int((s.get("metadata", {}).get("annotations", {}) or {}).get(LAST_USED, "0") or 0)
@@ -561,10 +604,10 @@ async def _reaper_loop():
                     continue
                 sidle = now - slu
                 if sidle > REAP_TTL:
-                    log.info("reaping shared sandbox %s (idle %ds)", sname, int(sidle))
+                    log.info("reaping chat sandbox %s (idle %ds)", sname, int(sidle))
                     _delete_sandbox(sname)
                 elif sidle > PARK_TTL and _sandbox_operating_mode(sname) != "Suspended":
-                    log.info("parking shared sandbox %s (idle %ds)", sname, int(sidle))
+                    log.info("parking chat sandbox %s (idle %ds)", sname, int(sidle))
                     _set_sandbox_operating_mode(sname, "Suspended")
         except Exception as exc:        # pragma: no cover - keep the loop alive
             log.warning("reaper iteration error: %s", exc)
