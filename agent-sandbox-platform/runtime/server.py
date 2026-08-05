@@ -48,6 +48,14 @@ def _env_int(name: str, default: int) -> int:
     except (TypeError, ValueError):
         return default
 
+# Bound per-sandbox process count (RLIMIT_NPROC) — caps fork bombs. gVisor enforces
+# it (proven). Set at import time so uvicorn + all exec'd subprocesses inherit it.
+try:
+    import resource as _rlimit_mod
+    _nproc = _env_int("MAX_PROCS", 256)
+    _rlimit_mod.setrlimit(_rlimit_mod.RLIMIT_NPROC, (_nproc, _nproc))
+except (ValueError, OSError, AttributeError):
+    pass
 
 WORKDIR = os.environ.get("WORKDIR", "/workspace")
 MAX_OUT = _env_int("MAX_OUTPUT_BYTES", 1 << 20)  # 1 MiB / stream

@@ -31,7 +31,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
       - name: runtime
-        image: code-standard:v2
+        image: code-standard:v4
         imagePullPolicy: Never
         ports: [{ containerPort: 8888 }]
         env:
