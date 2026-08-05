@@ -1,0 +1,60 @@
+# Sandbox-runtime isolation. default-deny ingress+egress; allow:
+#   ingress  — only the router (agent-sandbox-system) on the runtime port 8888
+#   egress   — DNS to PUBLIC resolvers (dnsPolicy: None — no cluster-DNS IP / no
+#              namespace search-domain leak), and HTTPS/HTTP to the internet for
+#              package installs, EXCLUDING all RFC1918/link-local so a sandbox
+#              cannot reach the cluster/internal nets.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-runtime-default-deny
+  namespace: {{ include "open-sandbox.runtimeNamespace" . }}
+  labels:
+    {{- include "open-sandbox.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ include "open-sandbox.systemNamespace" . }}
+    ports:
+    - protocol: TCP
+      port: 8888
+  egress:
+  - to:                               # DNS — public resolvers (matches dnsPolicy: None)
+    {{- range .Values.networkPolicy.egress.dnsNameservers }}
+    - ipBlock:
+        cidr: {{ . }}/32
+    {{- end }}
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  - to:                               # HTTPS+HTTP (IPv4) — pip/npm/git + curl
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:                       # block ALL private — anti-lateral-movement
+        {{- range .Values.networkPolicy.egress.exceptCIDRs }}
+        - {{ . }}
+        {{- end }}
+    ports:
+    {{- range .Values.networkPolicy.egress.httpsPorts }}
+    - protocol: TCP
+      port: {{ . }}
+    {{- end }}
+  - to:                               # HTTPS+HTTP (IPv6)
+    - ipBlock:
+        cidr: ::/0
+        except:
+        - fc00::/7                    # ULA
+        - fe80::/10                   # link-local
+    ports:
+    {{- range .Values.networkPolicy.egress.httpsPorts }}
+    - protocol: TCP
+      port: {{ . }}
+    {{- end }}

@@ -1,0 +1,73 @@
+# open-sandbox chart values.
+# Defaults reproduce the live manifests under deploy/base/. Set imageRegistry /
+# imageOwner / imagePullPolicy for prod (CI sets imageOwner from github.repository_owner).
+
+imageRegistry: ""        # prod: ghcr.io
+imageOwner: ""           # prod: <owner> (CI uses github.repository_owner)
+imagePullPolicy: Never   # prod: IfNotPresent
+imageTag: v0.1.0
+
+namespaces:
+  system: agent-sandbox-system    # broker + router (control plane)
+  runtime: agent-sandbox-runtime  # sandbox pods + SandboxTemplate/WarmPool
+
+broker:
+  sharedSecret: dev-shared-secret-change-me   # materialized into Secret owui-broker-secret
+  warmPool: code-standard-warmpool
+  runtimeNs: agent-sandbox-runtime
+  routerUrl: http://sandbox-router-svc.agent-sandbox-system:8080
+  idleTtlSeconds: 120
+  parkIdleSeconds: 120
+  defaultProfile: persistent
+  persistentMode: per-user-pvc     # per-user-pvc | shared-subpath
+  persistentStorage: 10Gi
+
+sandboxTemplate:
+  name: code-standard-v1
+  runtimeClassName: gvisor         # "" => omit field (runc, for KIND e2e)
+  runtimeRepository: open-sandbox-runtime
+  maxProcs: 256
+  uid: 1000
+  dns:
+    policy: None
+    nameservers: [8.8.8.8, 1.1.1.1]
+    ndots: 1
+  storage:
+    workspace: 4Gi
+    home: 2Gi
+    tmp: { medium: Memory, sizeLimit: 2Gi }
+    packages: 4Gi
+
+warmPool:
+  replicas: 2
+  templateName: code-standard-v1
+
+sharedPvc:
+  name: workspace-shared
+  size: 50Gi
+  storageClass: cephfs
+
+quota:
+  persistentVolumeClaims: "50"
+  storage: 200Gi
+  pods: "20"
+
+networkPolicy:
+  egress:
+    dnsNameservers: [8.8.8.8, 1.1.1.1]
+    httpsPorts: [443, 80]
+    exceptCIDRs:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - 169.254.0.0/16
+
+router:
+  repository: open-sandbox-router
+  replicas: 1
+  # Cluster IPs the router must reach (egress). Defaults are MicroK8s service-CIDR values;
+  # override for your cluster. These are the ClusterIPs of the `kubernetes` Service
+  # (informers + tokenreview) and kube-dns (coredns):
+  #   kubeadm 10.96.0.1/10.96.0.10   k3s 10.43.0.1/10.43.0.10   MicroK8s 10.96.0.1/10.96.0.10
+  kubeApiServerCidr: "10.96.0.1/32"
+  kubeDnsCidr: "10.96.0.10/32"

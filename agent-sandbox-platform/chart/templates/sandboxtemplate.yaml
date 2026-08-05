@@ -1,0 +1,124 @@
+# SandboxTemplate CRD — the runtime pod template.
+# Lets a SandboxClaim bring its own per-user PVC (volumeClaimTemplates); the
+# controller merges a claim's `workspace` VCT into the pod, replacing the
+# template's same-named emptyDir — so the SAME template serves ephemeral
+# (emptyDir, warm pool) and persistent (cephfs PVC, cold) profiles.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: {{ .Values.sandboxTemplate.name }}
+  namespace: {{ include "open-sandbox.runtimeNamespace" . }}
+  labels:
+    {{- include "open-sandbox.labels" . | nindent 4 }}
+spec:
+  volumeClaimTemplatesPolicy: Allowed
+  podTemplate:
+    metadata:
+      labels:
+        app: code-standard
+        profile: ephemeral
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.sandboxTemplate.runtimeClassName }}
+      runtimeClassName: {{ . }}
+      {{- end }}
+      dnsPolicy: {{ .Values.sandboxTemplate.dns.policy }}
+      dnsConfig:
+        nameservers:
+        {{- range .Values.sandboxTemplate.dns.nameservers }}
+        - {{ . }}
+        {{- end }}
+        searches: []                    # no namespace search domain
+        options:
+        - name: ndots
+          value: {{ .Values.sandboxTemplate.dns.ndots | quote }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.sandboxTemplate.uid }}
+        runAsGroup: {{ .Values.sandboxTemplate.uid }}
+        fsGroup: {{ .Values.sandboxTemplate.uid }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: runtime
+        image: {{ include "open-sandbox.image" (dict "Values" .Values "repo" .Values.sandboxTemplate.runtimeRepository) }}
+        imagePullPolicy: {{ .Values.imagePullPolicy }}
+        ports:
+        - containerPort: 8888
+        env:
+        - name: MAX_TIMEOUT
+          value: "600"
+        # Per-sandbox process cap (RLIMIT_NPROC); gVisor enforces it.
+        - name: MAX_PROCS
+          value: {{ .Values.sandboxTemplate.maxProcs | quote }}
+        # Suppress kubelet-injected KUBERNETES_* env (leaks service-CIDR / API IP).
+        - name: KUBERNETES_SERVICE_HOST
+          value: ""
+        - name: KUBERNETES_SERVICE_PORT
+          value: ""
+        - name: KUBERNETES_SERVICE_PORT_HTTPS
+          value: ""
+        - name: KUBERNETES_PORT
+          value: ""
+        - name: KUBERNETES_PORT_443_TCP
+          value: ""
+        - name: KUBERNETES_PORT_443_TCP_ADDR
+          value: ""
+        - name: KUBERNETES_PORT_443_TCP_PORT
+          value: ""
+        - name: KUBERNETES_PORT_443_TCP_PROTO
+          value: ""
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: {{ .Values.sandboxTemplate.uid }}
+          runAsGroup: {{ .Values.sandboxTemplate.uid }}
+          capabilities:
+            drop: ["ALL"]
+        readinessProbe:
+          httpGet:
+            path: "/"
+            port: 8888
+          periodSeconds: 2
+        livenessProbe:
+          httpGet:
+            path: "/"
+            port: 8888
+          initialDelaySeconds: 3
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+            ephemeral-storage: 2Gi
+          limits:
+            cpu: "2"
+            memory: 4Gi
+            ephemeral-storage: 12Gi
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: home
+          mountPath: /home/sandbox
+        - name: tmp
+          mountPath: /tmp
+        - name: packages
+          mountPath: /packages
+      volumes:
+      - name: workspace
+        emptyDir:
+          sizeLimit: {{ .Values.sandboxTemplate.storage.workspace }}
+      - name: home
+        emptyDir:
+          sizeLimit: {{ .Values.sandboxTemplate.storage.home }}
+      - name: tmp
+        emptyDir:
+          {{- with .Values.sandboxTemplate.storage.tmp }}
+          medium: {{ .medium }}
+          sizeLimit: {{ .sizeLimit }}
+          {{- end }}
+      - name: packages
+        emptyDir:
+          sizeLimit: {{ .Values.sandboxTemplate.storage.packages }}
+      restartPolicy: OnFailure

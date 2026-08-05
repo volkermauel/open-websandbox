@@ -1,0 +1,40 @@
+# Runtime namespace capacity guardrails. Caps how many sandbox pods / how much
+# CPU/memory/storage the runtime namespace can consume, and sets sane default
+# requests/limits so a pod without explicit resources still gets bounded.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: sandbox-runtime-quota
+  namespace: {{ include "open-sandbox.runtimeNamespace" . }}
+  labels:
+    {{- include "open-sandbox.labels" . | nindent 4 }}
+spec:
+  hard:
+    count/pods: {{ .Values.quota.pods | quote }}
+    requests.cpu: "10"
+    limits.cpu: "30"
+    requests.memory: 20Gi
+    limits.memory: 40Gi
+    requests.ephemeral-storage: 20Gi
+    limits.ephemeral-storage: 120Gi
+    persistentvolumeclaims: {{ .Values.quota.persistentVolumeClaims | quote }}
+    requests.storage: {{ .Values.quota.storage }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: sandbox-runtime-limits
+  namespace: {{ include "open-sandbox.runtimeNamespace" . }}
+  labels:
+    {{- include "open-sandbox.labels" . | nindent 4 }}
+spec:
+  limits:
+  - type: Container
+    defaultRequest:
+      cpu: 250m
+      memory: 512Mi
+      ephemeral-storage: 1Gi
+    default:
+      cpu: "2"
+      memory: 4Gi
+      ephemeral-storage: 4Gi

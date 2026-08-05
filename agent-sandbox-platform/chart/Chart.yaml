@@ -1,0 +1,14 @@
+apiVersion: v2
+name: open-sandbox
+description: >
+  Open Sandbox platform for Open WebUI — broker, sandbox-router, SandboxTemplate,
+  SandboxWarmPool and runtime isolation guardrails (NetworkPolicy, ResourceQuota,
+  shared PVC).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - open-webui
+  - sandbox
+  - agents
+  - kubernetes

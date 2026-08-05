@@ -1,0 +1,142 @@
+# Open WebUI broker: auth + session->sandbox + reverse-proxy to the router.
+# Lives in agent-sandbox-system; needs RBAC in agent-sandbox-runtime to manage
+# SandboxClaims and read Sandboxes.
+{{- $sysNs := include "open-sandbox.systemNamespace" . -}}
+{{- $runNs := include "open-sandbox.runtimeNamespace" . -}}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: owui-broker-secret
+  namespace: {{ $sysNs }}
+  labels:
+    {{- include "open-sandbox.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  shared-secret: {{ .Values.broker.sharedSecret | quote }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: owui-broker
+  namespace: {{ $sysNs }}
+  labels:
+    {{- include "open-sandbox.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: owui-broker
+  namespace: {{ $runNs }}
+  labels:
+    {{- include "open-sandbox.labels" . | nindent 4 }}
+rules:
+# claims (per-user-pvc) + templates (read base for shared-subpath)
+- apiGroups: ["extensions.agents.x-k8s.io"]
+  resources: ["sandboxclaims", "sandboxtemplates"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Sandboxes live in the `agents.x-k8s.io` group (not extensions). The broker reads
+# operatingMode and patches Suspended/Running to park/resume persistent sandboxes,
+# and (persistent mode) creates + deletes per-chat Sandbox objects directly.
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# per-user-pvc mode: the broker creates/reads per-user PVCs directly (CoreV1).
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: owui-broker
+  namespace: {{ $runNs }}
+  labels:
+    {{- include "open-sandbox.labels" . | nindent 4 }}
+subjects:
+- kind: ServiceAccount
+  name: owui-broker
+  namespace: {{ $sysNs }}
+roleRef:
+  kind: Role
+  name: owui-broker
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: owui-broker
+  namespace: {{ $sysNs }}
+  labels:
+    {{- include "open-sandbox.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: owui-broker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: owui-broker
+    spec:
+      serviceAccountName: owui-broker
+      containers:
+      - name: broker
+        image: {{ include "open-sandbox.image" (dict "Values" .Values "repo" "open-sandbox-broker") }}
+        imagePullPolicy: {{ .Values.imagePullPolicy }}
+        ports:
+        - containerPort: 8080
+        env:
+        - name: BROKER_SHARED_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: owui-broker-secret
+              key: shared-secret
+        - name: BROKER_WARMPOOL
+          value: {{ .Values.broker.warmPool | quote }}
+        - name: BROKER_RUNTIME_NS
+          value: {{ .Values.broker.runtimeNs | quote }}
+        - name: BROKER_ROUTER_URL
+          value: {{ .Values.broker.routerUrl | quote }}
+        - name: BROKER_IDLE_TTL_SECONDS
+          value: {{ .Values.broker.idleTtlSeconds | quote }}
+        - name: BROKER_DEFAULT_PROFILE
+          value: {{ .Values.broker.defaultProfile | quote }}
+        - name: BROKER_PERSISTENT_STORAGE
+          value: {{ .Values.broker.persistentStorage | quote }}
+        - name: BROKER_PERSISTENT_MODE
+          value: {{ .Values.broker.persistentMode | quote }}
+        - name: BROKER_PARK_IDLE_SECONDS
+          value: {{ .Values.broker.parkIdleSeconds | quote }}
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          periodSeconds: 2
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: "1"
+            memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: owui-broker
+  namespace: {{ $sysNs }}
+  labels:
+    {{- include "open-sandbox.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: owui-broker
+  ports:
+  - port: 8080
+    targetPort: 8080
