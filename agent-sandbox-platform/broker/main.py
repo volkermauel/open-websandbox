@@ -287,6 +287,7 @@ async def terminal_ws(client_ws: WebSocket, session_id: str):
         client_ws.query_params.get("session_id")
         or client_ws.query_params.get("chat_id")
         or client_ws.headers.get("x-session-id", "")
+        or session_id  # OWUI's WS proxy puts the chat-id in the path, not a query param
     )
     if not user or not session:
         await client_ws.close(code=1008, reason="user_id and session_id are required")
@@ -300,6 +301,16 @@ async def terminal_ws(client_ws: WebSocket, session_id: str):
     except HTTPException as exc:
         await client_ws.close(code=1011, reason=f"sandbox unavailable: {exc.detail}")
         return
+
+    # Ensure an interactive PTY exists on this resolved pod before attaching the WS.
+    # OWUI's own POST /api/terminals is routed via the sandbox-router and may land on a
+    # different pod than this direct WS; creating it here makes the terminal
+    # self-contained and avoids a runtime 4004 'unknown session' close (idempotent).
+    with contextlib.suppress(Exception):
+        await _client.post(
+            f"http://{pod_ip}:8888/api/terminals",
+            headers={"Authorization": f"Bearer {SHARED_SECRET}", "X-Session-Id": session_id},
+        )
 
     # Connect directly to the runtime pod (the broker already resolved its IP; the
     # runtime NP allows agent-sandbox-system ingress on 8888). Bypassing the router
