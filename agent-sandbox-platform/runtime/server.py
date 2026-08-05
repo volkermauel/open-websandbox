@@ -2,7 +2,7 @@
 
 Hardened FastAPI app that mirrors the OWUI open-terminal surface and the
 agent-sandbox python-runtime reference: POST /execute (stdout/stderr/exit_code)
-plus file ops (/upload, /download, /list, /exists) and a GET / health check.
+plus the open-terminal /files/* + /ports surface and a GET / health check.
 
 Hardening over the reference:
   * /execute runs in a NEW process group (start_new_session=True) so a timeout
@@ -17,23 +17,28 @@ import asyncio
 import contextlib
 import datetime as _dt
 import fcntl
+import fnmatch
 import hmac
+import io
 import json
 import logging
+import mimetypes
 import os
 import pty
 import re
 import select
+import shutil
 import signal
 import struct
 import subprocess
 import termios
 import urllib.parse
 import uuid as _uuid
+import zipfile
 from typing import Optional
 
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, Header, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 def _env_int(name: str, default: int) -> int:
@@ -82,12 +87,19 @@ _SUBDIR_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 def _safe_path(rel: str, base: str = WORKDIR) -> str:
     """Resolve `rel` under `base` (default WORKDIR), rejecting escapes.
 
+    Relative paths are joined to `base`; absolute paths already inside `base` are
+    honoured as-is (the open-terminal UI echoes the absolute cwd back from GET
+    /files/cwd). Any path that resolves outside `base` is rejected.
+
     When a per-chat `X-Workspace-Subdir` is in effect, `base` is WORKDIR/<subdir>;
     the same confinement applies.
     """
-    rel = urllib.parse.unquote(rel).lstrip("/")
+    rel = urllib.parse.unquote(rel or "")
     base = os.path.realpath(base)
-    full = os.path.realpath(os.path.join(base, rel))
+    if os.path.isabs(rel):
+        full = os.path.realpath(rel)
+    else:
+        full = os.path.realpath(os.path.join(base, rel.lstrip("/")))
     if full != base and not full.startswith(base + os.sep):
         raise HTTPException(status_code=400, detail="path escapes workspace")
     return full
@@ -160,51 +172,348 @@ def _kill_group(pid: int) -> None:
         os.killpg(os.getpgid(pid), signal.SIGKILL)
 
 
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...), subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+# --- open-terminal filesystem surface ---------------------------------------
+# Mirrors ghcr.io/open-webui/open-terminal's /files/* + /ports contract so the
+# OWUI terminal UI file browser connects unchanged. All paths are confined to the
+# per-request workspace base (WORKDIR, or WORKDIR/<subdir> under X-Workspace-Subdir)
+# via _safe_path — no traversal escape.
+
+
+class CwdRequest(BaseModel):
+    path: str
+
+
+class WriteRequest(BaseModel):
+    path: str
+    content: str
+
+
+class PathRequest(BaseModel):
+    path: str
+
+
+class MoveRequest(BaseModel):
+    source: str
+    destination: str
+
+
+class ReplacementChunk(BaseModel):
+    target: str
+    replacement: str
+    start_line: Optional[int] = Field(default=None, ge=1)
+    end_line: Optional[int] = Field(default=None, ge=1)
+    allow_multiple: bool = False
+
+
+class ReplaceRequest(BaseModel):
+    path: str
+    replacements: list[ReplacementChunk]
+
+
+class ArchiveRequest(BaseModel):
+    paths: list[str]
+
+
+@app.get("/ports")
+async def list_ports():
+    # Restricted runtime: no host-port introspection. Surface an empty list so the
+    # UI ports panel renders cleanly (matches open-terminal's restricted fallback).
+    return {"ports": []}
+
+
+@app.get("/files/cwd")
+async def get_cwd(subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
     base = _request_base(subdir)
-    full = _safe_path(file.filename or "", base)
+    return {"cwd": base, "home": base}
+
+
+@app.post("/files/cwd")
+async def set_cwd(req: CwdRequest, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    resolved = _safe_path(req.path, _request_base(subdir))
+    if not os.path.isdir(resolved):
+        raise HTTPException(status_code=404, detail="Directory not found")
+    return {"cwd": resolved}
+
+
+def _entry(p: str) -> dict:
+    st = os.stat(p)
+    return {
+        "name": os.path.basename(p),
+        "type": "directory" if os.path.isdir(p) else "file",
+        "size": int(st.st_size),
+        "modified": float(st.st_mtime),
+    }
+
+
+@app.get("/files/list")
+async def list_dir(directory: str = ".", subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    if str(directory).strip().lower() in ("", "null"):
+        directory = "."
+    resolved = _safe_path(directory, _request_base(subdir))
+    if not os.path.isdir(resolved):
+        raise HTTPException(status_code=404, detail="Directory not found")
+    try:
+        entries = [_entry(os.path.join(resolved, n)) for n in sorted(os.listdir(resolved))]
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"list failed: {e}") from e
+    return {"dir": resolved, "entries": entries}
+
+
+@app.get("/files/read")
+async def read_file(path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    full = _safe_path(path, _request_base(subdir))
+    if not os.path.isfile(full):
+        raise HTTPException(status_code=404, detail="File not found")
+    mime, _ = mimetypes.guess_type(full)
+    if mime and mime.startswith("image/"):
+        try:
+            with open(full, "rb") as f:
+                return Response(content=f.read(), media_type=mime)
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"read failed: {e}") from e
+    try:
+        with open(full, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"read failed: {e}") from e
+    return {"path": full, "total_lines": len(content.splitlines()), "content": content}
+
+
+@app.post("/files/write")
+async def write_file(req: WriteRequest, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    base = _request_base(subdir)
+    full = _safe_path(req.path, base)
+    data = req.content.encode("utf-8")
     try:
         os.makedirs(os.path.dirname(full) or base, exist_ok=True)
+        with open(full, "wb") as f:
+            f.write(data)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"path": full, "size": len(data)}
+
+
+@app.post("/files/mkdir")
+async def mkdir(req: PathRequest, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    full = _safe_path(req.path, _request_base(subdir))
+    try:
+        os.makedirs(full, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"path": full}
+
+
+@app.post("/files/move")
+async def move(req: MoveRequest, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    base = _request_base(subdir)
+    src = _safe_path(req.source, base)
+    dst = _safe_path(req.destination, base)
+    if not os.path.exists(src):
+        raise HTTPException(status_code=404, detail="Source path not found")
+    if os.path.exists(dst):
+        raise HTTPException(status_code=409, detail="Destination already exists")
+    try:
+        shutil.move(src, dst)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"source": src, "destination": dst}
+
+
+@app.delete("/files/delete")
+async def delete_entry(path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    full = _safe_path(path, _request_base(subdir))
+    if not os.path.exists(full):
+        raise HTTPException(status_code=404, detail="Path not found")
+    is_dir = os.path.isdir(full)
+    try:
+        shutil.rmtree(full) if is_dir else os.remove(full)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"path": full, "type": "directory" if is_dir else "file"}
+
+
+@app.post("/files/replace")
+async def replace(req: ReplaceRequest, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    full = _safe_path(req.path, _request_base(subdir))
+    if not os.path.isfile(full):
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        with open(full, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    for chunk in req.replacements:
+        content = _apply_replacement(content, chunk)
+    data = content.encode("utf-8")
+    try:
+        with open(full, "wb") as f:
+            f.write(data)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"path": full, "size": len(data)}
+
+
+def _replace_target(segment: str, chunk: ReplacementChunk) -> str:
+    count = segment.count(chunk.target)
+    if count == 0:
+        raise HTTPException(status_code=400, detail=f"Target string not found: {chunk.target}")
+    if count > 1 and not chunk.allow_multiple:
+        raise HTTPException(status_code=400, detail=f"Found {count} occurrences of target but allow_multiple is false")
+    if chunk.allow_multiple:
+        return segment.replace(chunk.target, chunk.replacement)
+    return segment.replace(chunk.target, chunk.replacement, 1)
+
+
+def _apply_replacement(content: str, chunk: ReplacementChunk) -> str:
+    if chunk.start_line is None and chunk.end_line is None:
+        return _replace_target(content, chunk)
+    lines = content.split("\n")
+    start = max(0, (chunk.start_line or 1) - 1)
+    end = len(lines) if chunk.end_line is None else min(len(lines), chunk.end_line)
+    if start >= end:
+        return content
+    segment = "\n".join(lines[start:end])
+    new_segment = _replace_target(segment, chunk)
+    # rebuild via concatenation (avoids list slice-assignment type confusion)
+    lines = lines[:start] + new_segment.split("\n") + lines[end:]
+    return "\n".join(lines)
+
+
+def _walk_files(root: str, include: Optional[list[str]] = None) -> list[str]:
+    """All regular files under `root` (sorted); optional fnmatch include filter."""
+    if os.path.isfile(root):
+        return [root]
+    out = []
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for fn in filenames:
+            if include and not any(fnmatch.fnmatch(fn, pat) for pat in include):
+                continue
+            out.append(os.path.join(dirpath, fn))
+    out.sort()
+    return out
+
+
+@app.get("/files/grep")
+async def grep(
+    query: str,
+    path: str = ".",
+    regex: bool = True,
+    case_insensitive: bool = False,
+    include: Optional[list[str]] = Query(default=None),
+    max_results: int = Query(default=50, ge=1, le=500),
+    subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir"),
+):
+    resolved = _safe_path(path, _request_base(subdir))
+    if not os.path.exists(resolved):
+        raise HTTPException(status_code=404, detail="Search path not found")
+    flags = re.IGNORECASE if case_insensitive else 0
+    try:
+        pattern = re.compile(query, flags) if regex else re.compile(re.escape(query), flags)
+    except re.error as e:
+        raise HTTPException(status_code=400, detail=f"Invalid regex: {e}") from e
+    matches: list[dict] = []
+    for fpath in _walk_files(resolved, include):
+        try:
+            with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                for lineno, line in enumerate(f, 1):
+                    if pattern.search(line.rstrip("\n")):
+                        matches.append({"file": fpath, "line": lineno, "content": line.rstrip("\n")})
+                        if len(matches) >= max_results:
+                            return {"query": query, "path": resolved, "matches": matches, "truncated": True}
+        except OSError:
+            continue
+    return {"query": query, "path": resolved, "matches": matches, "truncated": False}
+
+
+@app.get("/files/glob")
+async def glob_search(
+    pattern: str,
+    path: str = ".",
+    type: str = "any",
+    max_results: int = Query(default=50, ge=1, le=500),
+    subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir"),
+):
+    resolved = _safe_path(path, _request_base(subdir))
+    if not os.path.exists(resolved):
+        raise HTTPException(status_code=404, detail="Search directory not found")
+    matches: list[dict] = []
+    for dirpath, dirnames, filenames in os.walk(resolved):
+        for name in list(dirnames) + list(filenames):
+            full = os.path.join(dirpath, name)
+            rel = os.path.relpath(full, resolved)
+            if not (fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(name, pattern)):
+                continue
+            is_dir = os.path.isdir(full)
+            if type == "file" and is_dir:
+                continue
+            if type == "directory" and not is_dir:
+                continue
+            try:
+                st = os.stat(full)
+                matches.append({"path": rel, "type": "directory" if is_dir else "file", "size": int(st.st_size), "modified": float(st.st_mtime)})
+            except OSError:
+                continue
+            if len(matches) >= max_results:
+                matches.sort(key=lambda m: m["path"])
+                return {"pattern": pattern, "path": resolved, "matches": matches, "truncated": True}
+    matches.sort(key=lambda m: m["path"])
+    return {"pattern": pattern, "path": resolved, "matches": matches, "truncated": False}
+
+
+@app.post("/files/upload")
+async def upload(
+    file: UploadFile = File(...),
+    directory: str = "",
+    subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir"),
+):
+    base = _request_base(subdir)
+    target_dir = base if str(directory).strip().lower() in ("", "null") else _safe_path(directory, base)
+    if not os.path.isdir(target_dir):
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+        except OSError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    filename = os.path.basename(file.filename or "upload")
+    full = os.path.realpath(os.path.join(target_dir, filename))
+    if full != base and not full.startswith(base + os.sep):
+        raise HTTPException(status_code=400, detail="path escapes workspace")
+    try:
         with open(full, "wb") as f:
             while chunk := await file.read(1 << 20):
                 f.write(chunk)
     except OSError as e:
-        raise HTTPException(status_code=500, detail=f"write failed: {e}") from e
-    return {"saved": os.path.relpath(full, base), "bytes": os.path.getsize(full)}
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"path": full, "size": os.path.getsize(full)}
 
 
-@app.get("/download/{file_path:path}")
-async def download_file(file_path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
-    full = _safe_path(file_path, _request_base(subdir))
-    if not os.path.isfile(full):
-        raise HTTPException(status_code=404, detail="not found")
-    return FileResponse(full, filename=os.path.basename(full))
-
-
-@app.get("/list/{file_path:path}")
-async def list_files(file_path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+@app.post("/files/archive")
+async def archive(req: ArchiveRequest, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
     base = _request_base(subdir)
-    full = _safe_path(file_path, base)
-    if not os.path.isdir(full):
-        raise HTTPException(status_code=404, detail="not a directory")
-    entries = []
-    try:
-        names = sorted(os.listdir(full))
-    except OSError as e:
-        raise HTTPException(status_code=500, detail=f"list failed: {e}") from e
-    for name in names:
-        p = os.path.join(full, name)
-        entries.append(
-            {"name": name, "type": "dir" if os.path.isdir(p) else "file", "size": os.path.getsize(p)}
-        )
-    return {"path": os.path.relpath(full, base), "entries": entries}
-
-
-@app.get("/exists/{file_path:path}")
-async def exists(file_path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
-    full = _safe_path(file_path, _request_base(subdir))
-    return {"exists": os.path.exists(full), "is_file": os.path.isfile(full), "is_dir": os.path.isdir(full)}
+    if not req.paths:
+        raise HTTPException(status_code=400, detail="No paths provided")
+    resolved = []
+    for p in req.paths:
+        full = _safe_path(p, base)
+        if not os.path.exists(full):
+            raise HTTPException(status_code=404, detail=f"Path not found: {p}")
+        resolved.append(full)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for full in resolved:
+            arcroot = os.path.basename(full.rstrip("/"))
+            if os.path.isdir(full):
+                for dirpath, _dn, filenames in os.walk(full):
+                    for fn in filenames:
+                        fp = os.path.join(dirpath, fn)
+                        zf.write(fp, os.path.join(arcroot, os.path.relpath(fp, full)))
+            else:
+                zf.write(full, arcroot)
+    name = os.path.basename(resolved[0].rstrip("/")) if len(resolved) == 1 else "download"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{name}.zip"'},
+    )
 
 
 # --- interactive terminal (PTY) -------------------------------------------------

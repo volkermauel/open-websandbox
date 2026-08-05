@@ -338,12 +338,29 @@ async def terminal_ws(client_ws: WebSocket, session_id: str):
         with contextlib.suppress(Exception):
             await client_ws.close(code=1011, reason="terminal unavailable")
 
+
+
+@app.get("/api/config", include_in_schema=False)
+async def terminal_config(_=Security(_auth)):
+    """Feature discovery — the UI connection-test gate.
+
+    Static (never proxied): served Bearer-only, no X-User-Id, matching how
+    open-terminal-k8s-proxy serves it. The OWUI terminal UI treats this as the
+    connection-success signal.
+    """
+    return {"features": {"terminal": True, "notebooks": False, "desktop": False}}
+
+
+@app.get("/api/status", include_in_schema=False)
+async def terminal_status(_=Security(_auth)):
+    """Operator telemetry. Static (never proxied)."""
+    return {"active_pods": 0, "max_pods": 10, "pods": []}
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
 async def proxy(path: str, request: Request, _=Security(_auth)):
     user = request.headers.get("X-User-Id", "")
-    session = request.headers.get("X-Session-Id", "")
-    if not user or not session:
-        raise HTTPException(status_code=400, detail="X-User-Id and X-Session-Id headers are required")
+    session = request.headers.get("X-Session-Id") or user
+    if not user:
+        raise HTTPException(status_code=400, detail="X-User-Id header is required")
     profile = PERSISTENT if request.headers.get("X-Persistence", "").lower() == PERSISTENT else EPHEMERAL
     sandbox_id, pod_ip = await resolve_sandbox(user, session, profile)
 
