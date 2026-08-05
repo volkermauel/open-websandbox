@@ -10,17 +10,19 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` done.
       (exit/timeout/group-kill), WS terminal echo (real fs + PTY)
 - [ ] `tests/unit/broker/` — name hashing, session resolution, staging migration, reaper
       (fake k8s client; monkeypatch `api`/`core` globals)
-- [ ] `BROKER_RUNTIME_CLASS` env knob in broker so e2e can drop gVisor (D4)
-- [ ] `deploy/test/` runc overlay (strip `runtimeClassName: gvisor`)
+- [ ] gVisor/runc toggle via Helm value `sandboxTemplate.runtimeClassName` (default gvisor; `""` for KIND) — no broker code change needed
+- [ ] `tests/e2e/values-runc.yaml` (sets runtimeClassName="" for KIND)
 - [ ] `tests/e2e/` — KIND: controller + CRDs + platform; create sandbox; `/execute`; assert
 - [ ] `@pytest.mark.gvisor` manual smoke (`scripts/smoke-gvisor-sandbox.yaml`)
 
-## Packaging (D1, D2)
+## Packaging — Helm chart (D1, D2)
 
-- [ ] `deploy/base/kustomization.yaml` (resources + `images:` transformer + namespace + labels)
-- [ ] `deploy/overlays/prod/` (registry/owner, replicas, PVC size)
-- [ ] images -> `ghcr.io/<owner>/open-sandbox-*`; `imagePullPolicy: Never` -> `IfNotPresent`
-- [ ] render `manifests-v0.1.0.yaml` at release
+- [~] `agent-sandbox-platform/chart/` (Chart.yaml + values.yaml + templates/) reproducing
+      the live manifests exactly, with knobs: imageRegistry/owner/tag, broker env,
+      runtimeClassName (gVisor/runc), warm pool, PVC/storageClass, idle TTLs
+- [ ] prod values: imageRegistry=ghcr.io, imageOwner=<owner>, imagePullPolicy=IfNotPresent
+- [ ] `helm lint` + `helm template` green
+- [ ] render `manifests-v0.1.0.yaml` from the chart at release
 
 ## Router self-build (D3)
 

@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+# pytest-asyncio: every async test/fixture is auto-collected, no markers needed.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests/unit/runtime"]
+filterwarnings = [
+    # uvicorn (in the live-server fixture) is noisy on stdout; silence its access logs.
+    "ignore::DeprecationWarning",
+]
