@@ -43,17 +43,15 @@ Open WebUI ──► broker ──HTTP──► sandbox-router ──► sandbox
 sha256sum -c agent-sandbox-platform/upstream/SHA256SUMS
 kubectl apply -f agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
 
-# 2. namespaces
+# 2. namespaces (or set namespaces.create: true in values below)
 kubectl create namespace agent-sandbox-system      # controller, router, broker
 kubectl create namespace agent-sandbox-runtime     # templates, pools, claims, sandboxes, pods
 
-# 3. platform manifests (base kustomization: broker + router + RBAC/NP/PDB,
-#    SandboxTemplate + WarmPool + shared PVC + ResourceQuota + runtime NP)
-kubectl apply -k agent-sandbox-platform/deploy/base
+# 3. build & load the three images (broker, runtime, router) into each gVisor worker
 
-# 4. build & load the three images (broker, runtime, router), then set the shared secret
-kubectl -n agent-sandbox-system create secret generic owui-broker-secret \
-  --from-literal=shared-secret="$(openssl rand -hex 32)"
+# 4. install the platform via Helm (config in my-values.yaml: images,
+#    broker secret/env, runtimeClassName, warm pool, PVC/storageClass, idle TTLs)
+helm install open-sandbox agent-sandbox-platform/chart/ -f my-values.yaml
 
 # 5. wire Open WebUI → broker, sending per session:
 #      Authorization: Bearer <shared-secret>, X-User-Id, X-Session-Id
