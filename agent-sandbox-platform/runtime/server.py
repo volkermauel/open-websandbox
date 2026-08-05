@@ -38,7 +38,7 @@ import zipfile
 from typing import Optional
 
 from fastapi import FastAPI, File, Header, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 def _env_int(name: str, default: int) -> int:
@@ -514,6 +514,65 @@ async def archive(req: ArchiveRequest, subdir: Optional[str] = Header(default=No
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{name}.zip"'},
     )
+
+
+# --- LLM-tool surface (openapi.json operationIds) ----------------------------
+# Thin handlers backing the broker's curated openapi.json so the model's
+# upload_file / download_file / list_files / check_exists tools resolve. These
+# coexist with the open-terminal /files/* surface above (used by the terminal UI).
+
+
+@app.post("/upload")
+async def tool_upload(file: UploadFile = File(...), subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    base = _request_base(subdir)
+    filename = os.path.basename(file.filename or "upload")
+    full = os.path.realpath(os.path.join(base, filename))
+    if full != base and not full.startswith(base + os.sep):
+        raise HTTPException(status_code=400, detail="path escapes workspace")
+    try:
+        n = 0
+        with open(full, "wb") as f:
+            while chunk := await file.read(1 << 20):
+                f.write(chunk)
+                n += len(chunk)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"saved": full, "bytes": n}
+
+
+@app.get("/download/{file_path:path}")
+async def tool_download(file_path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    full = _safe_path(file_path, _request_base(subdir))
+    if not os.path.isfile(full):
+        raise HTTPException(status_code=404, detail="File not found")
+    mime, _ = mimetypes.guess_type(full)
+    return FileResponse(full, media_type=mime or "application/octet-stream", filename=os.path.basename(full))
+
+
+@app.get("/list/{file_path:path}")
+async def tool_list(file_path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    fp = file_path.strip() or "."
+    resolved = _safe_path(fp, _request_base(subdir))
+    if not os.path.isdir(resolved):
+        raise HTTPException(status_code=404, detail="Directory not found")
+    entries = []
+    try:
+        for n in sorted(os.listdir(resolved)):
+            p = os.path.join(resolved, n)
+            try:
+                st = os.stat(p)
+                entries.append({"name": n, "is_dir": os.path.isdir(p), "size": int(st.st_size)})
+            except OSError:
+                continue
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"list failed: {e}") from e
+    return {"path": resolved, "entries": entries}
+
+
+@app.get("/exists/{file_path:path}")
+async def tool_exists(file_path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    full = _safe_path(file_path.strip() or ".", _request_base(subdir))
+    return {"exists": os.path.exists(full), "is_file": os.path.isfile(full), "is_dir": os.path.isdir(full)}
 
 
 # --- interactive terminal (PTY) -------------------------------------------------

@@ -373,9 +373,19 @@ async def proxy(path: str, request: Request, _=Security(_auth)):
     upstream = httpx.Request(request.method, f"{ROUTER_URL}/{path}",
                              headers=fwd, params=request.query_params, content=body)
     resp = await _client.send(upstream, stream=True)
-    return Response(content=await resp.aread(), status_code=resp.status_code,
-                    headers={k: v for k, v in resp.headers.items() if k.lower() not in HOP},
-                    media_type=resp.headers.get("content-type"))
+    resp_body = await resp.aread()
+    out_headers = {k: v for k, v in resp.headers.items() if k.lower() not in HOP}
+    # Rewrite redirect Location so clients follow back through the broker instead of
+    # the runtime pod IP (e.g. Starlette's /list/. -> /list/ 307), which is unreachable
+    # from outside agent-sandbox-system.
+    if resp.status_code in (301, 302, 303, 307, 308):
+        loc = resp.headers.get("location")
+        if loc:
+            from urllib.parse import urlsplit, urlunsplit
+            parts = urlsplit(loc)
+            out_headers["location"] = urlunsplit(("", "", parts.path, parts.query, ""))
+    return Response(content=resp_body, status_code=resp.status_code,
+                    headers=out_headers, media_type=resp.headers.get("content-type"))
 
 
 # --- idle reaper ------------------------------------------------------------

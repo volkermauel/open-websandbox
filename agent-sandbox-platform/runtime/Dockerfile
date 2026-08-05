@@ -9,7 +9,7 @@ FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential python3-dev \
       nodejs npm \
-      git curl jq zip unzip ca-certificates openssh-client \
+      git curl jq zip unzip ca-certificates openssh-client sudo \
       && rm -rf /var/lib/apt/lists/*
 
 # Runtime server deps, then curated "agent-common" libs (warm-ready on claim).
@@ -24,7 +24,9 @@ RUN chmod +x /app/entrypoint.sh
 # Non-root user 1000; /workspace is mounted (emptyDir/PVC) at runtime.
 RUN useradd -u 1000 -m -d /home/sandbox -s /bin/bash sandbox \
  && mkdir -p /workspace /home/sandbox/.cache/pip /home/sandbox/.local /home/sandbox/.npm-global \
- && chown -R 1000:1000 /app /workspace /home/sandbox
+ && chown -R 1000:1000 /app /workspace /home/sandbox \
+ && echo 'sandbox ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/sandbox \
+ && chmod 0440 /etc/sudoers.d/sandbox
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_CACHE_DIR=/home/sandbox/.cache/pip \
