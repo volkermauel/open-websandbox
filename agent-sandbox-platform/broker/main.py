@@ -1,10 +1,12 @@
 """code-standard broker — the Open WebUI front door.
 
-Two profiles, selected per request via the ``X-Persistence`` header:
+Two profiles. The default is chosen at DEPLOY time via ``BROKER_DEFAULT_PROFILE``,
+(``persistent`` by default — OWUI cannot set request headers); an explicit, valid
+``X-Persistence`` header/query still overrides it for admin/testing:
 
-* **ephemeral** (default): one warm-pool claim per *session*; ``/workspace`` is an
+* **ephemeral**: one warm-pool claim per *session*; ``/workspace`` is an
   emptyDir, destroyed when the claim is reaped (idle > ``BROKER_IDLE_TTL_SECONDS``).
-* **persistent** (``X-Persistence: persistent``): one *per-user* claim carrying a
+* **persistent** (deploy default): one *per-user* claim carrying a
   ``workspace`` ``volumeClaimTemplates`` PVC (cephfs RWX); the same PVC is resumed
   across any of the user's sessions. Each chat runs isolated under
   ``/workspace/<subdir>`` (the broker injects ``X-Workspace-Subdir``). The broker
@@ -55,7 +57,7 @@ CLAIM_READY_TIMEOUT = _env_int("BROKER_CLAIM_TIMEOUT_SECONDS", 60)
 # allow long-running commands (sandbox MAX_TIMEOUT is 600s)
 PROXY_TIMEOUT = _env_int("BROKER_PROXY_TIMEOUT_SECONDS", 660)
 PERSISTENT_SC = os.environ.get("BROKER_PERSISTENT_STORAGECLASS", "cephfs")
-PERSISTENT_SIZE = os.environ.get("BROKER_PERSISTENT_STORAGE", "1Gi")
+PERSISTENT_SIZE = os.environ.get("BROKER_PERSISTENT_STORAGE", "10Gi")
 
 GROUP, VER = "extensions.agents.x-k8s.io", "v1beta1"
 SANDBOX_GROUP = "agents.x-k8s.io"  # the `sandbox` resource lives in a different group than claims
@@ -65,6 +67,11 @@ LAST_USED = "broker-last-used"
 PROFILE = "broker-profile"
 EPHEMERAL = "ephemeral"
 PERSISTENT = "persistent"
+# Default profile, fixed at DEPLOY time (OWUI cannot send X-Persistence). An explicit,
+# valid X-Persistence header/query still overrides it for admin/testing.
+DEFAULT_PROFILE = os.environ.get("BROKER_DEFAULT_PROFILE", PERSISTENT).lower()
+if DEFAULT_PROFILE not in (EPHEMERAL, PERSISTENT):
+    DEFAULT_PROFILE = PERSISTENT
 MANAGED_BY = {"app.kubernetes.io/managed-by": "owui-broker"}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -292,12 +299,13 @@ async def terminal_ws(client_ws: WebSocket, session_id: str):
     if not user or not session:
         await client_ws.close(code=1008, reason="user_id and session_id are required")
         return
-    persistent = (
-        client_ws.query_params.get("persistence", "").lower() == PERSISTENT
-        or client_ws.headers.get("x-persistence", "").lower() == PERSISTENT
+    _persist = (
+        client_ws.query_params.get("persistence", "").lower()
+        or client_ws.headers.get("x-persistence", "").lower()
     )
+    profile = _persist if _persist in (PERSISTENT, EPHEMERAL) else DEFAULT_PROFILE
     try:
-        sandbox_id, pod_ip = await resolve_sandbox(user, session, PERSISTENT if persistent else EPHEMERAL)
+        sandbox_id, pod_ip = await resolve_sandbox(user, session, profile)
     except HTTPException as exc:
         await client_ws.close(code=1011, reason=f"sandbox unavailable: {exc.detail}")
         return
@@ -372,7 +380,8 @@ async def proxy(path: str, request: Request, _=Security(_auth)):
     session = request.headers.get("X-Session-Id") or user
     if not user:
         raise HTTPException(status_code=400, detail="X-User-Id header is required")
-    profile = PERSISTENT if request.headers.get("X-Persistence", "").lower() == PERSISTENT else EPHEMERAL
+    _persist = request.headers.get("X-Persistence", "").lower()
+    profile = _persist if _persist in (PERSISTENT, EPHEMERAL) else DEFAULT_PROFILE
     sandbox_id, pod_ip = await resolve_sandbox(user, session, profile)
 
     fwd = {k: v for k, v in request.headers.items() if k.lower() not in HOP}
