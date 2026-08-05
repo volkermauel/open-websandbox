@@ -26,7 +26,6 @@ import mimetypes
 import os
 import pty
 import re
-import select
 import shutil
 import signal
 import struct
@@ -646,8 +645,19 @@ def _term_cleanup(sid: str) -> None:
 
 
 def _term_write(master_fd: int, data: bytes) -> None:
-    with contextlib.suppress(OSError):
-        os.write(master_fd, data)
+    # master_fd is O_NONBLOCK: write best-effort, never block the caller. A full pty
+    # input buffer raises BlockingIOError (subclass of OSError) -> drop the remainder
+    # (rare; only on very large pastes).
+    mv = memoryview(data)
+    sent = 0
+    while sent < len(mv):
+        try:
+            n = os.write(master_fd, mv[sent:])
+        except OSError:
+            break  # pty input buffer full (BlockingIOError) or closed — drop remainder
+        if n <= 0:
+            break
+        sent += n
 
 
 @app.post("/api/terminals")
@@ -734,37 +744,51 @@ async def terminal_ws(ws: WebSocket, session_id: str):
             await ws.close(code=4001, reason="auth timeout or invalid payload")
             return
 
-    master_fd, proc, stop = s["master_fd"], s["proc"], asyncio.Event()
+    master_fd, proc = s["master_fd"], s["proc"]
+    stop = asyncio.Event()
     loop = asyncio.get_event_loop()
+    out_q: asyncio.Queue = asyncio.Queue()
 
-    def _blocking_read() -> Optional[bytes]:
-        while not stop.is_set():
-            ready, _, _ = select.select([master_fd], [], [], 0.1)
-            if ready:
-                try:
-                    return os.read(master_fd, 4096)
-                except OSError:
-                    return b""
-            if proc.poll() is not None:
-                return b""
-        return None
+    def _on_pty_readable() -> None:
+        # add_reader callback: epoll-driven, runs on the loop thread, never blocks.
+        # Drain everything currently available then return — level-triggered epoll
+        # re-fires when more PTY output arrives. ZERO threads (vs the old
+        # run_in_executor + select(0.1) poll loop that pinned a worker per terminal).
+        while True:
+            try:
+                data = os.read(master_fd, 4096)
+            except OSError as e:
+                if isinstance(e, BlockingIOError):
+                    return  # drained to EAGAIN; re-triggered when more data arrives
+                out_q.put_nowait(None)  # PTY closed / child gone (EIO on Linux)
+                return
+            if not data:
+                out_q.put_nowait(None)  # EOF
+                return
+            out_q.put_nowait(data)
 
-    async def _pty_reader():
+    loop.add_reader(master_fd, _on_pty_readable)
+
+    async def _pty_reader() -> None:
         try:
             while not stop.is_set():
-                data = await loop.run_in_executor(None, _blocking_read)
-                if data is None:
-                    break
-                if not data:
+                try:
+                    data = await asyncio.wait_for(out_q.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    # Heartbeat proc-death check (no thread, no blocking): catches the
+                    # edge case where the shell exits but a background job still holds
+                    # the slave open (so no EOF/EIO arrives on the master fd).
                     if proc.poll() is not None:
                         break
                     continue
+                if data is None:
+                    break  # EOF / EIO sentinel from the callback
                 try:
                     await ws.send_bytes(data)
                 except Exception:
                     break
-        except Exception:
-            pass
+        finally:
+            loop.remove_reader(master_fd)
 
     async def _receiver() -> None:
         try:
@@ -773,7 +797,8 @@ async def terminal_ws(ws: WebSocket, session_id: str):
                 if msg["type"] == "websocket.disconnect":
                     break
                 if msg.get("bytes"):
-                    await loop.run_in_executor(None, _term_write, master_fd, msg["bytes"])
+                    # master_fd is O_NONBLOCK -> _term_write cannot block the loop.
+                    _term_write(master_fd, msg["bytes"])
                 elif msg.get("text"):
                     try:
                         payload = json.loads(msg["text"])
@@ -782,9 +807,9 @@ async def terminal_ws(ws: WebSocket, session_id: str):
                             with contextlib.suppress(OSError):
                                 fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
                     except (json.JSONDecodeError, ValueError, TypeError):
-                        pass
+                        log.debug("ignoring malformed terminal control message")
         except (WebSocketDisconnect, Exception):
-            pass
+            log.debug("terminal receiver ended")
 
     reader = asyncio.create_task(_pty_reader())
     receiver = asyncio.create_task(_receiver())
@@ -795,6 +820,7 @@ async def terminal_ws(ws: WebSocket, session_id: str):
         await asyncio.wait({reader, receiver}, return_when=asyncio.FIRST_COMPLETED)
     finally:
         stop.set()
+        loop.remove_reader(master_fd)  # idempotent; stops further callbacks
         for t in (reader, receiver):
             t.cancel()
         with contextlib.suppress(Exception):
