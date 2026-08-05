@@ -575,6 +575,15 @@ async def tool_exists(file_path: str, subdir: Optional[str] = Header(default=Non
     return {"exists": os.path.exists(full), "is_file": os.path.isfile(full), "is_dir": os.path.isdir(full)}
 
 
+@app.get("/files/view")
+async def files_view(path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    """Raw file bytes for download/display (OWUI downloadFileBlob -> res.blob())."""
+    full = _safe_path(path, _request_base(subdir))
+    if not os.path.isfile(full):
+        raise HTTPException(status_code=404, detail="File not found")
+    mime, _ = mimetypes.guess_type(full)
+    return FileResponse(full, media_type=mime or "application/octet-stream", filename=os.path.basename(full))
+
 # --- interactive terminal (PTY) -------------------------------------------------
 # open-terminal-compatible /api/terminals surface so OWUI's terminal UI connects
 # unchanged. POST forks a shell on a PTY scoped to the chat workspace folder; the WS
