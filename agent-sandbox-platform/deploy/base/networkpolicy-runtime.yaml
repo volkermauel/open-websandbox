@@ -27,7 +27,7 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    - to:                               # HTTPS 443 — pip / npm / git clones
+    - to:                               # HTTPS+HTTP (443/80) — pip/npm/git + curl
         - ipBlock:
             cidr: 0.0.0.0/0
             except:                     # block ALL private — anti-lateral-movement
@@ -37,7 +37,8 @@ spec:
               - 169.254.0.0/16          #   link-local
       ports:
         - { protocol: TCP, port: 443 }
-    - to:                               # HTTPS 443 IPv6
+        - { protocol: TCP, port: 80 }
+    - to:                               # HTTPS+HTTP (443/80) IPv6
         - ipBlock:
             cidr: ::/0
             except:
@@ -45,3 +46,4 @@ spec:
               - fe80::/10               #   link-local
       ports:
         - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 80 }
