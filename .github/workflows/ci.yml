@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip ruff
+          pip install -r requirements-test.txt \
+                      -r agent-sandbox-platform/runtime/requirements-app.txt \
+                      -r agent-sandbox-platform/runtime/requirements-common.txt \
+                      -r agent-sandbox-platform/broker/requirements.txt
+      - name: Lint (ruff)
+        run: ruff check agent-sandbox-platform
+      - name: Unit tests
+        run: pytest tests/unit -q
