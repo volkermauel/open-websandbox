@@ -150,25 +150,28 @@ async def execute(req: ExecuteRequest, subdir: Optional[str] = Header(default=No
         # surface (OWUI open-terminal sends a shell string). Isolation is enforced by
         # the deployment boundary (gVisor runtimeClass, uid 1000, no service-account
         # token, restricted NetworkPolicy) — not by argument parsing here.
-        proc = subprocess.Popen(  # noqa: S603,S602 - trusted tool surface
+        #
+        # asyncio subprocess keeps this NON-BLOCKING: the event loop multiplexes the
+        # wait, so a long command neither pins a worker thread nor freezes the rest of
+        # the runtime (file ops, interactive terminals). Verified concurrent under gVisor.
+        proc = await asyncio.create_subprocess_shell(  # noqa: S603,S602
             req.command,
-            shell=True,
             cwd=base,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             start_new_session=True,  # own process group -> tree-kill on timeout
         )
         try:
-            stdout, stderr = proc.communicate(timeout=timeout)
-            exit_code = proc.returncode
-        except subprocess.TimeoutExpired:
+            out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            exit_code = proc.returncode if proc.returncode is not None else 0
+        except asyncio.TimeoutError:
             timed_out = True
             _kill_group(proc.pid)
-            # SIGKILL'd process group is dead; communicate() drains the pipes and
-            # reaps the process with no timeout (no further TimeoutExpired possible).
-            stdout, stderr = proc.communicate()
+            await proc.wait()  # reap the SIGKILL'd process group
+            out_b, err_b = b"", b""
             exit_code = 124
+        stdout = out_b.decode(errors="replace") if isinstance(out_b, (bytes, bytearray)) else (out_b or "")
+        stderr = err_b.decode(errors="replace") if isinstance(err_b, (bytes, bytearray)) else (err_b or "")
         return ExecuteResponse(stdout=_cap(stdout), stderr=_cap(stderr), exit_code=exit_code, timed_out=timed_out)
     except OSError as e:
         log.exception("exec failed")
@@ -243,14 +246,17 @@ async def set_cwd(req: CwdRequest, subdir: Optional[str] = Header(default=None, 
     return {"cwd": resolved}
 
 
-def _entry(p: str) -> dict:
-    st = os.stat(p)
-    return {
-        "name": os.path.basename(p),
-        "type": "directory" if os.path.isdir(p) else "file",
-        "size": int(st.st_size),
-        "modified": float(st.st_mtime),
-    }
+def _entry(p: str) -> Optional[dict]:
+    try:
+        st = os.stat(p)
+        return {
+            "name": os.path.basename(p),
+            "type": "directory" if os.path.isdir(p) else "file",
+            "size": int(st.st_size),
+            "modified": float(st.st_mtime),
+        }
+    except OSError:
+        return None  # file vanished between listdir and stat (TOCTOU race)
 
 
 @app.get("/files/list")
@@ -261,7 +267,7 @@ async def list_dir(directory: str = ".", subdir: Optional[str] = Header(default=
     if not os.path.isdir(resolved):
         raise HTTPException(status_code=404, detail="Directory not found")
     try:
-        entries = [_entry(os.path.join(resolved, n)) for n in sorted(os.listdir(resolved))]
+        entries = [e for e in (_entry(os.path.join(resolved, n)) for n in sorted(os.listdir(resolved))) if e is not None]
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"list failed: {e}") from e
     return {"dir": resolved, "entries": entries}
@@ -269,6 +275,10 @@ async def list_dir(directory: str = ".", subdir: Optional[str] = Header(default=
 
 @app.get("/files/read")
 async def read_file(path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    return await asyncio.to_thread(_read_file_impl, path, subdir)
+
+
+def _read_file_impl(path: str, subdir: Optional[str]):
     full = _safe_path(path, _request_base(subdir))
     if not os.path.isfile(full):
         raise HTTPException(status_code=404, detail="File not found")
@@ -411,6 +421,12 @@ async def grep(
     max_results: int = Query(default=50, ge=1, le=500),
     subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir"),
 ):
+    return await asyncio.to_thread(
+        _grep_impl, query, path, regex, case_insensitive, include, max_results, subdir
+    )
+
+
+def _grep_impl(query, path, regex, case_insensitive, include, max_results, subdir) -> dict:
     resolved = _safe_path(path, _request_base(subdir))
     if not os.path.exists(resolved):
         raise HTTPException(status_code=404, detail="Search path not found")
@@ -441,6 +457,10 @@ async def glob_search(
     max_results: int = Query(default=50, ge=1, le=500),
     subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir"),
 ):
+    return await asyncio.to_thread(_glob_impl, pattern, path, type, max_results, subdir)
+
+
+def _glob_impl(pattern, path, type, max_results, subdir) -> dict:
     resolved = _safe_path(path, _request_base(subdir))
     if not os.path.exists(resolved):
         raise HTTPException(status_code=404, detail="Search directory not found")
@@ -496,6 +516,10 @@ async def upload(
 
 @app.post("/files/archive")
 async def archive(req: ArchiveRequest, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+    return await asyncio.to_thread(_archive_impl, req, subdir)
+
+
+def _archive_impl(req: ArchiveRequest, subdir: Optional[str]) -> Response:
     base = _request_base(subdir)
     if not req.paths:
         raise HTTPException(status_code=400, detail="No paths provided")
