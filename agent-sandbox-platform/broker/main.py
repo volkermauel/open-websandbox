@@ -17,15 +17,18 @@ sandbox (get-or-create claim; resume if parked) -> reverse-proxy to the sandbox-
 injecting X-Sandbox-Id / X-Sandbox-Namespace / X-Sandbox-Pod-IP (priority-1 resolution).
 """
 import asyncio
+import contextlib
 import hashlib
 import hmac
+import json
 import logging
 import os
 import time
 from typing import Optional, cast
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, Response, Security
+import websockets
+from fastapi import FastAPI, HTTPException, Request, Response, Security, WebSocket, WebSocketDisconnect
 from openapi_spec import OPENAPI
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from kubernetes import client, config
@@ -253,6 +256,87 @@ def _subdir_for(session_id: str) -> str:
     """Safe per-chat workspace folder (hex; always matches the runtime's subdir guard)."""
     return hashlib.sha256(session_id.encode()).hexdigest()[:16]
 
+
+@app.websocket("/api/terminals/{session_id}")
+async def terminal_ws(client_ws: WebSocket, session_id: str):
+    """Interactive terminal (OWUI open-terminal contract).
+
+    OWUI opens this WS after POST /api/terminals (proxied by the catch-all to the
+    runtime, which forks the PTY). Here we validate OWUI's first-message auth, resolve
+    the sandbox, then proxy the WS through the sandbox-router (which upgrades and
+    routes by X-Sandbox-Pod-IP) to the runtime PTY. Identity is read from query params
+    or headers — browser WS clients cannot set arbitrary headers, so user_id /
+    session_id may arrive either way.
+    """
+    await client_ws.accept()
+    if SHARED_SECRET:
+        try:
+            raw = await asyncio.wait_for(client_ws.receive_text(), timeout=10.0)
+            payload = json.loads(raw)
+            if payload.get("type") != "auth" or not hmac.compare_digest(
+                str(payload.get("token", "")), SHARED_SECRET
+            ):
+                await client_ws.close(code=4001, reason="invalid api key")
+                return
+        except Exception:
+            await client_ws.close(code=4001, reason="auth timeout or invalid payload")
+            return
+
+    user = client_ws.query_params.get("user_id") or client_ws.headers.get("x-user-id", "")
+    session = (
+        client_ws.query_params.get("session_id")
+        or client_ws.query_params.get("chat_id")
+        or client_ws.headers.get("x-session-id", "")
+    )
+    if not user or not session:
+        await client_ws.close(code=1008, reason="user_id and session_id are required")
+        return
+    persistent = (
+        client_ws.query_params.get("persistence", "").lower() == PERSISTENT
+        or client_ws.headers.get("x-persistence", "").lower() == PERSISTENT
+    )
+    try:
+        sandbox_id, pod_ip = await resolve_sandbox(user, session, PERSISTENT if persistent else EPHEMERAL)
+    except HTTPException as exc:
+        await client_ws.close(code=1011, reason=f"sandbox unavailable: {exc.detail}")
+        return
+
+    # Connect directly to the runtime pod (the broker already resolved its IP; the
+    # runtime NP allows agent-sandbox-system ingress on 8888). Bypassing the router
+    # avoids its WebSocket-upgrade handling, which times out on the opening handshake.
+    upstream = f"ws://{pod_ip}:8888/api/terminals/{session_id}"
+    log.info("terminal ws user=%s session=%s -> sandbox=%s pod=%s", user[:32], session[:32], sandbox_id, pod_ip)
+    try:
+        async with websockets.connect(upstream) as up_ws:
+
+            async def _client_to_upstream():
+                try:
+                    while True:
+                        msg = await client_ws.receive()
+                        if msg["type"] == "websocket.disconnect":
+                            break
+                        if msg.get("bytes"):
+                            await up_ws.send(msg["bytes"])
+                        elif msg.get("text"):
+                            await up_ws.send(msg["text"])
+                except WebSocketDisconnect:
+                    pass
+
+            async def _upstream_to_client():
+                try:
+                    async for msg in up_ws:
+                        if isinstance(msg, bytes):
+                            await client_ws.send_bytes(msg)
+                        else:
+                            await client_ws.send_text(msg)
+                except Exception:
+                    pass
+
+            await asyncio.gather(_client_to_upstream(), _upstream_to_client(), return_exceptions=True)
+    except Exception as exc:
+        log.warning("terminal ws upstream %s failed: %s", upstream, exc)
+        with contextlib.suppress(Exception):
+            await client_ws.close(code=1011, reason="terminal unavailable")
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
 async def proxy(path: str, request: Request, _=Security(_auth)):

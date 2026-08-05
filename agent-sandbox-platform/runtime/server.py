@@ -13,16 +13,26 @@ Hardening over the reference:
 
 Runs as non-root uid 1000; WORKDIR=/workspace (an emptyDir at runtime).
 """
+import asyncio
 import contextlib
+import datetime as _dt
+import fcntl
+import hmac
+import json
 import logging
 import os
+import pty
 import re
+import select
 import signal
+import struct
 import subprocess
+import termios
 import urllib.parse
+import uuid as _uuid
 from typing import Optional
 
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -195,3 +205,180 @@ async def list_files(file_path: str, subdir: Optional[str] = Header(default=None
 async def exists(file_path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
     full = _safe_path(file_path, _request_base(subdir))
     return {"exists": os.path.exists(full), "is_file": os.path.isfile(full), "is_dir": os.path.isdir(full)}
+
+
+# --- interactive terminal (PTY) -------------------------------------------------
+# open-terminal-compatible /api/terminals surface so OWUI's terminal UI connects
+# unchanged. POST forks a shell on a PTY scoped to the chat workspace folder; the WS
+# at /api/terminals/{id} streams BINARY stdin/stdout with TEXT
+# {"type":"resize","cols":N,"rows":N} control frames, and honours a first-message
+# {"type":"auth","token":...} handshake only when RUNTIME_API_KEY is set (default
+# off: the broker already authenticated the caller and the runtime is not directly
+# exposed). Verified under gVisor runsc: openpty/fork/ioctl TIOCSWINSZ/select are all
+# emulated. One terminal per chat (session id = X-Session-Id); destroyed on WS close.
+
+MAX_TERMINAL_SESSIONS = _env_int("MAX_TERMINAL_SESSIONS", 8)
+_SHELL = os.environ.get("SHELL", "/bin/bash")
+_terminals: dict[str, dict] = {}
+
+
+def _term_alive(s: dict) -> bool:
+    return s["proc"].poll() is None
+
+
+def _term_cleanup(sid: str) -> None:
+    s = _terminals.pop(sid, None)
+    if not s:
+        return
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(os.getpgid(s["proc"].pid), signal.SIGKILL)
+    with contextlib.suppress(OSError):
+        os.close(s["master_fd"])
+
+
+def _term_write(master_fd: int, data: bytes) -> None:
+    with contextlib.suppress(OSError):
+        os.write(master_fd, data)
+
+
+@app.post("/api/terminals")
+async def create_terminal(
+    subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir"),
+    session_id: Optional[str] = Header(default=None, alias="X-Session-Id"),
+):
+    base = _request_base(subdir)
+    for sid in [s for s, v in _terminals.items() if not _term_alive(v)]:
+        _term_cleanup(sid)
+    if len(_terminals) >= MAX_TERMINAL_SESSIONS:
+        raise HTTPException(status_code=429, detail=f"max {MAX_TERMINAL_SESSIONS} terminals reached")
+    sid = session_id or str(_uuid.uuid4())[:8]
+    if sid in _terminals:
+        _term_cleanup(sid)
+    master_fd = slave_fd = -1
+    try:
+        master_fd, slave_fd = pty.openpty()
+        fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        proc = subprocess.Popen(  # noqa: S603 - spawns the interactive shell (trusted tool surface)
+            [_SHELL], stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, cwd=base,
+            start_new_session=True, env={**os.environ, "TERM": "xterm-256color"},
+        )
+    except OSError as e:
+        for fd in (slave_fd, master_fd):
+            if fd >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+        raise HTTPException(status_code=503, detail=f"pty spawn failed: {e}") from e
+    os.close(slave_fd)
+    fcntl.fcntl(master_fd, fcntl.F_SETFL, os.O_NONBLOCK)
+    created = _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")
+    _terminals[sid] = {"master_fd": master_fd, "proc": proc, "created_at": created}
+    log.info("terminal %s created (pid=%s cwd=%s)", sid, proc.pid, base)
+    return {"id": sid, "created_at": created, "pid": proc.pid}
+
+
+@app.get("/api/terminals")
+async def list_terminals():
+    out, dead = [], []
+    for sid, s in _terminals.items():
+        if _term_alive(s):
+            out.append({"id": sid, "created_at": s["created_at"], "pid": s["proc"].pid})
+        else:
+            dead.append(sid)
+    for sid in dead:
+        _term_cleanup(sid)
+    return out
+
+
+@app.get("/api/terminals/{session_id}")
+async def get_terminal(session_id: str):
+    s = _terminals.get(session_id)
+    if not s or not _term_alive(s):
+        if session_id in _terminals:
+            _term_cleanup(session_id)
+        raise HTTPException(status_code=404, detail="terminal not found")
+    return {"id": session_id, "created_at": s["created_at"], "pid": s["proc"].pid}
+
+
+@app.delete("/api/terminals/{session_id}")
+async def kill_terminal(session_id: str):
+    _term_cleanup(session_id)
+    return {"status": "deleted"}
+
+
+@app.websocket("/api/terminals/{session_id}")
+async def terminal_ws(ws: WebSocket, session_id: str):
+    await ws.accept()
+    s = _terminals.get(session_id)
+    if not s or not _term_alive(s):
+        if session_id in _terminals:
+            _term_cleanup(session_id)
+        await ws.close(code=4004, reason="unknown or ended session")
+        return
+    rtkey = os.environ.get("RUNTIME_API_KEY", "")
+    if rtkey:
+        try:
+            payload = json.loads(await asyncio.wait_for(ws.receive_text(), timeout=10.0))
+            if payload.get("type") != "auth" or not hmac.compare_digest(str(payload.get("token", "")), rtkey):
+                await ws.close(code=4001, reason="invalid api key")
+                return
+        except Exception:
+            await ws.close(code=4001, reason="auth timeout or invalid payload")
+            return
+
+    master_fd, proc, stop = s["master_fd"], s["proc"], asyncio.Event()
+    loop = asyncio.get_event_loop()
+
+    def _blocking_read() -> Optional[bytes]:
+        while not stop.is_set():
+            ready, _, _ = select.select([master_fd], [], [], 0.1)
+            if ready:
+                try:
+                    return os.read(master_fd, 4096)
+                except OSError:
+                    return b""
+            if proc.poll() is not None:
+                return b""
+        return None
+
+    async def _pty_reader():
+        try:
+            while not stop.is_set():
+                data = await loop.run_in_executor(None, _blocking_read)
+                if data is None:
+                    break
+                if not data:
+                    if proc.poll() is not None:
+                        break
+                    continue
+                try:
+                    await ws.send_bytes(data)
+                except Exception:
+                    break
+        except Exception:
+            pass
+
+    reader = asyncio.create_task(_pty_reader())
+    try:
+        while True:
+            msg = await ws.receive()
+            if msg["type"] == "websocket.disconnect":
+                break
+            if msg.get("bytes"):
+                await loop.run_in_executor(None, _term_write, master_fd, msg["bytes"])
+            elif msg.get("text"):
+                try:
+                    payload = json.loads(msg["text"])
+                    if payload.get("type") == "resize":
+                        rows, cols = int(payload.get("rows", 24)), int(payload.get("cols", 80))
+                        with contextlib.suppress(OSError):
+                            fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    pass
+    except WebSocketDisconnect:
+        pass
+    finally:
+        stop.set()
+        reader.cancel()
+        with contextlib.suppress(Exception):
+            await reader
+        _term_cleanup(session_id)
