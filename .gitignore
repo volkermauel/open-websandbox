@@ -24,3 +24,8 @@ build/
 
 # pi-lens cache (regenerated)
 .pi-lens/
+
+# coverage artifacts
+.coverage
+htmlcov/
+*,cover

@@ -105,17 +105,19 @@ def api_exc(status: int):
 
 # --- fixtures ---------------------------------------------------------------------
 @pytest.fixture
-def api():
-    """Reset + yield the controllable CustomObjectsApi mock (== main.api)."""
-    _api.reset_mock(return_value=False, side_effect=False)
-    return _api
+def api(monkeypatch):
+    """Fresh controllable CustomObjectsApi mock, installed as main.api (auto-restored)."""
+    mock = MagicMock(name="api")
+    monkeypatch.setattr(main, "api", mock)
+    return mock
 
 
 @pytest.fixture
-def core():
-    """Reset + yield the controllable CoreV1Api mock (== main.core)."""
-    _core.reset_mock(return_value=False, side_effect=False)
-    return _core
+def core(monkeypatch):
+    """Fresh controllable CoreV1Api mock, installed as main.core (auto-restored)."""
+    mock = MagicMock(name="core")
+    monkeypatch.setattr(main, "core", mock)
+    return mock
 
 
 @pytest.fixture

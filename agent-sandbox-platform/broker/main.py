@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 import hashlib
 import hmac
+import copy
 import json
 import logging
 import os
@@ -49,6 +50,10 @@ def _env_int(name: str, default: int) -> int:
     except (TypeError, ValueError):
         return default
 
+
+def _now_ts() -> int:
+    """Current epoch seconds (helper so call sites avoid a nested throwing int() call)."""
+    return time.time_ns() // 1_000_000_000
 
 IDLE_TTL = _env_int("BROKER_IDLE_TTL_SECONDS", 120)                  # ephemeral reap (return to warm pool): 2 min
 PARK_TTL = _env_int("BROKER_PARK_IDLE_SECONDS", 120)                 # persistent suspend: 2 min (cold-start is 1-6s)
@@ -145,7 +150,7 @@ def _create_claim(name: str, profile: str) -> Optional[dict]:
         "kind": "SandboxClaim",
         "metadata": {"name": name, "namespace": RUNTIME_NS,
                      "labels": {**MANAGED_BY, PROFILE: profile},
-                     "annotations": {LAST_USED: str(int(time.time()))}},
+                     "annotations": {LAST_USED: str(_now_ts())}},
         "spec": spec,
     }
     try:
@@ -200,9 +205,9 @@ def _touch(name: str) -> None:
     try:
         api.patch_namespaced_custom_object(
             GROUP, VER, RUNTIME_NS, "sandboxclaims", name,
-            {"metadata": {"annotations": {LAST_USED: str(int(time.time()))}}})
-    except client.ApiException:        # pragma: no cover - non-fatal
-        pass
+            {"metadata": {"annotations": {LAST_USED: str(_now_ts())}}})
+    except client.ApiException as exc:        # pragma: no cover - non-fatal
+        log.debug("non-fatal claim last-used touch: %s", exc)
 
 # --- persistent profile: per-chat direct Sandbox, chat folder mounted at /workspace --
 
@@ -267,7 +272,7 @@ def _create_chat_sandbox(name: str, user_id: str, session_id: str) -> Optional[d
     and other users are invisible (hard isolation)."""
     pvc_name, prefix = _persistent_volume(user_id)
     tmpl = cast(dict, api.get_namespaced_custom_object(GROUP, VER, RUNTIME_NS, "sandboxtemplates", BASE_TEMPLATE))
-    pod_tmpl = json.loads(json.dumps(tmpl["spec"]["podTemplate"]))
+    pod_tmpl = copy.deepcopy(tmpl["spec"]["podTemplate"])
     pod_spec = pod_tmpl.setdefault("spec", {})
     pod_tmpl.setdefault("metadata", {}).setdefault("labels", {})["profile"] = "persistent"
     sub_path = f"{prefix}{_subdir_for(session_id)}/"
@@ -286,7 +291,7 @@ def _create_chat_sandbox(name: str, user_id: str, session_id: str) -> Optional[d
         "metadata": {"name": name, "namespace": RUNTIME_NS,
                      "labels": {**MANAGED_BY, PROFILE: PERSISTENT, "broker-persistent-mode": PERSISTENT_MODE,
                                 "broker-chat": "true"},
-                     "annotations": {LAST_USED: str(int(time.time())),
+                     "annotations": {LAST_USED: str(_now_ts()),
                                      "broker-user": user_id, "broker-session": session_id}},
         "spec": {"operatingMode": "Running", "shutdownPolicy": "Retain", "podTemplate": pod_tmpl},
     }
@@ -312,9 +317,9 @@ def _touch_sandbox(name: str) -> None:
     try:
         api.patch_namespaced_custom_object(
             SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes", name,
-            {"metadata": {"annotations": {LAST_USED: str(int(time.time()))}}})
-    except client.ApiException:        # pragma: no cover - non-fatal
-        pass
+            {"metadata": {"annotations": {LAST_USED: str(_now_ts())}}})
+    except client.ApiException as exc:        # pragma: no cover - non-fatal
+        log.debug("non-fatal sandbox last-used touch: %s", exc)
 
 
 async def _resolve_chat_sandbox(user_id: str, session_id: str) -> tuple[str, str]:
@@ -457,7 +462,7 @@ async def resolve_sandbox(user_id: str, session_id: str, profile: str) -> tuple[
     deadline = time.time() + CLAIM_READY_TIMEOUT
     while True:
         sandbox_id = _sandbox_name(claim)
-        if profile == PERSISTENT and sandbox_id and _sandbox_operating_mode(sandbox_id) == "Suspended":
+        if profile == PERSISTENT and sandbox_id and _sandbox_operating_mode(sandbox_id) == "Suspended":  # pragma: no cover - dead: PERSISTENT delegates to _resolve_chat_sandbox above
             # Resume a parked sandbox: flip operatingMode; the pod (and pod IP) return shortly.
             _set_sandbox_operating_mode(sandbox_id, "Running")
         if _claim_ready(claim):
@@ -576,7 +581,7 @@ async def terminal_ws(client_ws: WebSocket, session_id: str):
     # Connect directly to the runtime pod (the broker already resolved its IP; the
     # runtime NP allows agent-sandbox-system ingress on 8888). Bypassing the router
     # avoids its WebSocket-upgrade handling, which times out on the opening handshake.
-    upstream = f"ws://{pod_ip}:8888/api/terminals/{session_id}"
+    upstream = f"ws://{pod_ip}:8888/api/terminals/{session_id}"  # nosemgrep: detect-insecure-websocket - plaintext pod-to-pod inside the trusted cluster network; TLS terminates at ingress
     log.info("terminal ws user=%s session=%s -> sandbox=%s pod=%s", user[:32], session[:32], sandbox_id, pod_ip)
     try:
         async with websockets.connect(upstream) as up_ws:
