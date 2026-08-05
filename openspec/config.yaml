@@ -1,24 +1,32 @@
 schema: spec-driven
 
 context: |
-  Project: open-webui-terminal2cloudflarecompute
-  Goal: back Open WebUI's "Open Terminal" integration with a runtime derived from
-        Cloudflare's open-source `computer` (github.com/cloudflare/computer), running
-        on PLAIN infrastructure (MicroK8s + Docker/containerd) with NO Cloudflare-
-        proprietary dependencies (no Containers-for-Workers, no Durable Objects).
-  Hard constraints:
-    - Full per-USER isolation (must). Per-CHAT isolation (ideal).
-    - Reuse computerd (in-container FUSE+exec daemon), dofs (SQLite VFS), capnweb (rpc)
-      VERBATIM, vendored under MIT. Do NOT depend on the Cloudflare host facade.
-    - ONE shared long-lived computerd instance serving all sessions (max density, no
-      container/pod per session); per-session isolation via an nsjail jail wrapping exec.
-    - Threat model: trusted internal users (Entra OIDC). Isolation goal is "prevent
-      accidental cross-session leakage + strong practical sandboxing", NOT "resist a
-      dedicated hostile attacker" (single shared kernel is an accepted residual risk).
-  Tech: TypeScript (Node 22) host/gateway; dofs uses node:sqlite; computerd is the
-        published ghcr.io/cloudflare/computer-computerd-linux-x64 SEA image (+nsjail).
+  Project: open-sandbox
+  Goal: Back Open WebUI's "Open Terminal" integration with an isolated, multi-tenant
+        sandbox runtime on PLAIN infrastructure (MicroK8s + containerd), with NO
+        Cloudflare-proprietary dependencies.
+  Architecture: Built on kubernetes-sigs/agent-sandbox (controller + Sandbox /
+        SandboxClaim / SandboxTemplate / SandboxWarmPool CRDs). A Python FastAPI
+        **broker** manages per-user/per-chat sandboxes; a Python FastAPI **runtime**
+        runs inside each sandbox pod (command exec, file API, WebSocket PTY) under
+        gVisor (runsc); a Go **sandbox-router** (built from upstream agent-sandbox)
+        reverse-proxies to sandbox pods.
+  Isolation: per-USER (must) + per-CHAT (achieved via per-chat subPath sandboxes).
+        gVisor runsc, uid 1000, no service-account token, restricted PodSecurity,
+        NetworkPolicy egress (DNS to public resolvers + HTTPS 443/80 to the public
+        internet; private + cluster CIDRs blocked). Persistent workspaces on a RWX
+        StorageClass; /home + /packages ephemeral (anti auto-exec / PATH-shadow);
+        tmpfs /tmp hard cap; PID cap.
+  Threat model: trusted internal users (Entra OIDC). Goal is "prevent accidental
+        cross-session leakage + strong practical sandboxing", not "resist a dedicated
+        hostile attacker" (shared kernel is an accepted residual risk).
+  Tech: Python 3.12 (FastAPI) broker + runtime; Go sandbox-router (built from upstream
+        agent-sandbox); MicroK8s v1.36, Calico CNI, containerd, gVisor nodes.
+  Status: platform built + proven on prod (ephemeral + persistent profiles, interactive
+        terminal, file API, security hardening). Now: release-prep (tests, docs,
+        Kustomize packaging, CI, router self-build) toward v0.1.0.
   Sibling repos (prior art / contracts):
-    - ~/git/open-terminal        — the OWUI REST/OpenAPI contract to reproduce
-    - ~/git/open-terminal-k8s-proxy — isolation design baseline (pod-per-session, the
-                                      model we are moving AWAY from for density)
-  Research artifacts live in ./research/ (01..04).
+        - ~/git/open-webui        — the host we integrate into (terminal API client, XTerminal)
+        - ~/git/open-terminal     — the OWUI REST/OpenAPI contract we reproduce
+        - ~/git/open-terminal-k8s-proxy — prior pod-per-session isolation baseline
+  Research artifacts live in ./research/ (01..05) + ./openspec/.

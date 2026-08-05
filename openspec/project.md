@@ -1,45 +1,53 @@
-# open-webui-terminal2cloudflarecompute
+# open-sandbox
 
-A portable, high-density command-execution runtime for Open WebUI's **Open Terminal**
-integration, derived from Cloudflare's open-source **`computer`** project — but with
-**zero Cloudflare-proprietary dependencies**.
+A portable, isolated, multi-tenant **sandbox runtime** for Open WebUI's **Open Terminal**
+integration — built on **kubernetes-sigs/agent-sandbox** and **gVisor**, with zero
+Cloudflare-proprietary dependencies.
 
 ## What this project is
 
-A single Node service (the **gateway**) that re-exposes the **open-terminal REST/OpenAPI
-contract** that Open WebUI already speaks (`/execute`, `/files/*`, `/health`, `/api/config`,
-`/system`, `/info`, `/openapi.json`), and delegates execution to a single shared, long-lived
-**`computerd`** sidecar (Cloudflare's in-container FUSE + exec daemon), reused verbatim.
+A Kubernetes platform that gives each Open WebUI user (and each chat) an isolated,
+on-demand Linux sandbox exposing the **open-terminal REST/OpenAPI contract** Open WebUI
+already speaks (`/execute`, `/files/*`, `/api/config`, `/openapi.json`, and an interactive
+WebSocket PTY terminal at `/api/terminals/{id}`). Three components:
 
-Per-session isolation is provided by an **nsjail jail** that wraps each `exec`, rather than by
-spawning a pod/container per session — maximising density.
+- **broker** (Python, FastAPI) — owns sandbox lifecycle: maps an OWUI session
+  (`X-Session-Id` / user) to a per-user or per-chat sandbox via the agent-sandbox CRDs
+  (SandboxClaim / SandboxTemplate / SandboxWarmPool), runs the warm pool, the 120s
+  idle-suspend/reap policy, and the persistent-workspace PVCs.
+- **runtime** (Python, FastAPI) — runs **inside** each sandbox pod, under gVisor: command
+  execution (`asyncio` subprocess), a file API, and an interactive WebSocket PTY terminal.
+- **sandbox-router** (Go, built from upstream agent-sandbox) — authenticates + reverse-
+  proxies HTTP/WebSocket to sandbox pods.
 
-## What we reuse from `github.com/cloudflare/computer` (MIT, vendored)
+It depends on the external **kubernetes-sigs/agent-sandbox** controller (v0.5.3) + its
+CRDs. Sandboxes run under the **gVisor** (runsc) RuntimeClass.
 
-| Component | Role | Portable off-CF? |
-|---|---|---|
-| `dofs` | SQLite-backed virtual filesystem + content-addressed sync | **Yes** (node:sqlite) |
-| `rpc` / capnweb | transport-agnostic streaming RPC over WebSocket | **Yes** (node `ws`) |
-| `computerd` | in-container daemon: FUSE-mounts the VFS, runs `/bin/sh -c` exec | **Yes** (plain Linux + /dev/fuse) |
+## Isolation stance
 
-We do **not** use `packages/computer`'s host facade or `CloudflareContainerBackend` — those are
-coupled to `ctx.container` / `ctx.storage` / Durable Objects. See `research/04-*.md`.
-
-## Threat model & isolation stance
-
-- **Must:** per-user isolation (distinct VFS subtrees + distinct jail uid/netns + no cross-user
-  file visibility).
-- **Ideal:** per-chat isolation (same mechanism, one subtree + jail per chat).
-- **Accepted residual risk:** all sessions share one kernel and one `computerd` process. A
-  kernel exploit or jail misconfiguration could cross sessions. Acceptable because users are
-  trusted internal (Entra OIDC) accounts, not anonymous internet tenants.
+- **Per-user** isolation (must) and **per-chat** isolation (achieved — one sandbox per
+  chat, keyed `sha256(user_id/session_id)[:12]`).
+- Layers: gVisor runsc, uid 1000, no service-account token, restricted PodSecurity,
+  NetworkPolicy egress (DNS to public resolvers + HTTPS 443/80 to the public internet;
+  private + cluster CIDRs blocked), persistent workspaces on a RWX StorageClass, tmpfs
+  /tmp hard cap, per-uid PID cap.
+- **Accepted residual risk:** shared kernel. The goal is "prevent accidental cross-session
+  leakage + strong practical sandboxing" for trusted internal (Entra OIDC) users — not
+  resistance to a dedicated hostile attacker.
 
 ## Key documents
 
-- `openspec/changes/use-computerd-as-runtime/proposal.md` — what & why
-- `openspec/changes/use-computerd-as-runtime/design.md` — architecture & decisions
-- `openspec/changes/use-computerd-as-runtime/tasks.md` — phased implementation
-- `research/01-cloudflare-computer.md` — computer internals
-- `research/02-open-terminal.md` — the OWUI contract to reproduce
-- `research/03-k8s-proxy-isolation-prior-art.md` — isolation requirements baseline
-- `research/04-computer-portability-off-cf.md` — off-CF portability verdicts
+- `openspec/changes/adopt-agent-sandbox/proposal.md` — what & why (current design)
+- `openspec/changes/adopt-agent-sandbox/design.md` — architecture & decision log (D1–D14)
+- `openspec/changes/adopt-agent-sandbox/specs/` — capability specs
+- `openspec/changes/adopt-agent-sandbox/tasks.md` — phased implementation (Phases 0–4 done; 5–6 release-prep)
+- `research/05-comparison-agentsandbox.md` — why agent-sandbox
+- `research/01..04` — prior-art / contract analysis (computer, open-terminal, k8s-proxy, off-CF)
+- `infra/gvisor/` — gVisor node setup playbooks
+
+## Status
+
+Platform built + proven on prod (ephemeral + persistent profiles, interactive terminal,
+file API, security hardening: PID / env / DNS / egress / tmp caps). Currently in
+release-prep: tests (unit + KIND e2e), docs, Kustomize packaging, CI, and router
+self-build — toward **v0.1.0**.
