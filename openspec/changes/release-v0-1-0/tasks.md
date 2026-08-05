@@ -5,15 +5,13 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` done.
 
 ## Tests (pytest + KIND)
 
-- [ ] test infra: `pyproject.toml` (`asyncio_mode=auto`), `requirements-test.txt`, conftest
-- [~] `tests/unit/runtime/` — `_safe_path` traversal, `/files/*` round-trip, `/execute`
-      (exit/timeout/group-kill), WS terminal echo (real fs + PTY)
-- [ ] `tests/unit/broker/` — name hashing, session resolution, staging migration, reaper
-      (fake k8s client; monkeypatch `api`/`core` globals)
-- [ ] gVisor/runc toggle via Helm value `sandboxTemplate.runtimeClassName` (default gvisor; `""` for KIND) — no broker code change needed
-- [ ] `tests/e2e/values-runc.yaml` (sets runtimeClassName="" for KIND)
-- [ ] `tests/e2e/` — KIND: controller + CRDs + platform; create sandbox; `/execute`; assert
-- [ ] `@pytest.mark.gvisor` manual smoke (`scripts/smoke-gvisor-sandbox.yaml`)
+- [x] test infra: `pyproject.toml` (`asyncio_mode=auto`, coverage `fail_under=95`), `requirements-test.txt`, conftest (broker + runtime)
+- [x] `tests/unit/runtime/` (59 tests, 97% branch) — `_safe_path` traversal, `/files/*` round-trip + move/replace/archive/upload + error paths, `/execute` (exit/timeout=124/oversize-truncate), WS terminal write/disconnect/resize
+- [x] `tests/unit/broker/` (94 tests, 96% branch) — name hashing, auth, session resolution, ephemeral/persistent sandbox get-or-create, parked-sandbox resume, staging migration (all branches), proxy + redirect rewrite, terminal WS proxy, park/reap loop (fake k8s `api`/`core` + httpx + websockets mocks)
+- [x] gVisor/runc toggle via Helm value `sandboxTemplate.runtimeClassName` (default gvisor; `""` for KIND) — no broker code change needed
+- [x] KIND profiles: `chart/values-kind.yaml` (runc) + `chart/values-kind-gvisor.yaml` (gVisor node)
+- [x] `tests/e2e/` (5 tests, green under gVisor KIND) — controller + CRDs + Helm install; `/healthz`, `/execute`, `/files` write/read, workspace persistence
+- [x] `@pytest.mark.gvisor` manual smoke (`scripts/smoke-gvisor-sandbox.yaml`) + `scripts/setup-kind-gvisor.sh`
 
 ## Packaging — Helm chart (D1, D2)
 
