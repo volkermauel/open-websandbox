@@ -36,6 +36,17 @@ spec:
         ports: [{ containerPort: 8888 }]
         env:
         - { name: MAX_TIMEOUT, value: "600" }
+        # Per-sandbox process cap (RLIMIT_NPROC); gVisor enforces it.
+        - { name: MAX_PROCS, value: "256" }
+        # Suppress kubelet-injected KUBERNETES_* env (leaks service-CIDR / API IP).
+        - { name: KUBERNETES_SERVICE_HOST, value: "" }
+        - { name: KUBERNETES_SERVICE_PORT, value: "" }
+        - { name: KUBERNETES_SERVICE_PORT_HTTPS, value: "" }
+        - { name: KUBERNETES_PORT, value: "" }
+        - { name: KUBERNETES_PORT_443_TCP, value: "" }
+        - { name: KUBERNETES_PORT_443_TCP_ADDR, value: "" }
+        - { name: KUBERNETES_PORT_443_TCP_PORT, value: "" }
+        - { name: KUBERNETES_PORT_443_TCP_PROTO, value: "" }
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
