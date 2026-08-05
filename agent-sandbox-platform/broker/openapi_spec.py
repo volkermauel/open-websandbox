@@ -22,8 +22,9 @@ OPENAPI: dict = {
             "and managing files. Each chat session runs in its own workspace folder; "
             "commands execute as a non-root user with curated Python libraries "
             "(pandas, numpy, openpyxl, PyYAML, requests, ...) pre-installed and the "
-            "ability to install additional packages (`pip install` / `npm install`) "
-            "at runtime.\n\n"
+            "ability to install additional packages at runtime — `micromamba install -c conda-forge <pkg>` "
+            "(covers system libraries + CLI tools like ffmpeg, jq, graphviz, compilers) and `pip install` for Python. "
+            "Installs go to /packages (non-root, isolated from user data).\n\n"
             "**Identity & isolation headers** — injected by Open WebUI per session; "
             "the caller does NOT set these:\n"
             "- `Authorization: Bearer <token>` (required)\n"
@@ -103,9 +104,9 @@ OPENAPI: dict = {
                     "Execute a non-interactive shell command in the session's "
                     "workspace folder and return stdout, stderr, exit code, and "
                     "whether it timed out. Curated libraries are pre-installed; "
-                    "`pip install`/`npm install` work for extras. Each command runs "
-                    "as a non-root user inside a gVisor sandbox with no cluster "
-                    "network egress except HTTPS to the public internet."),
+                    "`micromamba install -c conda-forge <pkg>` (system libs/tools) and `pip install` "
+                    "work for extras (non-root, into /packages). Each command runs as a non-root "
+                    "user inside a gVisor sandbox with egress limited to public HTTPS."),
                 "requestBody": {"required": True, "content": {"application/json": {
                     "schema": {"$ref": "#/components/schemas/ExecuteRequest"}}}},
                 "responses": {
