@@ -26,13 +26,13 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` done.
 
 ## Router self-build (D3)
 
-- [ ] CI job: clone `agent-sandbox@v0.5.3`, build sandbox-router, push digest-pinned image
+- [x] CI job: clone `agent-sandbox@v0.5.3`, build sandbox-router, push image  *(release.yml build-router)*
 
 ## CI — `.github/workflows/`
 
-- [ ] `ci.yml` — ruff + pytest unit (push)
+- [x] `ci.yml` — ruff + pytest unit (push)  *(code is ruff-clean)*
 - [ ] `e2e.yml` — KIND runc e2e (PR)
-- [ ] `release.yml` — build+publish 3 images + render manifests (on tag)
+- [x] `release.yml` — build+publish 3 images (on tag)  *(router self-built from upstream@v0.5.3)*
 
 ## Docs
 
