@@ -734,28 +734,38 @@ async def terminal_ws(ws: WebSocket, session_id: str):
         except Exception:
             pass
 
+    async def _receiver() -> None:
+        try:
+            while not stop.is_set():
+                msg = await ws.receive()
+                if msg["type"] == "websocket.disconnect":
+                    break
+                if msg.get("bytes"):
+                    await loop.run_in_executor(None, _term_write, master_fd, msg["bytes"])
+                elif msg.get("text"):
+                    try:
+                        payload = json.loads(msg["text"])
+                        if payload.get("type") == "resize":
+                            rows, cols = int(payload.get("rows", 24)), int(payload.get("cols", 80))
+                            with contextlib.suppress(OSError):
+                                fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        pass
+        except (WebSocketDisconnect, Exception):
+            pass
+
     reader = asyncio.create_task(_pty_reader())
+    receiver = asyncio.create_task(_receiver())
     try:
-        while True:
-            msg = await ws.receive()
-            if msg["type"] == "websocket.disconnect":
-                break
-            if msg.get("bytes"):
-                await loop.run_in_executor(None, _term_write, master_fd, msg["bytes"])
-            elif msg.get("text"):
-                try:
-                    payload = json.loads(msg["text"])
-                    if payload.get("type") == "resize":
-                        rows, cols = int(payload.get("rows", 24)), int(payload.get("cols", 80))
-                        with contextlib.suppress(OSError):
-                            fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-                except (json.JSONDecodeError, ValueError, TypeError):
-                    pass
-    except WebSocketDisconnect:
-        pass
+        # End as soon as EITHER the client goes (receiver) or the PTY/stream ends
+        # (reader). Either way the finally block runs _term_cleanup so the PTY is
+        # killed instead of leaking until the per-pod cap (-> 429).
+        await asyncio.wait({reader, receiver}, return_when=asyncio.FIRST_COMPLETED)
     finally:
         stop.set()
-        reader.cancel()
+        for t in (reader, receiver):
+            t.cancel()
         with contextlib.suppress(Exception):
-            await reader
+            await ws.close()
+        await asyncio.gather(reader, receiver, return_exceptions=True)
         _term_cleanup(session_id)

@@ -50,8 +50,8 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-IDLE_TTL = _env_int("BROKER_IDLE_TTL_SECONDS", 1800)                 # ephemeral reap: 30 min
-PARK_TTL = _env_int("BROKER_PARK_IDLE_SECONDS", 1800)                # persistent suspend: 30 min
+IDLE_TTL = _env_int("BROKER_IDLE_TTL_SECONDS", 120)                  # ephemeral reap (return to warm pool): 2 min
+PARK_TTL = _env_int("BROKER_PARK_IDLE_SECONDS", 120)                 # persistent suspend: 2 min (cold-start is 1-6s)
 REAP_TTL = _env_int("BROKER_REAP_SECONDS", 7 * 24 * 3600)            # persistent reap: 7 days
 CLAIM_READY_TIMEOUT = _env_int("BROKER_CLAIM_TIMEOUT_SECONDS", 60)
 # allow long-running commands (sandbox MAX_TIMEOUT is 600s)
@@ -497,7 +497,7 @@ async def terminal_ws(client_ws: WebSocket, session_id: str):
                             await up_ws.send(msg["bytes"])
                         elif msg.get("text"):
                             await up_ws.send(msg["text"])
-                except WebSocketDisconnect:
+                except (WebSocketDisconnect, Exception):
                     pass
 
             async def _upstream_to_client():
@@ -510,7 +510,19 @@ async def terminal_ws(client_ws: WebSocket, session_id: str):
                 except Exception:
                     pass
 
-            await asyncio.gather(_client_to_upstream(), _upstream_to_client(), return_exceptions=True)
+            # Stop as soon as EITHER side ends. Closing the upstream WS is what lets the
+            # runtime's WS handler reach its finally-block _term_cleanup, so the PTY is
+            # killed instead of leaking until the per-pod cap (-> 429).
+            c2u = asyncio.create_task(_client_to_upstream())
+            u2c = asyncio.create_task(_upstream_to_client())
+            await asyncio.wait({c2u, u2c}, return_when=asyncio.FIRST_COMPLETED)
+            for t in (c2u, u2c):
+                t.cancel()
+            with contextlib.suppress(Exception):
+                await up_ws.close()
+            with contextlib.suppress(Exception):
+                await client_ws.close()
+            await asyncio.gather(c2u, u2c, return_exceptions=True)
     except Exception as exc:
         log.warning("terminal ws upstream %s failed: %s", upstream, exc)
         with contextlib.suppress(Exception):
