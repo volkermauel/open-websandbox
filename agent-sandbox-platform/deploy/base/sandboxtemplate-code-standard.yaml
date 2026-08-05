@@ -72,6 +72,6 @@ spec:
       volumes:
       - { name: workspace, emptyDir: { sizeLimit: 4Gi } }
       - { name: home,      emptyDir: { sizeLimit: 2Gi } }
-      - { name: tmp,       emptyDir: { sizeLimit: 1Gi } }
+      - { name: tmp,       emptyDir: { medium: Memory, sizeLimit: 2Gi } }  # tmpfs: hard ENOSPC cap (gVisor doesn't enforce disk sizeLimit)
       - { name: packages, emptyDir: { sizeLimit: 4Gi } }
       restartPolicy: OnFailure
