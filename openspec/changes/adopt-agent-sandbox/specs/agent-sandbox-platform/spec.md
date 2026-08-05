@@ -126,16 +126,21 @@ productive without a first-call install penalty.
 
 ### Requirement: A user may optionally persist a workspace across sessions
 
-The system SHALL offer two profiles per request, selected by the `X-Persistence`
-header. **Ephemeral** (default) mounts an emptyDir at `/workspace` and destroys all
-files when the sandbox is terminated. **Persistent** (`X-Persistence: persistent`)
-binds a dedicated, per-USER PVC at `/workspace` (a shared ReadWriteMany StorageClass
-so a resumed pod may land on any worker). A persistent sandbox SHALL be **parked**
-when idle — its pod terminated to free node CPU/RAM while its PVC is retained — and
-**resumed** (pod recreated, same PVC re-mounted) on the user's next request, so a user
-SHALL recover their files across sessions. The broker SHALL reap (deleting the claim
-and releasing the PVC) any persistent sandbox unused longer than a configurable
-retention TTL.
+The system SHALL select the workspace profile at DEPLOY time via
+`BROKER_DEFAULT_PROFILE` (default **persistent**), because the OWUI terminal client
+cannot send request headers; an explicit `X-Persistence` header is honoured only as
+an optional admin override. **Ephemeral** mounts an emptyDir at `/workspace` and
+destroys all files when the sandbox is terminated. **Persistent** (the default)
+survives pod/image rollouts and has two deploy-selectable backends chosen by
+`BROKER_PERSISTENT_MODE`: `per-user-pvc` (default — a dedicated per-USER PVC at
+`/workspace` on a shared ReadWriteMany StorageClass so a resumed pod may land on any
+worker) or `shared-subpath` (ONE shared PVC; each user's Sandbox mounts only
+`users/<id>/` at `/workspace` via subPath for hard cross-user isolation). A persistent
+sandbox SHALL be **parked** when idle — its pod terminated to free node CPU/RAM while
+its volume is retained — and **resumed** (pod recreated, same volume re-mounted) on
+the user's next request, so a user SHALL recover their files across sessions. The
+broker SHALL reap (deleting the sandbox/claim and releasing the volume) any persistent
+sandbox unused longer than a configurable retention TTL.
 
 #### Scenario: A user resumes a parked workspace after idle
 

@@ -56,10 +56,23 @@ resolved: the **upstream is real** (`kubernetes-sigs/agent-sandbox` v0.5.3), and
   identity headers only when the request arrives through the configured auth
   proxy; direct broker access is blocked by NetworkPolicy (§12.1, §13.4).
 
-- **D7 — Ephemeral workspace, durable S3.** Default profile uses `emptyDir`
-  (no per-session PVC); durable artifacts go to the internal S3-compatible store
-  with scoped, short-lived credentials (§13.5, §14). Which S3 backend (existing
-  Ceph RGW / MinIO / rustfs) is confirmed at Phase 3.
+- **D7 — Persistent workspace by default (deploy-selectable backing).** `/workspace`
+  MUST survive pod/image rollouts — an ephemeral (emptyDir) default destroyed user
+  data whenever a pod was deleted (image upgrade, node drain, OOM, park; observed
+  in production). The profile is fixed at deploy time via
+  `BROKER_DEFAULT_PROFILE=persistent` (OWUI cannot send request headers;
+  `X-Persistence` remains an optional admin override). Two persistent backends,
+  selected by `BROKER_PERSISTENT_MODE`:
+  - `per-user-pvc` (default) — SandboxClaim + per-user cephfs PVC (10Gi, RWX) at
+    `/workspace`, with a per-session cwd folder inside.
+  - `shared-subpath` — ONE shared cephfs PVC (50Gi, RWX); each user's Sandbox mounts
+    only `users/<id>/` at `/workspace` via subPath (hard cross-user isolation; the
+    terminal cannot escape to other users' data). Provisions per-user Sandbox
+    objects directly (a SandboxClaim cannot set a per-user volumeMount subPath, and
+    subPath varies per user so no warm pool). Both modes park (Suspended) after
+  30 min idle and reap after 7d; the ephemeral opt-out keeps the warm pool for
+  throwaway work. Durable S3 for large/binary artifacts is deferred (not the
+  persistence model).
 
 - **D8 — One sandbox per active session, not per user (§1).** Users consume a
   sandbox only while a session is active; on session end the claimed sandbox is
