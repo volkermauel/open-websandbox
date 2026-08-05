@@ -93,7 +93,8 @@ jobs:
             type=raw,value=agent-sandbox-v0.5.3
       - uses: docker/build-push-action@v6
         with:
-          context: agent-sandbox/sandbox-router
+          context: agent-sandbox
+          file: agent-sandbox/sandbox-router/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

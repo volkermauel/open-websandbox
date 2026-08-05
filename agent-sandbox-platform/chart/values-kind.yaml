@@ -1,0 +1,16 @@
+# KIND/runc profile for the local e2e suite + CI (tests/e2e).
+#
+# gVisor cannot nest inside KIND's containerized nodes, so this runs the runtime under
+# plain runc. That weakens isolation (no syscall filter) but fully exercises the
+# broker→router→runtime path, the Helm chart, and the agent-sandbox controller.
+# Image names are bare (imageRegistry=""), imagePullPolicy=Never — images are loaded
+# directly into the node via `kind load docker-image` / `docker buildx --load`.
+sandboxTemplate:
+  runtimeClassName: ""            # runc (drop gVisor for KIND)
+router:
+  kubeApiServerCidr: "10.96.0.1/32"   # KIND service CIDR (kubeadm default)
+  kubeDnsCidr: "10.96.0.10/32"
+broker:
+  defaultProfile: ephemeral       # smoke the core path; per-user PVC is a separate (live) test
+sharedPvc:
+  storageClass: standard          # KIND default (local-path); stays Pending (RWX, unused in ephemeral)

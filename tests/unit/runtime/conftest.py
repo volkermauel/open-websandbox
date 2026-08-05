@@ -66,7 +66,7 @@ def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
 async def client(workdir: str) -> AsyncIterator[httpx.AsyncClient]:
     """In-process async client over the FastAPI ASGI app (for HTTP endpoints)."""
     transport = httpx.ASGITransport(app=server.app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as c:
         yield c
 
 

@@ -159,7 +159,7 @@ async def test_delete_file_and_dir(workdir, client):
     r = await client.delete("/files/delete", params={"path": "deldir"})
     assert r.status_code == 200
     assert r.json()["type"] == "directory"
-    assert (await client.get("/files/exists/deldir")).json()["exists"] is False
+    assert not (await client.get("/exists/deldir")).json()["exists"]
 
 
 async def test_delete_missing_is_404(workdir, client):
@@ -210,7 +210,7 @@ async def test_grep_max_results_truncates(workdir, client):
     r = await client.get("/files/grep", params={"query": "needle", "path": ".", "max_results": 3})
     assert r.status_code == 200
     body = r.json()
-    assert body["truncated"] is True
+    assert body["truncated"]
     assert len(body["matches"]) == 3
 
 
@@ -237,7 +237,7 @@ async def test_glob_files_and_dirs(workdir, client):
 
 async def test_upload_then_read(workdir, client):
     files = {"file": ("up.txt", b"uploaded-bytes", "text/plain")}
-    r = await client.post("/files/upload", files=files, data={"directory": "uploads"})
+    r = await client.post("/files/upload", files=files, params={"directory": "uploads"})
     assert r.status_code == 200
     body = r.json()
     assert body["size"] == len(b"uploaded-bytes")
@@ -283,7 +283,7 @@ async def test_tool_upload_download_list_exists(workdir, client):
     r = await client.get("/exists/tool.txt")
     assert r.status_code == 200
     body = r.json()
-    assert body["exists"] is True and body["is_file"] is True
+    assert body["exists"] and body["is_file"]
 
     # download
     r = await client.get("/download/tool.txt")
@@ -291,7 +291,7 @@ async def test_tool_upload_download_list_exists(workdir, client):
     assert r.content == b"tool-payload"
 
     # list
-    r = await client.get("/list/.")
+    r = await client.get("/list/")
     assert r.status_code == 200
     names = {e["name"] for e in r.json()["entries"]}
     assert "tool.txt" in names

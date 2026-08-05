@@ -1,0 +1,14 @@
+# gVisor KIND e2e profile — the FULL production runtime under gVisor-in-KIND.
+#
+# Requires the gVisor-enabled node image from scripts/setup-kind-gvisor.sh (runsc +
+# containerd-shim-runsc-v1 baked in, "runsc" registered with the node's containerd).
+# Unlike values-kind.yaml (runc), this keeps the chart's default runtimeClassName: gvisor,
+# so sandboxes run under the real systrap kernel — the closest local analog to production.
+router:
+  kubeApiServerCidr: "10.96.0.1/32"   # KIND service CIDR
+  kubeDnsCidr: "10.96.0.10/32"
+broker:
+  defaultProfile: ephemeral       # core-path smoke; per-user PVC is exercised on the live cluster
+sharedPvc:
+  storageClass: standard          # KIND default; stays Pending (RWX, unused in ephemeral)
+# sandboxTemplate.runtimeClassName stays at the chart default: gvisor

@@ -10,6 +10,7 @@ confirm escapes come back as HTTP 400 rather than 200-with-leaked-bytes.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -65,7 +66,7 @@ def test_safe_path_rejects_symlink_escape(workdir: str):
     assert_escape("etc_link/passwd", workdir)
     # ... but a symlink to somewhere still inside base is fine.
     inner_target = os.path.join(workdir, "real")
-    os.mkdir(inner_target)
+    Path(inner_target).mkdir()
     good_link = os.path.join(workdir, "good_link")
     os.symlink(inner_target, good_link)
     assert_within("good_link", workdir)
