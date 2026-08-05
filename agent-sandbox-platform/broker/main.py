@@ -73,6 +73,14 @@ DEFAULT_PROFILE = os.environ.get("BROKER_DEFAULT_PROFILE", PERSISTENT).lower()
 if DEFAULT_PROFILE not in (EPHEMERAL, PERSISTENT):
     DEFAULT_PROFILE = PERSISTENT
 MANAGED_BY = {"app.kubernetes.io/managed-by": "owui-broker"}
+BASE_TEMPLATE = os.environ.get("BROKER_BASE_TEMPLATE", "code-standard-v1")
+# Persistent backing, deploy-selectable: per-user-pvc (claim + per-user PVC) or
+# shared-subpath (direct per-user Sandbox + subPath slice of one shared RWX PVC).
+PERSISTENT_MODE = os.environ.get("BROKER_PERSISTENT_MODE", "per-user-pvc").lower()
+if PERSISTENT_MODE not in ("per-user-pvc", "shared-subpath"):
+    PERSISTENT_MODE = "per-user-pvc"
+SHARED_PVC = os.environ.get("BROKER_SHARED_PVC", "workspace-shared")
+SHARED_PREFIX = os.environ.get("BROKER_SHARED_PREFIX", "owui-s-")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("broker")
@@ -193,10 +201,116 @@ def _touch(name: str) -> None:
     except client.ApiException:        # pragma: no cover - non-fatal
         pass
 
+# --- shared-subPath persistent profile (one RWX PVC, per-user subPath) --------
+
+def _shared_sandbox_name(user_id: str) -> str:
+    """Deterministic per-USER shared-subPath sandbox name."""
+    return f"{SHARED_PREFIX}{hashlib.sha256(user_id.encode()).hexdigest()[:12]}"
+
+
+def _get_sandbox(name: str) -> Optional[dict]:
+    try:
+        return cast(dict, api.get_namespaced_custom_object(SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes", name))
+    except client.ApiException as exc:
+        if exc.status == 404:
+            return None
+        raise
+
+
+def _create_shared_sandbox(name: str, user_id: str) -> Optional[dict]:
+    """Create a per-user Sandbox whose /workspace is a subPath slice of the shared PVC.
+
+    The podTemplate is cloned from the base SandboxTemplate (image/env/resources/
+    gVisor/non-root securityContext stay in sync); then the `workspace` volume is
+    pointed at the static shared PVC and its mount gets subPath=users/<user_id>/.
+    Created directly (not via SandboxClaim) because claims are warm-pool-bound and
+    cannot set a per-user volumeMount subPath."""
+    tmpl = cast(dict, api.get_namespaced_custom_object(GROUP, VER, RUNTIME_NS, "sandboxtemplates", BASE_TEMPLATE))
+    pod_tmpl = json.loads(json.dumps(tmpl["spec"]["podTemplate"]))
+    pod_spec = pod_tmpl.setdefault("spec", {})
+    pod_tmpl.setdefault("metadata", {}).setdefault("labels", {})["profile"] = "persistent-shared"
+    sub_path = f"users/{user_id}/"
+    for v in pod_spec.get("volumes", []):
+        if v.get("name") == "workspace":
+            v.clear()
+            v["name"] = "workspace"
+            v["persistentVolumeClaim"] = {"claimName": SHARED_PVC}
+    for c in pod_spec.get("containers", []):
+        for vm in c.get("volumeMounts", []):
+            if vm.get("name") == "workspace":
+                vm["subPath"] = sub_path
+    body = {
+        "apiVersion": f"{SANDBOX_GROUP}/{VER}",
+        "kind": "Sandbox",
+        "metadata": {"name": name, "namespace": RUNTIME_NS,
+                     "labels": {**MANAGED_BY, PROFILE: PERSISTENT, "broker-persistent-mode": "shared-subpath"},
+                     "annotations": {LAST_USED: str(int(time.time()))}},
+        "spec": {"operatingMode": "Running", "shutdownPolicy": "Retain", "podTemplate": pod_tmpl},
+    }
+    try:
+        return cast(dict, api.create_namespaced_custom_object(SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes", body))
+    except client.ApiException as exc:
+        if exc.status == 409:
+            return _get_sandbox(name)
+        raise
+
+
+def _sandbox_ready(sbx: dict) -> bool:
+    return any(c.get("type") == "Ready" and c.get("status") == "True"
+               for c in (sbx.get("status", {}) or {}).get("conditions", []))
+
+
+def _sandbox_pod_ip(sbx: dict) -> Optional[str]:
+    ips = (sbx.get("status", {}) or {}).get("podIPs") or []
+    return ips[0] if ips else None
+
+
+def _touch_sandbox(name: str) -> None:
+    try:
+        api.patch_namespaced_custom_object(
+            SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes", name,
+            {"metadata": {"annotations": {LAST_USED: str(int(time.time()))}}})
+    except client.ApiException:        # pragma: no cover - non-fatal
+        pass
+
+
+async def _resolve_shared_sandbox(user_id: str) -> tuple[str, str]:
+    """shared-subPath persistent path: get-or-create a per-user Sandbox (direct, not a
+    claim), resuming if parked, then wait for the pod IP to appear."""
+    name = _shared_sandbox_name(user_id)
+    sbx = _get_sandbox(name) or _create_shared_sandbox(name, user_id)
+    if sbx is None:
+        raise HTTPException(status_code=500, detail=f"shared sandbox {name} could not be created")
+    deadline = time.time() + CLAIM_READY_TIMEOUT
+    while True:
+        sname = sbx.get("metadata", {}).get("name", name)
+        if _sandbox_operating_mode(sname) == "Suspended":
+            _set_sandbox_operating_mode(sname, "Running")
+        if _sandbox_ready(sbx):
+            pod_ip = _sandbox_pod_ip(sbx)
+            if pod_ip:
+                _touch_sandbox(name)
+                log.info("session user=%s profile=persistent(shared) mode=shared-subpath -> sandbox=%s pod=%s",
+                         user_id[:32], name, pod_ip)
+                return name, pod_ip
+        if time.time() > deadline:
+            raise HTTPException(status_code=504, detail=f"shared sandbox {name} not ready in {CLAIM_READY_TIMEOUT}s")
+        await asyncio.sleep(1)
+        sbx = _get_sandbox(name)
+        if sbx is None:
+            raise HTTPException(status_code=500, detail=f"shared sandbox {name} vanished during resolve")
+
 
 async def resolve_sandbox(user_id: str, session_id: str, profile: str) -> tuple[str, str]:
-    """Return (sandbox_id, pod_ip): get-or-create the claim, resuming a parked
-    persistent sandbox if necessary, then wait for the pod IP to appear."""
+    """Return (sandbox_id, pod_ip): get-or-create the sandbox for this user/session,
+    resuming a parked persistent sandbox if necessary, then wait for the pod IP.
+
+    Persistent has two deploy-selectable backends (BROKER_PERSISTENT_MODE):
+      * per-user-pvc  — SandboxClaim + per-user cephfs PVC (default).
+      * shared-subpath — direct per-user Sandbox whose /workspace is a subPath slice
+        of one shared RWX PVC (hard cross-user isolation, no warm pool)."""
+    if profile == PERSISTENT and PERSISTENT_MODE == "shared-subpath":
+        return await _resolve_shared_sandbox(user_id)
     name = _persistent_claim_name(user_id) if profile == PERSISTENT else _claim_name(user_id, session_id)
     claim = _get_claim(name) or _create_claim(name, profile)
     if claim is None:
@@ -436,6 +550,22 @@ async def _reaper_loop():
                     if idle > IDLE_TTL:
                         log.info("reaping ephemeral claim %s (idle %ds)", name, int(idle))
                         _delete_claim(name)
+            # shared-subPath persistent sandboxes (direct Sandbox objects, not claims)
+            sres = cast(dict, api.list_namespaced_custom_object(
+                SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes",
+                label_selector="broker-persistent-mode=shared-subpath"))
+            for s in sres.get("items", []):
+                sname = s["metadata"]["name"]
+                slu = int((s.get("metadata", {}).get("annotations", {}) or {}).get(LAST_USED, "0") or 0)
+                if not slu:
+                    continue
+                sidle = now - slu
+                if sidle > REAP_TTL:
+                    log.info("reaping shared sandbox %s (idle %ds)", sname, int(sidle))
+                    _delete_sandbox(sname)
+                elif sidle > PARK_TTL and _sandbox_operating_mode(sname) != "Suspended":
+                    log.info("parking shared sandbox %s (idle %ds)", sname, int(sidle))
+                    _set_sandbox_operating_mode(sname, "Suspended")
         except Exception as exc:        # pragma: no cover - keep the loop alive
             log.warning("reaper iteration error: %s", exc)
         await asyncio.sleep(60)
@@ -447,6 +577,12 @@ def _delete_claim(name: str) -> None:
     except client.ApiException as exc:      # pragma: no cover - non-fatal
         log.warning("reap failed for %s: %s", name, exc)
 
+
+def _delete_sandbox(name: str) -> None:
+    try:
+        api.delete_namespaced_custom_object(SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes", name)
+    except client.ApiException as exc:      # pragma: no cover - non-fatal
+        log.warning("reap failed for sandbox %s: %s", name, exc)
 
 @app.on_event("startup")
 async def _start_reaper():

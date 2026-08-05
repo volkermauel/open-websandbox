@@ -14,13 +14,14 @@ metadata:
   namespace: agent-sandbox-runtime
 rules:
 - apiGroups: ["extensions.agents.x-k8s.io"]
-  resources: ["sandboxclaims"]
+  resources: ["sandboxclaims", "sandboxtemplates"]   # claims (per-user-pvc) + templates (read base for shared-subpath)
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-# Sandboxes live in the `agents.x-k8s.io` group (not extensions) — the broker reads
-# operatingMode and patches Suspended/Running to park/resume persistent sandboxes.
+# Sandboxes live in the `agents.x-k8s.io` group (not extensions). The broker reads
+# operatingMode and patches Suspended/Running to park/resume persistent sandboxes,
+# and (shared-subpath mode) creates + deletes per-user Sandbox objects directly.
 - apiGroups: ["agents.x-k8s.io"]
   resources: ["sandboxes"]
-  verbs: ["get", "list", "watch", "update", "patch"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -62,6 +63,7 @@ spec:
         - {name: BROKER_IDLE_TTL_SECONDS, value: "1800"}
         - {name: BROKER_DEFAULT_PROFILE, value: "persistent"}      # OWUI can't send X-Persistence; fixed at deploy
         - {name: BROKER_PERSISTENT_STORAGE, value: "10Gi"}            # per-user PVC size (per-user-pvc mode)
+        - {name: BROKER_PERSISTENT_MODE, value: "per-user-pvc"}      # per-user-pvc | shared-subpath
         readinessProbe: {httpGet: {path: /healthz, port: 8080}, periodSeconds: 2}
         livenessProbe: {httpGet: {path: /healthz, port: 8080}, initialDelaySeconds: 5, periodSeconds: 10}
         resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: "1", memory: 512Mi}}

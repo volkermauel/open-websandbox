@@ -16,8 +16,8 @@ spec:
     limits.memory: 40Gi
     requests.ephemeral-storage: 20Gi
     limits.ephemeral-storage: 120Gi
-    persistentvolumeclaims: "5"
-    requests.storage: 50Gi
+    persistentvolumeclaims: "50"
+    requests.storage: 200Gi
 ---
 apiVersion: v1
 kind: LimitRange
