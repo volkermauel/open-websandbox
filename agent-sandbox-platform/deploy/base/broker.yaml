@@ -27,6 +27,11 @@ rules:
 - apiGroups: [""]
   resources: ["persistentvolumeclaims"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Leader election (HA): the broker holds a coordination.k8s.io/Lease so only the elected
+# replica runs the reaper. At replicas=1 (default) the sole broker always wins — a no-op.
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

@@ -25,6 +25,10 @@ broker:
   # for reproducible deploys / CI, e.g.  sharedSecret: "my-secret".
   # NOTE: never commit the placeholder "dev-shared-secret-change-me" — values.schema.json
   # rejects it and the broker refuses to start on a placeholder/empty value.
+  # Broker Deployment replicas. 1 (default) = single broker; leader election is a no-op
+  # (the sole broker always runs the reaper). Set >1 for HA: only the lease-holding
+  # replica reaps, so two brokers never double-reap a sandbox.
+  replicas: 1
   sharedSecret: ""
   warmPool: code-standard-warmpool
   runtimeNs: agent-sandbox-runtime

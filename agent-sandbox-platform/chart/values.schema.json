@@ -48,6 +48,11 @@
       "additionalProperties": false,
       "required": ["sharedSecret", "warmPool", "runtimeNs", "routerUrl", "idleTtlSeconds", "parkIdleSeconds", "defaultProfile", "persistentMode", "persistentStorage", "probes", "metrics"],
       "properties": {
+        "replicas": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Broker Deployment replicas. 1 = single broker (default; leader election is a no-op, the sole broker always reaps). Set >1 for HA — a coordination.k8s.io Lease ensures only the elected replica runs the reaper."
+        },
         "sharedSecret": {
           "type": "string",
           "description": "Shared secret for broker auth. Empty => auto-generate a random 48-char secret on first install (stable across upgrades via Helm lookup). The legacy dev placeholder is forbidden.",
