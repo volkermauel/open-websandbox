@@ -15,7 +15,13 @@ The broker authenticates callers with a shared secret. Pass this value to
 Open WebUI (e.g. as the broker auth header); it is stored in the Secret
 "owui-broker-secret" (key: shared-secret) in namespace {{ .Values.namespaces.system }}:
 
+{{- if .Values.broker.sharedSecret }}
   Shared secret : {{ .Values.broker.sharedSecret }}
+{{- else }}
+  Shared secret : (auto-generated — retrieve with)
+    kubectl -n {{ .Values.namespaces.system }} get secret owui-broker-secret \
+      -o jsonpath='{.data.shared-secret}' | base64 -d ; echo
+{{- end }}
 
 The broker forwards sandbox traffic to the router:
 

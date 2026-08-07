@@ -101,12 +101,13 @@ The base-image tags the chart transforms from are:
 ## Private registry & imagePullSecret (optional)
 
 If your images live in a **private** registry (not pre-loaded into containerd
-and not anonymously pullable), Kubernetes needs pull credentials. The chart does
-**not** yet expose a top-level `imagePullSecrets` value, so today you attach one
-`docker-registry` Secret to the ServiceAccounts the workloads run as.
+and not anonymously pullable), Kubernetes needs pull credentials. The chart exposes
+a top-level `imagePullSecrets` value — a list of `{name: ...}` refs applied to the
+broker, router, AND runtime (SandboxTemplate) pod specs.
 
-1. Create the pull secret in **both** namespaces (here for GHCR; reuse across
-   both, or create per-namespace):
+### Recommended: declare it in Helm
+
+1. Create the pull secret in **both** namespaces (here for GHCR):
 
    ```bash
    kubectl -n agent-sandbox-system create secret docker-registry regcred \
@@ -121,12 +122,26 @@ and not anonymously pullable), Kubernetes needs pull credentials. The chart does
      --docker-email=you@example.com
    ```
 
-2. Attach it to the ServiceAccounts the chart created:
-   - `owui-broker` and `sandbox-router` in `agent-sandbox-system` (the
-     broker/router Deployments name these SAs explicitly), and
-   - `default` in `agent-sandbox-runtime` (SandboxTemplate pods run with
-     `automountServiceAccountToken: false` and no explicit SA, so they inherit
-     the namespace `default` SA's `imagePullSecrets`).
+   (Secrets are namespace-scoped, so create one per namespace.)
+
+2. Reference it from your values file:
+
+   ```yaml
+   imagePullSecrets:
+     - name: regcred
+   ```
+
+3. Install/upgrade with those values. The chart attaches the secret to the
+   `owui-broker` and `sandbox-router` Deployments and to the SandboxTemplate pod
+   spec, so every workload pulls as `regcred`. Because it is a Helm value, `helm
+   upgrade` reconciles it (unlike a hand-patched ServiceAccount).
+
+### Alternative: patch the ServiceAccounts
+
+If you cannot re-run `helm upgrade`, you can instead attach the secret to the
+ServiceAccounts the workloads run as (`owui-broker`, `sandbox-router` in
+`agent-sandbox-system`; `default` in `agent-sandbox-runtime`). This is **not**
+reconciled by `helm upgrade`, so treat it as a stop-gap:
 
    ```bash
    kubectl -n agent-sandbox-system patch serviceaccount owui-broker \
@@ -135,19 +150,9 @@ and not anonymously pullable), Kubernetes needs pull credentials. The chart does
      -p '{"imagePullSecrets":[{"name":"regcred"}]}'
    kubectl -n agent-sandbox-runtime patch serviceaccount default \
      -p '{"imagePullSecrets":[{"name":"regcred"}]}'
-   ```
-
-   Restart affected pods so they pick up the new pull secret:
-
-   ```bash
    kubectl -n agent-sandbox-system rollout restart deploy/owui-broker deploy/sandbox-router
    # sandbox pods: recycle via the operations "Roll runtime image" procedure
    ```
-
-3. **Recommended (clean) path:** add an `imagePullSecrets` value to the chart so
-   the secret is declared in Helm rather than hand-patched — the SA patch above
-   is *not* reconciled by `helm upgrade`. Until that value exists, keep the
-   patches in your install runbook.
 
 > If you **pre-load** images into each gVisor worker's containerd instead
 > (section 2 above) and keep `imagePullPolicy: Never`, you need no pull secret.
