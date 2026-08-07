@@ -190,8 +190,6 @@ consumes object-storage space per PVC.
 
 ## Troubleshooting
 
-## Troubleshooting
-
 ### Sandbox stuck `NotReady` (claim never binds)
 
 ```bash
@@ -264,7 +262,7 @@ microk8s.ctr images ls | grep open-sandbox-runtime          # verify
 Repeat for every worker (sandboxes can land on any gVisor node). If you push to
 a registry instead, flip `imagePullPolicy` to `IfNotPresent` and reference the
 full `ghcr.io/<owner>/...` tag in the manifest. See
-[Build & load the images](deploy.md#build--load-the-images).
+[Build & load the images](deploy.md#2-build-load-the-images).
 
 ### Reaper stuck / error-loop
 
@@ -393,13 +391,11 @@ kubectl -n agent-sandbox-system  rollout status deploy/agent-sandbox-controller 
 
 ## Roll the runtime image
 
-## Roll the runtime image
-
 The runtime image is referenced by the SandboxTemplate
 (`code-standard-v1`), so a rollout is a template patch + recycle of live pods:
 
 1. Build and load the new image to every gVisor worker
-   ([deploy.md](deploy.md#build--load-the-images)).
+   ([deploy.md](deploy.md#2-build-load-the-images)).
 2. Bump the image tag in
    [`sandboxtemplate-code-standard.yaml`](../agent-sandbox-platform/deploy/base/sandboxtemplate-code-standard.yaml)
    and `kubectl apply` it. **Existing pods keep the old image** — the template

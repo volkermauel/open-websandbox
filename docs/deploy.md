@@ -11,7 +11,7 @@ for day-2 runbook steps see [`operations.md`](operations.md).
 > `ghcr.io/<owner>/open-sandbox-{broker,runtime,router}:<tag>`, where `<owner>`
 > is the final GitHub Container Registry owner/namespace (not yet decided). In a
 > Helm install you set registry/owner/tag once via chart values
-> ([Configuration](#configuration-helm-values)) — never by hand-editing
+> ([Configuration](#3-configuration-helm-values)) — never by hand-editing
 > templates. The base manifests shipped in
 > [`agent-sandbox-platform/deploy/base/`](../agent-sandbox-platform/deploy/base/)
 > carry local/dev tags (`owui-broker:v2`, `code-standard:v5`,
