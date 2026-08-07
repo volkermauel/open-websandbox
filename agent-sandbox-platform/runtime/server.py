@@ -36,9 +36,10 @@ import uuid as _uuid
 import zipfile
 from typing import Optional
 
-from fastapi import FastAPI, File, Header, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Header, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
 
 def _env_int(name: str, default: int) -> int:
     """Parse an int env var, falling back to `default` on missing/bad input."""
@@ -68,6 +69,34 @@ app = FastAPI(
     title="code-standard runtime",
     description="Exec + file API for an agent sandbox (OWUI open-terminal surface).",
 )
+
+
+# --- observability: Prometheus metrics --------------------------------------
+# A per-method/per-status request counter (scraped via /metrics), mirroring the
+# broker. Best-effort: even when a downstream handler raises we count a 500 so
+# error spikes stay visible to the scraper.
+_REQUESTS = Counter(
+    "runtime_http_requests_total",
+    "Runtime HTTP requests handled",
+    ["method", "status"],
+)
+
+
+@app.middleware("http")
+async def _count_requests(request: Request, call_next):
+    try:
+        response = await call_next(request)
+        _REQUESTS.labels(request.method, str(response.status_code)).inc()
+        return response
+    except Exception:
+        _REQUESTS.labels(request.method, "500").inc()
+        raise
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics() -> Response:
+    """Prometheus exposition (process + python runtime metrics + the request counter)."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 class ExecuteRequest(BaseModel):
@@ -827,3 +856,18 @@ async def terminal_ws(ws: WebSocket, session_id: str):
             await ws.close()
         await asyncio.gather(reader, receiver, return_exceptions=True)
         _term_cleanup(session_id)
+
+
+@app.on_event("shutdown")
+async def _on_shutdown() -> None:
+    """Graceful SIGTERM shutdown: best-effort close of active PTY master fds.
+
+    Per-connection WS reader/receiver tasks are torn down by the event loop when
+    their sockets close; there are no global long-lived tasks here (unlike the
+    broker's reaper). We only reap the tracked PTY sessions so SIGTERM doesn't
+    orphan shell process groups / leak open master fds. Never blocks: per-terminal
+    cleanup is synchronous and each failure is swallowed.
+    """
+    for sid in list(_terminals):
+        with contextlib.suppress(Exception):
+            _term_cleanup(sid)
