@@ -315,6 +315,22 @@ def _sandbox_pod_ip(sbx: dict) -> Optional[str]:
     return ips[0] if ips else None
 
 
+def _sandbox_ready_with_ip(sbx: dict) -> bool:
+    """Ready predicate for watches: sandbox is Ready AND has a pod IP."""
+    return _sandbox_ready(sbx) and bool(_sandbox_pod_ip(sbx))
+
+
+def _claim_ready_with_ip(claim: dict) -> bool:
+    """Ready predicate for watches: claim is Ready AND its sandbox has a pod IP."""
+    return _claim_ready(claim) and bool(_claim_pod_ip(claim))
+
+
+def _resume_if_suspended(name: str, _obj) -> None:
+    """on_event helper for watches: flip a Suspended sandbox back to Running."""
+    if _sandbox_operating_mode(name) == "Suspended":
+        _set_sandbox_operating_mode(name, "Running")
+
+
 def _touch_sandbox(name: str) -> None:
     try:
         api.patch_namespaced_custom_object(
@@ -322,6 +338,48 @@ def _touch_sandbox(name: str) -> None:
             {"metadata": {"annotations": {LAST_USED: str(_now_ts())}}})
     except client.ApiException as exc:        # pragma: no cover - non-fatal
         log.debug("non-fatal sandbox last-used touch: %s", exc)
+
+
+def _watch_until_ready(group: str, plural: str, name: str, is_ready, deadline_s: float, on_event=None) -> Optional[dict]:
+    """List a custom object once, then Watch it until is_ready(obj) or the deadline.
+
+    Event-driven replacement for a 1s poll loop: the initial GET reflects current state
+    (a ready object returns immediately), otherwise a single Watch stream blocks
+    server-side for the next change. on_event(name, obj) runs for the initial + each
+    streamed object (used to resume a Suspended sandbox). Returns the ready object or
+    None (timeout / missing). Sync — run via asyncio.to_thread."""
+    from kubernetes.watch import Watch
+    end = time.time() + deadline_s
+    try:
+        obj = cast(dict, api.get_namespaced_custom_object(group, VER, RUNTIME_NS, plural, name))
+    except client.ApiException as exc:  # 404 -> missing; other -> treat as not-ready
+        log.debug("watch %s/%s initial get failed: %s", group, name, exc)
+        return None
+    if on_event:
+        on_event(name, obj)
+    if is_ready(obj):
+        return obj
+    rv = ((obj.get("metadata") or {}) if isinstance(obj, dict) else {}).get("resourceVersion")
+    remaining = end - time.time()
+    if remaining <= 0:
+        return None
+    try:
+        for ev in Watch().stream(api.list_namespaced_custom_object, group=group, version=VER,
+                                 namespace=RUNTIME_NS, plural=plural,
+                                 field_selector=f"metadata.name={name}", resource_version=rv,
+                                 timeout_seconds=int(remaining) + 1):
+            ev_d = ev if isinstance(ev, dict) else {}
+            obj = ev_d.get("raw_object") or ev_d.get("object") or {}
+            if on_event:
+                on_event(name, obj)
+            if is_ready(obj):
+                return obj
+            if time.time() >= end:  # pragma: no cover - defensive; watch timeout_seconds bounds the stream
+                return None
+    except Exception as exc:  # stream error -> caller treats as not-ready/timeout
+        log.debug("watch %s/%s stream ended: %s", group, name, exc)
+    return None
+
 
 
 async def _resolve_chat_sandbox(user_id: str, session_id: str) -> tuple[str, str]:
@@ -334,43 +392,28 @@ async def _resolve_chat_sandbox(user_id: str, session_id: str) -> tuple[str, str
     just_created = pre is None
     if sbx is None:
         raise HTTPException(status_code=500, detail=f"chat sandbox {name} could not be created")
-    deadline = time.time() + CLAIM_READY_TIMEOUT
-    while True:
-        sname = sbx.get("metadata", {}).get("name", name)
-        if _sandbox_operating_mode(sname) == "Suspended":
-            _set_sandbox_operating_mode(sname, "Running")
-        if _sandbox_ready(sbx):
-            pod_ip = _sandbox_pod_ip(sbx)
-            if pod_ip:
-                _touch_sandbox(name)
-                log.info("session user=%s chat=%s profile=persistent mode=%s -> sandbox=%s pod=%s",
-                         user_id[:32], session_id[:16], PERSISTENT_MODE, name, pod_ip)
-                if just_created and session_id != user_id:
-                    await _migrate_staging_to_chat(user_id, pod_ip)
-                return name, pod_ip
-        if time.time() > deadline:
-            raise HTTPException(status_code=504, detail=f"chat sandbox {name} not ready in {CLAIM_READY_TIMEOUT}s")
-        await asyncio.sleep(1)
-        sbx = _get_sandbox(name)
-        if sbx is None:
-            raise HTTPException(status_code=500, detail=f"chat sandbox {name} vanished during resolve")
+    obj = await asyncio.to_thread(
+        _watch_until_ready, SANDBOX_GROUP, "sandboxes", name, _sandbox_ready_with_ip,
+        CLAIM_READY_TIMEOUT, _resume_if_suspended
+    )
+    if obj is None:
+        raise HTTPException(status_code=504, detail=f"chat sandbox {name} not ready in {CLAIM_READY_TIMEOUT}s")
+    pod_ip = cast(str, _sandbox_pod_ip(obj))
+    _touch_sandbox(name)
+    log.info("session user=%s chat=%s profile=persistent mode=%s -> sandbox=%s pod=%s",
+             user_id[:32], session_id[:16], PERSISTENT_MODE, name, pod_ip)
+    if just_created and session_id != user_id:
+        await _migrate_staging_to_chat(user_id, pod_ip)
+    return name, pod_ip
 
 
 async def _ensure_sandbox_running_ip(name: str, timeout: float = 90.0) -> Optional[str]:
-    """Resume a parked sandbox (if needed) and wait for its pod IP. None on timeout/missing."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        sbx = _get_sandbox(name)
-        if sbx is None:
-            return None
-        if _sandbox_operating_mode(name) == "Suspended":
-            _set_sandbox_operating_mode(name, "Running")
-        if _sandbox_ready(sbx):
-            ip = _sandbox_pod_ip(sbx)
-            if ip:
-                return ip
-        await asyncio.sleep(1)
-    return None
+    """Resume a parked sandbox (if needed) and wait for its pod IP via a Watch. None on timeout/missing."""
+    obj = await asyncio.to_thread(
+        _watch_until_ready, SANDBOX_GROUP, "sandboxes", name, _sandbox_ready_with_ip,
+        timeout, _resume_if_suspended
+    )
+    return _sandbox_pod_ip(obj) if obj else None
 
 
 _MIGRATE_ZIP = "__broker_migrate.zip"
@@ -464,27 +507,17 @@ async def resolve_sandbox(user_id: str, session_id: str, profile: str) -> tuple[
     claim = _get_claim(name) or _create_claim(name, profile)
     if claim is None:
         raise HTTPException(status_code=500, detail=f"claim {name} could not be created")
-    deadline = time.time() + CLAIM_READY_TIMEOUT
-    while True:
-        sandbox_id = _sandbox_name(claim)
-        if profile == PERSISTENT and sandbox_id and _sandbox_operating_mode(sandbox_id) == "Suspended":  # pragma: no cover - dead: PERSISTENT delegates to _resolve_chat_sandbox above
-            # Resume a parked sandbox: flip operatingMode; the pod (and pod IP) return shortly.
-            _set_sandbox_operating_mode(sandbox_id, "Running")
-        if _claim_ready(claim):
-            sandbox_id = _sandbox_name(claim)
-            if sandbox_id:
-                pod_ip = _claim_pod_ip(claim)
-                if pod_ip:
-                    _touch(name)
-                    log.info("session user=%s profile=%s -> claim=%s sandbox=%s pod=%s",
-                             user_id[:32], profile, name, sandbox_id, pod_ip)
-                    return sandbox_id, pod_ip
-        if time.time() > deadline:
-            raise HTTPException(status_code=504, detail=f"sandbox claim {name} not ready in {CLAIM_READY_TIMEOUT}s")
-        await asyncio.sleep(1)
-        claim = _get_claim(name)
-        if claim is None:
-            raise HTTPException(status_code=500, detail=f"claim {name} vanished during resolve")
+    obj = await asyncio.to_thread(
+        _watch_until_ready, GROUP, "sandboxclaims", name, _claim_ready_with_ip, CLAIM_READY_TIMEOUT
+    )
+    if obj is None:
+        raise HTTPException(status_code=504, detail=f"sandbox claim {name} not ready in {CLAIM_READY_TIMEOUT}s")
+    sandbox_id = cast(str, _sandbox_name(obj))
+    pod_ip = cast(str, _claim_pod_ip(obj))
+    _touch(name)
+    log.info("session user=%s profile=%s -> claim=%s sandbox=%s pod=%s",
+             user_id[:32], profile, name, sandbox_id, pod_ip)
+    return sandbox_id, pod_ip
 
 
 # --- reverse proxy ----------------------------------------------------------

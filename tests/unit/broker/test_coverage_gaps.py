@@ -68,51 +68,40 @@ def test_create_chat_sandbox_preserves_non_workspace_volumes(api, monkeypatch):
 
 # --- _resolve_chat_sandbox / _ensure_sandbox_running_ip retry loops ---------
 
-def test_resolve_chat_sandbox_waits_for_pod_ip(api, monkeypatch, no_sleep):
-    """A ready sandbox whose pod has no IP yet: the loop sleeps, refetches, and returns
-    once the IP appears. Covers the no-ip skip branch and the loop-back branch."""
-    no_ip = make_sandbox(name="cs1", ready=True, pod_ip=None)
+def test_resolve_chat_sandbox_waits_for_pod_ip(monkeypatch):
+    """Watch-until-ready returns the sandbox once it has a pod IP."""
     with_ip = make_sandbox(name="cs1", ready=True, pod_ip="10.0.0.9")
-    monkeypatch.setattr(main, "_get_sandbox", MagicMock(side_effect=[no_ip, with_ip]))
-
+    monkeypatch.setattr(main, "_get_sandbox", lambda n: with_ip)
+    monkeypatch.setattr(main, "_watch_until_ready", lambda *a, **k: with_ip)
+    monkeypatch.setattr(main, "_touch_sandbox", lambda n: None)
     name, ip = asyncio.run(main._resolve_chat_sandbox("u1", "sess-1"))
     assert ip == "10.0.0.9"
     assert name == main._chat_sandbox_name("u1", "sess-1")  # the hashed per-chat name
 
 
-def test_ensure_sandbox_running_ip_waits_for_ip(api, monkeypatch, no_sleep):
-    """Ready but IP-less sandbox becomes reachable on the next poll. Covers the no-ip
-    loop-continue branch of _ensure_sandbox_running_ip."""
-    no_ip = make_sandbox(name="sb1", ready=True, pod_ip=None)
+def test_ensure_sandbox_running_ip_waits_for_ip(monkeypatch):
+    """_ensure waits via the watch + returns the pod IP once ready."""
     with_ip = make_sandbox(name="sb1", ready=True, pod_ip="10.0.0.7")
-    monkeypatch.setattr(main, "_get_sandbox", MagicMock(side_effect=[no_ip, with_ip]))
-
+    monkeypatch.setattr(main, "_watch_until_ready", lambda *a, **k: with_ip)
     assert asyncio.run(main._ensure_sandbox_running_ip("sb1", timeout=90.0)) == "10.0.0.7"
 
 
-def test_ensure_sandbox_running_ip_missing(api, monkeypatch, no_sleep):
-    """A vanished sandbox resolves to None immediately (no busy-wait)."""
-    monkeypatch.setattr(main, "_get_sandbox", lambda n: None)
+def test_ensure_sandbox_running_ip_missing(monkeypatch):
+    """A missing/timeout sandbox resolves to None (watch returns None)."""
+    monkeypatch.setattr(main, "_watch_until_ready", lambda *a, **k: None)
     assert asyncio.run(main._ensure_sandbox_running_ip("sb1", timeout=5.0)) is None
 
 
 # --- resolve_sandbox ephemeral claim retry loop -----------------------------
 
-def test_resolve_sandbox_ephemeral_claim_retry(api, monkeypatch, no_sleep):
-    """The ephemeral claim walks through every retry state before succeeding: not-ready,
-    ready-but-no-sandbox, ready-but-no-pod-ip, then ready-with-ip. Covers the three
-    skip/loop-back branches of the main claim loop."""
-    monkeypatch.setattr(main, "_get_claim", MagicMock(side_effect=[
-        make_claim("c1", ready=False),                                  # iter 0 (initial get)
-        make_claim("c1", ready=True, sandbox=None),                     # ready, no sandbox id
-        make_claim("c1", ready=True, sandbox="sbx-1", pod_ip=None),     # ready, no pod ip
-        make_claim("c1", ready=True, sandbox="sbx-1", pod_ip="10.0.0.5"),  # success
-    ]))
-    monkeypatch.setattr(main, "_create_claim", MagicMock(return_value=None))
+def test_claim_ready_with_ip_predicate():
+    """_claim_ready_with_ip is True only when the claim is ready AND has a pod IP.
 
-    sid, ip = asyncio.run(main.resolve_sandbox("u1", "sess-1", main.EPHEMERAL))
-    assert sid == "sbx-1"
-    assert ip == "10.0.0.5"
+    The old poll loop's three skip branches (not-ready / ready-no-sandbox / ready-no-ip)
+    collapse into this single watch predicate now that resolution is event-driven."""
+    assert main._claim_ready_with_ip(make_claim("c1", ready=True, sandbox="sbx-1", pod_ip="10.0.0.5"))
+    assert not main._claim_ready_with_ip(make_claim("c1", ready=True, sandbox="sbx-1", pod_ip=None))
+    assert not main._claim_ready_with_ip(make_claim("c1", ready=False))
 
 
 # --- proxy redirect without a Location header -------------------------------
