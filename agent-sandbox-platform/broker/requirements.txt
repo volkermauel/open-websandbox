@@ -1,5 +1,8 @@
-fastapi
-uvicorn[standard]
-httpx
-kubernetes
-websockets>=13.0
+# Broker dependencies — pinned to exact versions for reproducible installs.
+# Versions resolved to the latest Python 3.12-compatible release.
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+httpx==0.28.1
+kubernetes==36.0.3
+websockets==17.0.1
+prometheus_client==0.26.0

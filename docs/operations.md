@@ -112,6 +112,84 @@ kubectl -n agent-sandbox-runtime get events --sort-by=.lastTimestamp | tail
 Raise the `ResourceQuota.hard` (and the underlying node capacity) — not the
 per-pod template limits — to admit more concurrent sandboxes.
 
+## Backup & Restore (per-user PVCs)
+
+The only durable state in open-sandbox is each user's `/workspace`, held on a
+per-user RWX PVC named `workspace-p-<12-hex>` in `agent-sandbox-runtime` (the
+hash is `sha256(user_id)[:12]`, so the name is **deterministic per user** — a
+restored PVC re-binds to the same user when the broker recreates the claim on
+next access). Ephemeral sandboxes use an `emptyDir` and are not backed up.
+
+> **The PVCs are unencrypted at rest.** Backups do not give you
+> confidentiality. Enable encryption at the **storage layer** (CephFS
+> encryption-at-rest, CSI/LUKS encryption, or Velero with a KMS-backed
+> Restic/Kopia integration) before relying on any of the mechanisms below.
+
+Two mechanisms, choose per recovery objective:
+
+### 1. CSI VolumeSnapshots (preferred — fast, storage-native, point-in-time)
+
+1. Ensure a `VolumeSnapshotClass` exists for your RWX StorageClass and that it
+   is the default for that provisioner.
+2. Schedule periodic `VolumeSnapshot` resources per PVC. The platform ships no
+   scheduler, so run one via a CronJob that lists `workspace-p-*` PVCs in
+   `agent-sandbox-runtime` and creates/rotates snapshots (e.g. keep 7 daily).
+3. **Restore** by creating a new PVC that uses the snapshot as its data source:
+
+   ```yaml
+   apiVersion: v1
+   kind: PersistentVolumeClaim
+   metadata:
+     name: workspace-p-<hash>          # must match the user's deterministic name
+     namespace: agent-sandbox-runtime
+   spec:
+     accessModes: ["ReadWriteMany"]
+     storageClassName: <your-rwx-class>
+     resources: { requests: { storage: 10Gi } }
+     dataSource:
+       name: <snapshot-name>
+       kind: VolumeSnapshot
+       apiGroup: snapshot.storage.k8s.io
+   ```
+
+   The broker recreates the `SandboxClaim` on the user's next request and binds
+   the restored PVC by name.
+
+Trade-off: snapshots are tied to one storage backend; fast to take/restore but
+not portable across storage classes.
+
+### 2. Velero, namespace-scoped (portable, file-level)
+
+Install/run Velero scoped to the runtime namespace and enable file-system
+backups (Restic/Kopia) for the `workspace-p-*` PVCs:
+
+```bash
+velero backup create sandbox-pvcs-$(date +%F) \
+  --include-namespaces agent-sandbox-runtime \
+  --include-resources persistentvolumeclaims,persistentvolumes \
+  --snapshot-volumes=false                # use file-level (Restic/Kopia), not CSI snapshots
+
+velero restore create --from-backup sandbox-pvcs-<date> \
+  --namespace-mappings agent-sandbox-runtime:agent-sandbox-runtime
+```
+
+Trade-off: portable across storage classes and Velero can encrypt backups at
+rest (KMS/gpg), but file-level backup/restore is slower than CSI snapshots and
+consumes object-storage space per PVC.
+
+### Notes for both
+
+- **RWX coordination:** a `Suspended` (parked) pod's PVC stays *Bound* and is
+  still snapshottable — there is no need to wake a sandbox to back it up.
+- **Restore-after-reap:** once a user's claim+PVC are reaped
+  (`BROKER_REAP_SECONDS`, 7 d), they are gone. Restoring the PVC (by name)
+  alone will **not** recreate the `SandboxClaim` — the broker does that on the
+  user's next request and binds the restored PVC. Verify the restored PVC name
+  matches `workspace-p-<hash>` or it will not bind.
+- **Test restores** regularly; an untested backup is not a backup.
+
+## Troubleshooting
+
 ## Troubleshooting
 
 ### Sandbox stuck `NotReady` (claim never binds)
@@ -187,6 +265,133 @@ Repeat for every worker (sandboxes can land on any gVisor node). If you push to
 a registry instead, flip `imagePullPolicy` to `IfNotPresent` and reference the
 full `ghcr.io/<owner>/...` tag in the manifest. See
 [Build & load the images](deploy.md#build--load-the-images).
+
+### Reaper stuck / error-loop
+
+Symptom: idle sandboxes never park/reap — PVCs and pods accumulate, parked
+pods stay `Running`, `BROKER_REAP_SECONDS` never fires. The broker's reaper
+(`_reaper_loop`) runs as an asyncio task and **catches every exception**, so a
+failing iteration keeps the loop alive but logs `reaper iteration error` and
+makes no progress — a repeating error every ~30 s is the signature.
+
+```bash
+kubectl -n agent-sandbox-system logs deploy/owui-broker --tail=200 \
+  | grep -iE 'reaper iteration error|park|reap|suspend'
+kubectl -n agent-sandbox-runtime get sandboxclaims,sandboxes -o wide   # stale 'Running' that should be 'Suspended'
+kubectl -n agent-sandbox-system rollout status deploy/agent-sandbox-controller
+```
+
+Common causes:
+
+- **Controller down/unhealthy** → reaper can't list/read `Sandbox`/`SandboxClaim`
+  status, so park/reap decisions never fire. Restart the controller first.
+- **API-server throttle / RBAC** → the broker ServiceAccount lost read on the
+  CRDs; each iteration throws and is swallowed.
+- **A poison claim** (bad annotation/status) makes every iteration throw at the
+  same object.
+
+The reaper is **stateless and idempotent** — restarting the broker is always
+safe; it re-derives ownership from labelled claims/sandboxes and never orphans
+sessions:
+
+```bash
+kubectl -n agent-sandbox-system rollout restart deploy/owui-broker
+```
+
+### WS-proxy 504 (proxyTimeout 660 vs. MAX_TIMEOUT 600)
+
+The broker holds its upstream `httpx` client open for
+`BROKER_PROXY_TIMEOUT_SECONDS` = **660 s**, deliberately ~60 s **above** the
+runtime's `MAX_TIMEOUT` = **600 s**, so a legitimately long command (up to the
+600 s cap) always completes *inside* the broker window. Under normal operation
+a long `POST /execute` returns at ≤ 600 s and never hits 660 s. A 504 means one
+of:
+
+1. **A sandboxed command overshot `MAX_TIMEOUT`** (hung loop, deadlock, or a
+   command that ignores SIGTERM). The broker waits the full 660 s then returns
+   504. Confirm in the broker log (a 660 s gap on one request) and tighten the
+   command / check `MAX_OUTPUT_BYTES` truncation in the runtime response.
+2. **An intermediary in front of the broker has a shorter idle/timeout and
+   returns 504 first.** This is the common case: a reverse proxy, ingress, or
+   Gateway with a 60 s / 120 s / 300 s idle timeout will 504 a long call long
+   before the broker's 660 s. Raise that intermediary's timeout to ≥ 660 s
+   (the broker's), or lower your expected command runtime below it.
+3. **The sandbox-router's own HTTP proxy timeout** (`--proxy-timeout=180s`) can
+   return early on a long *non-streaming* HTTP call on the broker→router→runtime
+   path. (The interactive terminal is a WebSocket upgrade and is not bound by
+   this HTTP timeout.)
+
+```bash
+# Is it the intermediary or the broker? Time one long execute end-to-end:
+time curl -sS http://owui-broker.agent-sandbox-system.svc:8080/execute \
+  -H 'Authorization: Bearer <token>' -H 'X-User-Id: u' -H 'X-Session-Id: s' \
+  -d '{"command":"sleep 590"}'      # ~590 s should succeed; ~60/180 s 504 = intermediary
+```
+
+### PVC Pending (persistent workspace)
+
+Symptom: a persistent user's `SandboxClaim` is bound but their
+`workspace-p-<hash>` PVC is stuck `Pending`; the sandbox pod never starts.
+
+```bash
+kubectl -n agent-sandbox-runtime get pvc -o wide
+kubectl -n agent-sandbox-runtime describe pvc workspace-p-<hash>   # events at the bottom
+kubectl -n agent-sandbox-runtime describe resourcequota           # quota headroom?
+```
+
+Common causes:
+
+- **StorageClass missing/misnamed** (`sharedPvc.storageClass` / your RWX
+  class) — event says `storageclass.storage.k8s.io "..." not found`.
+- **RWX provisioner / storage backend unhealthy** (Ceph down, no MDS) — event
+  says `failed to provision volume ... Waiting for a volume to be created`.
+- **Quota exhausted** — `persistentvolumeclaims: "50"` or `requests.storage:
+  "200Gi"` full (see [Capacity limits](#capacity-limits)).
+- **`WaitForFirstConsumer` binding + no schedulable gVisor node** — the PVC
+  waits for a pod that the taint/node-selector keeps off every node.
+
+### sandbox-not-ready (SandboxClaim stays NotReady)
+
+The broker returns **504** `sandbox claim ... not ready in 60s` when a claim
+does not reach `Ready` within `BROKER_CLAIM_TIMEOUT_SECONDS` (60 s). This is a
+**different 504 from the WS-proxy one** — note the message names the *claim*,
+not a timeout. (See also the existing [Sandbox stuck `NotReady`](#sandbox-stuck-notready-claim-never-binds)
+entry.) Causes, in order of frequency:
+
+- **Warm pool empty** + cold-start > 60 s → scale the warm pool up / check node
+  pressure (see [Warm pool tuning](#warm-pool-tuning)).
+- **gVisor RuntimeClass missing** on the target node (pod event:
+  `runtimeclass "gvisor" not found`) → re-run the gVisor activate playbook.
+- **ResourceQuota exhausted** (pods/cpu/storage) → [Capacity limits](#capacity-limits).
+- **PVC Pending** (persistent) → entry directly above.
+
+### Silent partial-outage — what `/healthz` does NOT check
+
+`GET /healthz` returns `{"status":"ok"}` **unconditionally** — it proves only
+that the broker process answers HTTP. It does **not** verify:
+
+- warm-pool `readyReplicas` (the pool can be drained — every claim cold-starts),
+- PVC binding (all persistent PVCs can be `Pending`),
+- gVisor nodes schedulable (all tainted away / drained / cordoned),
+- the sandbox-router reachable (broker can't proxy to any runtime),
+- the agent-sandbox controller healthy (no reconciliation → no new claims),
+- ResourceQuota headroom (quota full → new claims stuck),
+- the reaper progressing (see entry above),
+- the storage backend up.
+
+So a green `/healthz` can mask a fully broken platform. Do not use `/healthz`
+as your only uptime signal. Monitor instead:
+
+```bash
+# Single-glance reality check (claims, warm pool, pods, quota, PVCs, nodes):
+agent-sandbox-platform/scripts/sandbox-status.sh
+# Or the specific signals that matter:
+kubectl -n agent-sandbox-runtime get sandboxwarmpool -o jsonpath='{.items[*].status.readyReplicas}'
+kubectl -n agent-sandbox-runtime get pvc --no-headers | awk '$3!="Bound"' | wc -l   # Pending PVC count
+kubectl -n agent-sandbox-system  rollout status deploy/agent-sandbox-controller deploy/sandbox-router
+```
+
+## Roll the runtime image
 
 ## Roll the runtime image
 

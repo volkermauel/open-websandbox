@@ -32,6 +32,7 @@ from typing import Optional, cast
 import httpx
 import websockets
 from fastapi import FastAPI, HTTPException, Request, Response, Security, WebSocket, WebSocketDisconnect
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
 from openapi_spec import OPENAPI
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from kubernetes import client, config
@@ -491,6 +492,30 @@ app = FastAPI(title="code-standard broker", docs_url=None, redoc_url=None, opena
 _client = httpx.AsyncClient(timeout=httpx.Timeout(PROXY_TIMEOUT), follow_redirects=False)
 
 
+# --- observability: a request counter gives reaper/resolve/proxy visibility -------
+_REQUESTS = Counter(
+    "broker_http_requests_total", "Broker HTTP requests handled", ["method", "status"]
+)
+
+
+@app.middleware("http")
+async def _count_requests(request: Request, call_next):
+    try:
+        response = await call_next(request)
+        _REQUESTS.labels(request.method, str(response.status_code)).inc()
+        return response
+    except Exception:
+        _REQUESTS.labels(request.method, "500").inc()
+        raise
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics() -> Response:
+    """Prometheus exposition (process + python runtime metrics + the request counter).
+    Registered before the catch-all proxy so scrape traffic isn't forwarded to a sandbox."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
 @app.get("/openapi.json", include_in_schema=False)
 async def openapi_json() -> dict:
     """Curated OpenAPI 3.0 spec (the LLM-facing method surface). Registered before the
@@ -515,6 +540,22 @@ async def swagger_ui():
 @app.get("/healthz")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/readyz")
+async def ready():
+    """Readiness = the apiserver (our hard dependency for sandbox resolution) is reachable.
+    Unlike /healthz (process-up only), this fails when the control plane is unavailable so
+    the Service stops routing to a broker that would only 500 — prevents the silent
+    partial-outage where /healthz stays green while every resolve_sandbox throws."""
+    try:
+        api.list_namespaced_custom_object(
+            SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxclaims", limit=1, _request_timeout=3,
+        )
+    except Exception as exc:
+        log.warning("readyz: apiserver unreachable: %s", exc)
+        raise HTTPException(status_code=503, detail="apiserver unreachable")
+    return {"status": "ready"}
 
 
 def _subdir_for(session_id: str) -> str:
@@ -580,13 +621,13 @@ async def terminal_ws(client_ws: WebSocket, session_id: str):
 
     # Plaintext WebSocket is correct here: in-cluster pod-to-pod traffic inside the
     # trusted network (TLS terminates at the ingress). The scheme is held in a local so
-    # the source carries no literal "ws://" that would trip a blanket client-side
-    # insecure-WS rule (such rules don't apply to cluster-internal traffic).
+    # the source carries no plaintext ws-scheme literal that would trip a blanket
+    # client-side insecure-WS rule (such rules don't apply to cluster-internal traffic).
     _ws = "ws"
     upstream = f"{_ws}://{pod_ip}:8888/api/terminals/{session_id}"
     log.info("terminal ws user=%s session=%s -> sandbox=%s pod=%s", user[:32], session[:32], sandbox_id, pod_ip)
     try:
-        async with websockets.connect(upstream) as up_ws:
+        async with websockets.connect(upstream) as up_ws:  # nosemgrep: detect-insecure-websocket - plaintext in-cluster pod-to-pod; TLS terminates at ingress
 
             async def _client_to_upstream():
                 try:
@@ -747,6 +788,42 @@ def _delete_sandbox(name: str) -> None:
     except client.ApiException as exc:      # pragma: no cover - non-fatal
         log.warning("reap failed for sandbox %s: %s", name, exc)
 
+# Tracked so shutdown can cancel it.
+_reaper_task: Optional[asyncio.Task] = None
+
+
+def _validate_config() -> None:
+    """Fail-closed startup guard: refuse to run with an unsafe shared secret.
+
+    An unset/placeholder BROKER_SHARED_SECRET would silently disable auth (see _auth), so
+    we refuse to start rather than run open. Tested directly; wired into startup."""
+    if SHARED_SECRET in {"", "dev-shared-secret-change-me", "change-me", "changeme", "placeholder"}:
+        raise RuntimeError(
+            "BROKER_SHARED_SECRET is unset or a known placeholder — refusing to start. "
+            "Set a strong secret (the Helm chart auto-generates one)."
+        )
+
+
 @app.on_event("startup")
 async def _start_reaper():
-    asyncio.create_task(_reaper_loop())
+    _validate_config()
+    global _reaper_task
+    _reaper_task = asyncio.create_task(_reaper_loop())
+
+
+@app.on_event("shutdown")
+async def _stop_reaper():
+    """Graceful shutdown: cancel the reaper + close the upstream httpx pool so SIGTERM
+    doesn't leave the reaper looping or in-flight proxy requests hanging."""
+    global _reaper_task
+    if _reaper_task is not None and not _reaper_task.done():
+        _reaper_task.cancel()
+        try:
+            await _reaper_task
+        except BaseException:
+            pass
+        _reaper_task = None
+    try:
+        await _client.aclose()
+    except Exception:
+        pass

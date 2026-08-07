@@ -111,6 +111,10 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: sandbox-router
+{{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{- toYaml . | nindent 8 }}
+{{- end }}
       # Spread replicas across nodes/zones so a single failure doesn't take
       # the router fleet offline.
       topologySpreadConstraints:

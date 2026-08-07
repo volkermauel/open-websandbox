@@ -1,0 +1,197 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "open-sandbox chart values",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "imageRegistry": {
+      "type": "string",
+      "description": "Registry prefix, e.g. ghcr.io (prod). Empty => bare image names (KIND/CI, loaded into the node)."
+    },
+    "imageOwner": {
+      "type": "string",
+      "description": "Image owner/namespace. CI sets this from github.repository_owner."
+    },
+    "imagePullPolicy": {
+      "type": "string",
+      "enum": ["Always", "Never", "IfNotPresent"],
+      "description": "Kubernetes imagePullPolicy. KIND uses Never (images pre-loaded); prod uses IfNotPresent."
+    },
+    "imageTag": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tag applied to broker/router/runtime images."
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "description": "Optional Kubernetes imagePullSecrets (LocalObjectReference list). Attached to broker, router and runtime pod specs when non-empty.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "namespaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["system", "runtime"],
+      "properties": {
+        "system": { "type": "string", "minLength": 1, "description": "Control-plane namespace (broker + router)." },
+        "runtime": { "type": "string", "minLength": 1, "description": "Sandbox namespace (SandboxTemplate, WarmPool, pods)." }
+      }
+    },
+    "broker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sharedSecret", "warmPool", "runtimeNs", "routerUrl", "idleTtlSeconds", "parkIdleSeconds", "defaultProfile", "persistentMode", "persistentStorage", "probes", "metrics"],
+      "properties": {
+        "sharedSecret": {
+          "type": "string",
+          "description": "Shared secret for broker auth. Empty => auto-generate a random 48-char secret on first install (stable across upgrades via Helm lookup). The legacy dev placeholder is forbidden.",
+          "not": { "const": "dev-shared-secret-change-me" }
+        },
+        "warmPool": { "type": "string", "minLength": 1 },
+        "runtimeNs": { "type": "string", "minLength": 1 },
+        "routerUrl": { "type": "string", "minLength": 1 },
+        "idleTtlSeconds": { "type": "integer", "minimum": 0 },
+        "parkIdleSeconds": { "type": "integer", "minimum": 0 },
+        "defaultProfile": { "type": "string", "enum": ["persistent", "ephemeral"] },
+        "persistentMode": { "type": "string", "enum": ["per-user-pvc", "shared-subpath"] },
+        "persistentStorage": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" },
+        "probes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["liveness", "readiness", "startup"],
+          "properties": {
+            "liveness": { "$ref": "#/definitions/httpProbe" },
+            "readiness": { "$ref": "#/definitions/httpProbe" },
+            "startup": { "$ref": "#/definitions/httpProbe" }
+          }
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "port", "path"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "path": { "type": "string", "pattern": "^/" }
+          }
+        }
+      }
+    },
+    "sandboxTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "runtimeClassName", "runtimeRepository", "maxProcs", "uid", "dns", "storage"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "runtimeClassName": { "type": "string", "description": "gVisor runtime class; empty => field omitted (runc, for KIND e2e)." },
+        "runtimeRepository": { "type": "string", "minLength": 1 },
+        "maxProcs": { "type": "integer", "minimum": 1 },
+        "uid": { "type": "integer", "minimum": 0, "description": "Non-root UID the sandbox runs as." },
+        "dns": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["policy", "nameservers", "ndots"],
+          "properties": {
+            "policy": { "type": "string", "enum": ["None", "Default", "ClusterFirst", "ClusterFirstWithHostNet"] },
+            "nameservers": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "ndots": { "type": "integer", "minimum": 0, "maximum": 65535 }
+          }
+        },
+        "storage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["workspace", "home", "tmp", "packages"],
+          "properties": {
+            "workspace": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" },
+            "home": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" },
+            "tmp": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["medium", "sizeLimit"],
+              "properties": {
+                "medium": { "type": "string", "enum": ["Memory", ""] },
+                "sizeLimit": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" }
+              }
+            },
+            "packages": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" }
+          }
+        }
+      }
+    },
+    "warmPool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replicas", "templateName"],
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 0 },
+        "templateName": { "type": "string", "minLength": 1 }
+      }
+    },
+    "sharedPvc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "size", "storageClass"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "size": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" },
+        "storageClass": { "type": "string" }
+      }
+    },
+    "quota": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["persistentVolumeClaims", "storage", "pods"],
+      "properties": {
+        "persistentVolumeClaims": { "type": "string", "pattern": "^[0-9]+$" },
+        "storage": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" },
+        "pods": { "type": "string", "pattern": "^[0-9]+$" }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["egress"],
+      "properties": {
+        "egress": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dnsNameservers", "httpsPorts", "exceptCIDRs"],
+          "properties": {
+            "dnsNameservers": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "httpsPorts": { "type": "array", "items": { "type": "integer", "minimum": 1, "maximum": 65535 }, "minItems": 1 },
+            "exceptCIDRs": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+          }
+        }
+      }
+    },
+    "router": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "replicas", "kubeApiServerCidr", "kubeDnsCidr"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "replicas": { "type": "integer", "minimum": 1 },
+        "kubeApiServerCidr": { "type": "string", "minLength": 1 },
+        "kubeDnsCidr": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "definitions": {
+    "httpProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "periodSeconds", "failureThreshold"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^/" },
+        "periodSeconds": { "type": "integer", "minimum": 1 },
+        "failureThreshold": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

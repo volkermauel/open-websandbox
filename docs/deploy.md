@@ -98,6 +98,60 @@ The base-image tags the chart transforms from are:
 | runtime | `code-standard:v5` |
 | router | `sandbox-router-go:dev` |
 
+## Private registry & imagePullSecret (optional)
+
+If your images live in a **private** registry (not pre-loaded into containerd
+and not anonymously pullable), Kubernetes needs pull credentials. The chart does
+**not** yet expose a top-level `imagePullSecrets` value, so today you attach one
+`docker-registry` Secret to the ServiceAccounts the workloads run as.
+
+1. Create the pull secret in **both** namespaces (here for GHCR; reuse across
+   both, or create per-namespace):
+
+   ```bash
+   kubectl -n agent-sandbox-system create secret docker-registry regcred \
+     --docker-server=ghcr.io \
+     --docker-username=$OWNER \
+     --docker-password=$GITHUB_PAT \
+     --docker-email=you@example.com
+   kubectl -n agent-sandbox-runtime create secret docker-registry regcred \
+     --docker-server=ghcr.io \
+     --docker-username=$OWNER \
+     --docker-password=$GITHUB_PAT \
+     --docker-email=you@example.com
+   ```
+
+2. Attach it to the ServiceAccounts the chart created:
+   - `owui-broker` and `sandbox-router` in `agent-sandbox-system` (the
+     broker/router Deployments name these SAs explicitly), and
+   - `default` in `agent-sandbox-runtime` (SandboxTemplate pods run with
+     `automountServiceAccountToken: false` and no explicit SA, so they inherit
+     the namespace `default` SA's `imagePullSecrets`).
+
+   ```bash
+   kubectl -n agent-sandbox-system patch serviceaccount owui-broker \
+     -p '{"imagePullSecrets":[{"name":"regcred"}]}'
+   kubectl -n agent-sandbox-system patch serviceaccount sandbox-router \
+     -p '{"imagePullSecrets":[{"name":"regcred"}]}'
+   kubectl -n agent-sandbox-runtime patch serviceaccount default \
+     -p '{"imagePullSecrets":[{"name":"regcred"}]}'
+   ```
+
+   Restart affected pods so they pick up the new pull secret:
+
+   ```bash
+   kubectl -n agent-sandbox-system rollout restart deploy/owui-broker deploy/sandbox-router
+   # sandbox pods: recycle via the operations "Roll runtime image" procedure
+   ```
+
+3. **Recommended (clean) path:** add an `imagePullSecrets` value to the chart so
+   the secret is declared in Helm rather than hand-patched — the SA patch above
+   is *not* reconciled by `helm upgrade`. Until that value exists, keep the
+   patches in your install runbook.
+
+> If you **pre-load** images into each gVisor worker's containerd instead
+> (section 2 above) and keep `imagePullPolicy: Never`, you need no pull secret.
+
 ## 3. Configuration (Helm values)
 
 All configuration is values in the chart. The chart renders the namespaces, the
@@ -185,6 +239,40 @@ Runtime-side knobs (env on the sandbox pod, baked into the SandboxTemplate by
 the chart): `MAX_TIMEOUT` (600), `DEFAULT_TIMEOUT` (120), `MAX_OUTPUT_BYTES`
 (1 MiB), `MAX_PROCS` (256, `RLIMIT_NPROC`), `MAX_TERMINAL_SESSIONS` (8),
 `RUNTIME_API_KEY` (optional WS auth, off by default).
+
+## Production values presets (must-override keys)
+
+The chart's defaults reproduce the reference MicroK8s install — several values
+are **deliberately not safe for a different cluster**. Before any non-dev
+install, set at least these in your values file:
+
+| Key | Default (unsafe) | Set to / why |
+|-----|------------------|--------------|
+| `imageRegistry` | `""` | `ghcr.io` (the public registry). |
+| `imageOwner` | `""` | `$OWNER` — your GHCR org/namespace. |
+| `imageTag` | `v0.1.0` | A pinned tag; **pin by digest** for production. |
+| `imagePullPolicy` | `Never` | `IfNotPresent` once images are pulled from a registry (not pre-loaded). |
+| `broker.sharedSecret` | `dev-shared-secret-change-me` | `openssl rand -hex 32` — **must override**. Becomes the broker's `BROKER_SHARED_SECRET`. |
+| `router.kubeApiServerCidr` | `10.96.0.1/32` (MicroK8s) | ClusterIP of the `kubernetes` Service. kubeadm: `10.96.0.1/32`; k3s: `10.43.0.1/32`. Wrong here and the router can't reach the API server. |
+| `router.kubeDnsCidr` | `10.96.0.10/32` (MicroK8s) | ClusterIP of kube-dns/CoreDNS. kubeadm: `10.96.0.10/32`; k3s: `10.43.0.10/32`. |
+| `sharedPvc.storageClass` | `cephfs` | Your RWX StorageClass. Persistent sandboxes need RWX for park/resume. |
+| `networkPolicy.egress.exceptCIDRs` | RFC1918 + `169.254.0.0/16` | Confirm these cover your cluster's pod/service CIDRs so sandbox egress can't reach internal services. |
+
+### gVisor vs. runc
+
+gVisor (`runsc`) is the whole point of this platform — never run untrusted
+agent code under plain `runc` in production. The toggle is a single key:
+
+```yaml
+sandboxTemplate:
+  runtimeClassName: gvisor   # default; prod. gVisor pods land only on tainted sandbox nodes.
+  # runtimeClassName: ""     # omit the field entirely => plain runc (KIND e2e / local dev only)
+```
+
+`runtimeClassName: gvisor` requires the `gvisor` RuntimeClass cluster-wide
+plus the dedicated, tainted sandbox nodes. gVisor node prep (install/activate
+online-safely, the RuntimeClass, and a verify probe) is documented in
+[`infra/gvisor/`](../infra/gvisor/) — not repeated here.
 
 ## 4. Install the chart
 

@@ -1,5 +1,6 @@
-# Runtime server dependencies (FastAPI/uvicorn). Unpinned for Phase 2;
-# Phase 6 will pin digests for reproducibility.
-fastapi
-uvicorn[standard]
-python-multipart
+# Runtime server dependencies (FastAPI/uvicorn). Pinned to exact versions for
+# reproducible installs; resolved to latest Python 3.12-compatible release.
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+python-multipart==0.0.32
+prometheus_client==0.26.0

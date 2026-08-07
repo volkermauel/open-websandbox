@@ -47,3 +47,27 @@ Usage:
 {{- printf "%s:%s" .repo .Values.imageTag -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Broker shared secret resolution.
+- If broker.sharedSecret is set (non-empty), use it verbatim.
+- Else, if the owui-broker-secret Secret already exists (real cluster, e.g. an upgrade),
+  2read it back and preserve it — so the value is stable across `helm upgrade`.
+- Else (first install, or `helm template`/`lint` with no cluster), generate a random
+  48-char secret.
+Never returns the legacy dev placeholder. Pair with values.schema.json, which also
+forbids the placeholder.
+*/}}
+{{- define "open-sandbox.brokerSharedSecret" -}}
+{{- $provided := .Values.broker.sharedSecret -}}
+{{- if $provided -}}
+{{- $provided -}}
+{{- else -}}
+{{- $existing := lookup "v1" "Secret" (include "open-sandbox.systemNamespace" .) "owui-broker-secret" -}}
+{{- if and $existing (hasKey $existing.data "shared-secret") -}}
+{{- index $existing.data "shared-secret" | b64dec -}}
+{{- else -}}
+{{- randAlphaNum 48 -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

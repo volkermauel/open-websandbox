@@ -1,28 +1,29 @@
 # Curated "agent-common" libraries — pre-installed in the image so a sandbox
 # claimed from the warm pool is immediately productive (no first-call install).
 # Add/prune here; the set is version-controlled and listed in the spec.
+# Pinned to exact versions for reproducible installs.
 #
 # data / docs
-numpy
-pandas
-openpyxl
-xlsxwriter
-python-docx
-python-pptx
-pypdf
-pdfplumber
+numpy==2.5.1
+pandas==3.0.5
+openpyxl==3.1.5
+xlsxwriter==3.2.9
+python-docx==1.2.0
+python-pptx==1.0.2
+pypdf==6.15.0
+pdfplumber==0.11.10
 # parsing / config
-PyYAML
-tomli
-jsonschema
+PyYAML==6.0.3
+tomli==2.4.1
+jsonschema==4.26.0
 # http
-requests
-httpx
+requests==2.34.2
+httpx==0.28.1
 # utilities
-python-dateutil
-tqdm
-rich
-tabulate
+python-dateutil==2.9.0.post0
+tqdm==4.70.0
+rich==15.0.0
+tabulate==0.10.0
 # html / scraping
-beautifulsoup4
-lxml
+beautifulsoup4==4.15.0
+lxml==6.1.1

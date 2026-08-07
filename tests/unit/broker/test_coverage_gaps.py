@@ -241,3 +241,61 @@ def test_terminal_upstream_ends_cleanly(client, monkeypatch, httpx_client):
     with client.websocket_connect("/api/terminals/sess?user_id=u&session_id=s") as ws:
         with contextlib.suppress(WebSocketDisconnect):
             ws.receive_bytes()  # u2c ends -> teardown -> client disconnects
+
+
+# --- fail-closed auth, readiness probe, graceful shutdown -------------------
+
+def test_validate_config_rejects_weak_secret(monkeypatch):
+    for bad in ["", "dev-shared-secret-change-me", "change-me", "placeholder"]:
+        monkeypatch.setattr(main, "SHARED_SECRET", bad)
+        with pytest.raises(RuntimeError):
+            main._validate_config()
+
+
+def test_validate_config_accepts_strong_secret(monkeypatch):
+    monkeypatch.setattr(main, "SHARED_SECRET", "a-very-strong-and-random-secret-123456")
+    main._validate_config()  # no raise
+
+
+def test_readyz_ok_when_apiserver_reachable(client, api):
+    api.list_namespaced_custom_object.return_value = {"items": []}
+    assert client.get("/readyz").status_code == 200
+
+
+def test_readyz_503_when_apiserver_down(client, api):
+    api.list_namespaced_custom_object.side_effect = RuntimeError("timeout")
+    assert client.get("/readyz").status_code == 503
+
+
+def test_stop_reaper_cancels_task_and_closes_client(monkeypatch):
+    fake_task = MagicMock()
+    fake_task.done.return_value = False
+    monkeypatch.setattr(main, "_reaper_task", fake_task)
+    fake_client = AsyncMock()
+    monkeypatch.setattr(main, "_client", fake_client)
+    asyncio.run(main._stop_reaper())
+    fake_task.cancel.assert_called_once()
+    fake_client.aclose.assert_awaited_once()
+
+
+def test_stop_reaper_noop_when_no_task(monkeypatch):
+    monkeypatch.setattr(main, "_reaper_task", None)
+    fake_client = AsyncMock()
+    monkeypatch.setattr(main, "_client", fake_client)
+    asyncio.run(main._stop_reaper())  # no task to cancel; client still closed
+    fake_client.aclose.assert_awaited_once()
+
+
+def test_metrics_endpoint(client):
+    r = client.get("/metrics")
+    assert r.status_code == 200
+    assert "broker_http_requests_total" in r.text  # the request counter is exposed
+
+
+def test_stop_reaper_swallows_aclose_error(monkeypatch):
+    monkeypatch.setattr(main, "_reaper_task", None)
+    bad_client = AsyncMock()
+    bad_client.aclose.side_effect = RuntimeError("close failed")
+    monkeypatch.setattr(main, "_client", bad_client)
+    asyncio.run(main._stop_reaper())  # aclose raises but shutdown still completes cleanly
+    bad_client.aclose.assert_awaited_once()

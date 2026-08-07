@@ -13,7 +13,10 @@ metadata:
     {{- include "open-sandbox.labels" . | nindent 4 }}
 type: Opaque
 stringData:
-  shared-secret: {{ .Values.broker.sharedSecret | quote }}
+  # Resolved via the open-sandbox.brokerSharedSecret helper: explicit value, else the
+  # existing Secret is preserved across upgrades (lookup), else a random 48-char secret
+  # is generated on first install. Never the dev placeholder.
+  shared-secret: {{ include "open-sandbox.brokerSharedSecret" . | quote }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -78,14 +81,47 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: owui-broker
+        # This chart does not template a Namespace resource (both namespaces are
+        # pre-created — see NOTES.txt), so the Pod Security Standard labels are declared
+        # on the Pod as an intent marker. For real admission enforcement, set these
+        # three labels on the namespaces (agent-sandbox-system / agent-sandbox-runtime).
+        # The pod + container securityContext below makes the broker actually compliant
+        # with the `restricted` profile.
+        pod-security.kubernetes.io/enforce: restricted
+        pod-security.kubernetes.io/audit: restricted
+        pod-security.kubernetes.io/warn: restricted
+      {{- if .Values.broker.metrics.enabled }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.broker.metrics.port | quote }}
+        prometheus.io/path: {{ .Values.broker.metrics.path | quote }}
+      {{- end }}
     spec:
+      # NOTE: token stays mounted — the broker talks to the kube API (SandboxClaims,
+      # Sandboxes, PVCs) as its own ServiceAccount. Do not set automountServiceAccountToken: false here.
       serviceAccountName: owui-broker
+{{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{- toYaml . | nindent 8 }}
+{{- end }}
+      # Restricted-PSS lockdown mirroring the router + runtime pods. readOnlyRootFilesystem
+      # means the Python process cannot write bytecode next to its source or to /; a writable
+      # emptyDir /tmp is mounted below. If the image writes bytecode elsewhere, also set
+      # PYTHONDONTWRITEBYTECODE=1 in the broker image/env.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: broker
         image: {{ include "open-sandbox.image" (dict "Values" .Values "repo" "open-sandbox-broker") }}
         imagePullPolicy: {{ .Values.imagePullPolicy }}
         ports:
-        - containerPort: 8080
+        - name: http
+          containerPort: 8080
         env:
         - name: BROKER_SHARED_SECRET
           valueFrom:
@@ -108,17 +144,34 @@ spec:
           value: {{ .Values.broker.persistentMode | quote }}
         - name: BROKER_PARK_IDLE_SECONDS
           value: {{ .Values.broker.parkIdleSeconds | quote }}
-        readinessProbe:
+        startupProbe:
           httpGet:
-            path: /healthz
-            port: 8080
-          periodSeconds: 2
+            path: {{ .Values.broker.probes.startup.path }}
+            port: http
+          periodSeconds: {{ .Values.broker.probes.startup.periodSeconds }}
+          failureThreshold: {{ .Values.broker.probes.startup.failureThreshold }}
         livenessProbe:
           httpGet:
-            path: /healthz
-            port: 8080
-          initialDelaySeconds: 5
-          periodSeconds: 10
+            path: {{ .Values.broker.probes.liveness.path }}
+            port: http
+          periodSeconds: {{ .Values.broker.probes.liveness.periodSeconds }}
+          failureThreshold: {{ .Values.broker.probes.liveness.failureThreshold }}
+        readinessProbe:
+          httpGet:
+            path: {{ .Values.broker.probes.readiness.path }}
+            port: http
+          periodSeconds: {{ .Values.broker.probes.readiness.periodSeconds }}
+          failureThreshold: {{ .Values.broker.probes.readiness.failureThreshold }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
         resources:
           requests:
             cpu: 100m
@@ -126,6 +179,12 @@ spec:
           limits:
             cpu: "1"
             memory: 512Mi
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -138,5 +197,6 @@ spec:
   selector:
     app.kubernetes.io/name: owui-broker
   ports:
-  - port: 8080
-    targetPort: 8080
+  - name: http
+    port: 8080
+    targetPort: http

@@ -6,13 +6,26 @@ imageRegistry: ""        # prod: ghcr.io
 imageOwner: ""           # prod: <owner> (CI uses github.repository_owner)
 imagePullPolicy: Never   # prod: IfNotPresent
 imageTag: v0.1.0
+# Optional Kubernetes imagePullSecrets — a LocalObjectReference list, e.g.
+#   imagePullSecrets: [{name: ghcr-pull}]
+# Applied to the broker, router, AND runtime (SandboxTemplate) pod specs when
+# non-empty (needed for private registries such as ghcr.io in prod). Omitted
+# entirely when empty.
+imagePullSecrets: []
 
 namespaces:
   system: agent-sandbox-system    # broker + router (control plane)
   runtime: agent-sandbox-runtime  # sandbox pods + SandboxTemplate/WarmPool
 
 broker:
-  sharedSecret: dev-shared-secret-change-me   # materialized into Secret owui-broker-secret
+  # Shared secret authenticating broker callers (materialized into Secret
+  # owui-broker-secret, key "shared-secret"). Leave EMPTY ("") to auto-generate a
+  # random 48-char secret on first install; the value is then stable across upgrades
+  # (Helm `lookup` reads the existing Secret back and preserves it). Set it explicitly
+  # for reproducible deploys / CI, e.g.  sharedSecret: "my-secret".
+  # NOTE: never commit the placeholder "dev-shared-secret-change-me" — values.schema.json
+  # rejects it and the broker refuses to start on a placeholder/empty value.
+  sharedSecret: ""
   warmPool: code-standard-warmpool
   runtimeNs: agent-sandbox-runtime
   routerUrl: http://sandbox-router-svc.agent-sandbox-system:8080
@@ -21,6 +34,28 @@ broker:
   defaultProfile: persistent
   persistentMode: per-user-pvc     # per-user-pvc | shared-subpath
   persistentStorage: 10Gi
+  # HTTP probes. /readyz (readiness) and /metrics are NEW broker endpoints added
+  # alongside the existing /healthz (liveness). All served on the single :8080 port.
+  # startupProbe waits up to periodSeconds*failureThreshold for the broker to come up
+  # (secret check, warm-pool reconcile) before liveness/readiness take over.
+  probes:
+    liveness:
+      path: /healthz
+      periodSeconds: 10
+      failureThreshold: 3
+    readiness:
+      path: /readyz
+      periodSeconds: 5
+      failureThreshold: 3
+    startup:
+      path: /healthz
+      periodSeconds: 5
+      failureThreshold: 30        # 30 * 5s = 150s init headroom
+  # Prometheus scraping of the broker /metrics endpoint (same :8080 port).
+  metrics:
+    enabled: true
+    port: 8080
+    path: /metrics
 
 sandboxTemplate:
   name: code-standard-v1

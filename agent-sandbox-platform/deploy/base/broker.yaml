@@ -1,6 +1,7 @@
 # Open WebUI broker: auth + session->sandbox + reverse-proxy to the router.
 # Lives in agent-sandbox-system; needs RBAC in agent-sandbox-runtime to manage
-# SandboxClaims and read Sandboxes.
+# SandboxClaims and read Sandboxes. Static counterpart of the Helm broker template
+# (templates/broker.yaml) — keep the two in sync.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -51,27 +52,62 @@ spec:
   replicas: 1
   selector: {matchLabels: {app.kubernetes.io/name: owui-broker}}
   template:
-    metadata: {labels: {app.kubernetes.io/name: owui-broker}}
+    metadata:
+      labels:
+        app.kubernetes.io/name: owui-broker
+        # Pod Security Standard "restricted" markers. For real admission enforcement set
+        # these labels on the agent-sandbox-system Namespace; the securityContext below
+        # makes the broker actually compliant with the restricted profile.
+        pod-security.kubernetes.io/enforce: restricted
+        pod-security.kubernetes.io/audit: restricted
+        pod-security.kubernetes.io/warn: restricted
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
     spec:
+      # NOTE: token stays mounted — the broker talks to the kube API (SandboxClaims,
+      # Sandboxes, PVCs) as its own ServiceAccount. Do NOT set automountServiceAccountToken: false.
       serviceAccountName: owui-broker
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
       containers:
       - name: broker
         image: owui-broker:v2
         imagePullPolicy: Never
-        ports: [{containerPort: 8080}]
+        ports: [{name: http, containerPort: 8080}]
         env:
         - {name: BROKER_SHARED_SECRET, valueFrom: {secretKeyRef: {name: owui-broker-secret, key: shared-secret}}}
         - {name: BROKER_WARMPOOL, value: "code-standard-warmpool"}
         - {name: BROKER_RUNTIME_NS, value: "agent-sandbox-runtime"}
         - {name: BROKER_ROUTER_URL, value: "http://sandbox-router-svc.agent-sandbox-system:8080"}
-        - {name: BROKER_IDLE_TTL_SECONDS, value: "120"}   # ephemeral reap (return to warm pool)
-        - {name: BROKER_DEFAULT_PROFILE, value: "persistent"}      # OWUI can't send X-Persistence; fixed at deploy
-        - {name: BROKER_PERSISTENT_STORAGE, value: "10Gi"}            # per-user PVC size (per-user-pvc mode)
-        - {name: BROKER_PERSISTENT_MODE, value: "per-user-pvc"}      # per-user-pvc | shared-subpath
-        - {name: BROKER_PARK_IDLE_SECONDS, value: "120"}  # persistent suspend (cold-start 1-6s); pairs with IDLE_TTL
-        readinessProbe: {httpGet: {path: /healthz, port: 8080}, periodSeconds: 2}
-        livenessProbe: {httpGet: {path: /healthz, port: 8080}, initialDelaySeconds: 5, periodSeconds: 10}
+        - {name: BROKER_IDLE_TTL_SECONDS, value: "120"}          # ephemeral reap (return to warm pool)
+        - {name: BROKER_DEFAULT_PROFILE, value: "persistent"}    # OWUI can't send X-Persistence; fixed at deploy
+        - {name: BROKER_PERSISTENT_STORAGE, value: "10Gi"}       # per-user PVC size (per-user-pvc mode)
+        - {name: BROKER_PERSISTENT_MODE, value: "per-user-pvc"}  # per-user-pvc | shared-subpath
+        - {name: BROKER_PARK_IDLE_SECONDS, value: "120"}         # persistent suspend (cold-start 1-6s); pairs with IDLE_TTL
+        startupProbe:   {httpGet: {path: /healthz, port: http}, periodSeconds: 5, failureThreshold: 30}
+        livenessProbe:  {httpGet: {path: /healthz, port: http}, periodSeconds: 10, failureThreshold: 3}
+        readinessProbe: {httpGet: {path: /readyz,  port: http}, periodSeconds: 5, failureThreshold: 3}
+        # Restricted-PSS lockdown mirroring the router + runtime pods. A Python process under
+        # readOnlyRootFilesystem cannot write bytecode next to its source or to /, so a writable
+        # emptyDir /tmp is mounted; set PYTHONDONTWRITEBYTECODE=1 if bytecode is written elsewhere.
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities: {drop: ["ALL"]}
+          seccompProfile: {type: RuntimeDefault}
         resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: "1", memory: 512Mi}}
+        volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes:
+      - {name: tmp, emptyDir: {}}
 ---
 apiVersion: v1
 kind: Service
@@ -80,4 +116,4 @@ metadata:
   namespace: agent-sandbox-system
 spec:
   selector: {app.kubernetes.io/name: owui-broker}
-  ports: [{port: 8080, targetPort: 8080}]
+  ports: [{name: http, port: 8080, targetPort: http}]
