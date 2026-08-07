@@ -112,11 +112,18 @@ def test_delete_sandbox_calls_api(api):
 
 
 async def test_start_reaper_creates_task(monkeypatch):
+    # _start_reaper now starts the leader loop, which runs the reaper only when we lead.
     loop = AsyncMock()
     monkeypatch.setattr(main, "_reaper_loop", loop)
+    monkeypatch.setattr(main, "_acquire_or_renew_lease", lambda: True)  # we win the lease
     await main._start_reaper()
-    await asyncio.sleep(0)  # let the spawned task run
+    await asyncio.sleep(0.05)  # let the leader loop's first iteration run the reaper
     loop.assert_awaited()
+    main._leader_task.cancel()
+    try:
+        await main._leader_task
+    except BaseException:
+        pass
 
 
 async def test_reaper_skips_claim_with_no_last_used(api, monkeypatch, reaper_one_tick):

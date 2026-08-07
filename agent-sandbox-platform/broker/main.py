@@ -20,6 +20,7 @@ injecting X-Sandbox-Id / X-Sandbox-Namespace / X-Sandbox-Pod-IP (priority-1 reso
 """
 import asyncio
 import contextlib
+import datetime
 import hashlib
 import hmac
 import copy
@@ -391,8 +392,10 @@ async def _migrate_staging_to_chat(user_id: str, chat_pod_ip: str) -> None:
     wipe staging. Fires once per new chat (session != user) — moves files uploaded
     BEFORE the chat had a chatId, and guarantees no A->B cross-chat leak.
 
-    Best-effort: failures are logged, never fatal. Clearing staging ALWAYS runs when the
-    staging pod is reachable, so leak prevention does not depend on the move succeeding."""
+    Best-effort: failures are logged, never fatal. If the staging pod IS reachable the
+    workspace is always wiped (anti-leak, independent of the move succeeding). If it is
+    NOT reachable, the staging Sandbox is deleted outright (per the product decision that
+    short-lived pre-chat uploads are disposable) so its data cannot leak into a later chat."""
     staging = _chat_sandbox_name(user_id, user_id)
     lock = _migrate_locks.setdefault(user_id, asyncio.Lock())
     async with lock:
@@ -401,8 +404,9 @@ async def _migrate_staging_to_chat(user_id: str, chat_pod_ip: str) -> None:
                 return  # user never used a no-session (staging) sandbox
             sip = await _ensure_sandbox_running_ip(staging, timeout=90.0)
             if not sip:
-                log.warning("staging migrate: %s not reachable; cannot clear (leak risk) user=%s",
+                log.warning("staging migrate: %s not reachable; deleting staging to prevent cross-chat leak user=%s",
                             staging, user_id[:16])
+                _delete_sandbox(staging)
                 return
             moved = 0
             try:
@@ -792,6 +796,106 @@ def _delete_sandbox(name: str) -> None:
 _reaper_task: Optional[asyncio.Task] = None
 
 
+# --- Leader election (HA: only the elected broker runs the background reaper) ---
+# Single-lease election over coordination.k8s.io/Lease. At replicas=1 (default) the sole
+# broker always wins; at replicas>1 exactly one holds the lease and reaps, so two replicas
+# never double-park/double-reap the same sandbox. The request path (proxy/resolve/migrate)
+# runs on every replica regardless of leadership — only the reaper is leader-gated.
+_LEADER_LOCK_NS = os.environ.get("BROKER_LEADER_NAMESPACE", RUNTIME_NS)
+_LEADER_LEASE_NAME = os.environ.get("BROKER_LEADER_LEASE", "owui-broker-leader")
+_LEADER_IDENTITY = os.environ.get("HOSTNAME") or f"broker-{os.getpid()}"
+_LEADER_DURATION = _env_int("BROKER_LEADER_DURATION_SECONDS", 15)
+_LEADER_RENEW_SECONDS = _env_int("BROKER_LEADER_RENEW_SECONDS", 5)
+_is_leader = False
+_reaper_task: Optional[asyncio.Task] = None
+_leader_task: Optional[asyncio.Task] = None
+_coord_api: Optional[client.CoordinationV1Api] = None
+
+
+def _coord() -> client.CoordinationV1Api:
+    """Lazy CoordinationV1Api (created once; tests monkeypatch this)."""
+    global _coord_api
+    if _coord_api is None:
+        _coord_api = client.CoordinationV1Api()
+    return _coord_api
+
+
+def _acquire_or_renew_lease() -> bool:
+    """Acquire or renew the broker leader lease. True iff we hold it after the attempt.
+
+    Create if absent; renew if ours; take over if held by another but expired; defer
+    (False) if another live holder owns it."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        lease = _coord().read_namespaced_lease(_LEADER_LEASE_NAME, _LEADER_LOCK_NS)
+    except client.ApiException as exc:
+        if exc.status != 404:
+            log.warning("leader: read lease failed: %s", exc)  # pragma: no cover
+            return False  # pragma: no cover
+        lease = None
+    if lease is None:
+        spec = client.V1LeaseSpec(
+            holder_identity=_LEADER_IDENTITY,
+            lease_duration_seconds=_LEADER_DURATION,
+            acquire_time=now,
+            renew_time=now,
+        )
+        body = client.V1Lease(metadata=client.V1ObjectMeta(name=_LEADER_LEASE_NAME), spec=spec)
+        try:
+            _coord().create_namespaced_lease(_LEADER_LOCK_NS, body)
+            return True
+        except client.ApiException as exc:  # pragma: no cover - lost a create race
+            log.warning("leader: create lease failed: %s", exc)
+            return False
+    spec = getattr(lease, "spec", None) or client.V1LeaseSpec()
+    holder = spec.holder_identity
+    renew = spec.renew_time
+    duration = spec.lease_duration_seconds or _LEADER_DURATION
+    held_by_other = (
+        bool(holder)
+        and holder != _LEADER_IDENTITY
+        and renew is not None
+        and (datetime.datetime.now(datetime.timezone.utc) - renew).total_seconds() < duration
+    )
+    if held_by_other:
+        return False
+    spec.holder_identity = _LEADER_IDENTITY
+    spec.lease_duration_seconds = _LEADER_DURATION
+    spec.acquire_time = now
+    spec.renew_time = now
+    try:
+        _coord().replace_namespaced_lease(_LEADER_LEASE_NAME, _LEADER_LOCK_NS, lease)
+    except client.ApiException as exc:  # pragma: no cover - 409 race / apiserver error
+        log.warning("leader: renew lease failed: %s", exc)
+        return False
+    return True
+
+
+async def _apply_leadership(leader: bool) -> None:
+    """Start the reaper when leading, stop it when not. Testable core of _leader_loop."""
+    global _reaper_task
+    if leader and (_reaper_task is None or _reaper_task.done()):
+        _reaper_task = asyncio.create_task(_reaper_loop())
+    elif not leader and _reaper_task is not None and not _reaper_task.done():
+        _reaper_task.cancel()
+        with contextlib.suppress(BaseException):
+            await _reaper_task
+        _reaper_task = None
+
+
+async def _leader_loop() -> None:
+    """Hold the leader lease + keep the reaper alive only while we lead."""
+    global _is_leader
+    while True:
+        try:
+            _is_leader = _acquire_or_renew_lease()
+        except Exception as exc:  # pragma: no cover - defensive
+            _is_leader = False
+            log.warning("leader loop error: %s", exc)
+        await _apply_leadership(_is_leader)
+        await asyncio.sleep(_LEADER_RENEW_SECONDS)
+
+
 def _validate_config() -> None:
     """Fail-closed startup guard: refuse to run with an unsafe shared secret.
 
@@ -807,22 +911,22 @@ def _validate_config() -> None:
 @app.on_event("startup")
 async def _start_reaper():
     _validate_config()
-    global _reaper_task
-    _reaper_task = asyncio.create_task(_reaper_loop())
+    global _leader_task
+    _leader_task = asyncio.create_task(_leader_loop())
 
 
 @app.on_event("shutdown")
 async def _stop_reaper():
-    """Graceful shutdown: cancel the reaper + close the upstream httpx pool so SIGTERM
-    doesn't leave the reaper looping or in-flight proxy requests hanging."""
-    global _reaper_task
-    if _reaper_task is not None and not _reaper_task.done():
-        _reaper_task.cancel()
-        try:
-            await _reaper_task
-        except BaseException:
-            pass
-        _reaper_task = None
+    """Graceful shutdown: cancel the leader loop + reaper + close the upstream httpx pool
+    so SIGTERM doesn't leave either task looping or in-flight proxy requests hanging."""
+    global _leader_task, _reaper_task
+    for task in (_leader_task, _reaper_task):
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(BaseException):
+                await task
+    _leader_task = None
+    _reaper_task = None
     try:
         await _client.aclose()
     except Exception:

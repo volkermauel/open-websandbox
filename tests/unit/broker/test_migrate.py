@@ -31,9 +31,12 @@ async def test_migrate_staging_absent_returns(monkeypatch, fresh_migrate_locks):
     await main._migrate_staging_to_chat("u1", "10.0.0.1")  # early return
 
 
-async def test_migrate_staging_not_reachable(monkeypatch, fresh_migrate_locks, httpx_client):
+async def test_migrate_staging_not_reachable_deletes(monkeypatch, fresh_migrate_locks, httpx_client):
     _stage(monkeypatch, sip=None)
-    await main._migrate_staging_to_chat("u1", "10.0.0.1")  # warning + return
+    deleted = []
+    monkeypatch.setattr(main, "_delete_sandbox", lambda n: deleted.append(n))
+    await main._migrate_staging_to_chat("u1", "10.0.0.1")  # unreachable -> delete staging
+    assert deleted == [main._chat_sandbox_name("u1", "u1")]
 
 
 async def test_migrate_success(monkeypatch, fresh_migrate_locks, httpx_client):
