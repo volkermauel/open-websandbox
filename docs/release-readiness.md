@@ -36,6 +36,15 @@ tenants) · 🔵 P2 = battle-test / advanced. Effort: **S** ≤½ day · **M** �
 
 ## P1 — 🟠 production-readiness (before real tenants)
 
+> **Update (post-implementation):** resolved P1 gaps —
+> ✅ **#8** multi-tenant isolation tests · ✅ **#9** `/metrics` (broker+runtime) · ✅ **#10** `/readyz` ·
+> ✅ **#11** graceful shutdown · ✅ **#12** leader election + `broker.replicas` (commits `045dd1b`, `a3810e8`) ·
+> ✅ **#13** migrate-leak → delete unreachable staging (`045dd1b`) · ✅ **#14** resolve poll-storm → Watch (`45668d4`) ·
+> ✅ **#15** PVC backup/restore runbook · ✅ **#16** OpenAPI reconciled (5→23 routes) · ✅ **#17** PodSecurity hardened · ✅ **#19** design ADRs.
+>
+> **Still open:** **#18** (per-tenant OIDC — the single shared secret lets any holder impersonate any user; deferred in D5, a v1.0-scale feature),
+> plus the minor P1 (IPv6 DNS egress, `RUNTIME_API_KEY` inter-component auth, prod quotas).
+
 | # | Gap | Area / file | Fix | Effort |
 |---|-----|-------------|-----|--------|
 | 8 | **Multi-tenant isolation unverified** (no negative tests) | `tests/e2e`, `conftest.py` (1 user/1 session) | add: user-B ✗ read user-A file (per-user-pvc + shared-subpath); peer-pod `:8888` denied; absolute-path traversal in `/files/read` | **S–M** |
