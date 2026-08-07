@@ -299,3 +299,28 @@ def test_stop_reaper_swallows_aclose_error(monkeypatch):
     monkeypatch.setattr(main, "_client", bad_client)
     asyncio.run(main._stop_reaper())  # aclose raises but shutdown still completes cleanly
     bad_client.aclose.assert_awaited_once()
+
+
+def test_metrics_middleware_counts_500(monkeypatch):
+    """An unhandled handler exception must still increment the 500 label before re-raising."""
+    from prometheus_client import REGISTRY
+    from fastapi.testclient import TestClient
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("boom")
+
+    # The auth-protected catch-all calls resolve_sandbox; make it raise (not HTTPException)
+    # so the request-counting middleware's except-arm runs.
+    monkeypatch.setattr(main, "resolve_sandbox", _boom)
+
+    auth = {"Authorization": f"Bearer {main.SHARED_SECRET}", "X-User-Id": "u"}
+    # raise_server_exceptions=False so the middleware incs the 500 label and Starlette
+    # returns a real 500 rather than re-raising in the test process.
+    with TestClient(main.app, raise_server_exceptions=False) as c:
+        r = c.get("/files/list", headers=auth)
+        assert r.status_code == 500
+
+    val = REGISTRY.get_sample_value(
+        "broker_http_requests_total", {"method": "GET", "status": "500"}
+    )
+    assert val and val >= 1.0
