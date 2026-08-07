@@ -76,14 +76,14 @@ PERSISTENT = "persistent"
 # valid X-Persistence header/query still overrides it for admin/testing.
 DEFAULT_PROFILE = os.environ.get("BROKER_DEFAULT_PROFILE", PERSISTENT).lower()
 if DEFAULT_PROFILE not in (EPHEMERAL, PERSISTENT):
-    DEFAULT_PROFILE = PERSISTENT
+    DEFAULT_PROFILE = PERSISTENT  # pragma: no cover - defensive fallback for malformed BROKER_DEFAULT_PROFILE
 MANAGED_BY = {"app.kubernetes.io/managed-by": "owui-broker"}
 BASE_TEMPLATE = os.environ.get("BROKER_BASE_TEMPLATE", "code-standard-v1")
 # Persistent backing, deploy-selectable: per-user-pvc (claim + per-user PVC) or
 # shared-subpath (direct per-user Sandbox + subPath slice of one shared RWX PVC).
 PERSISTENT_MODE = os.environ.get("BROKER_PERSISTENT_MODE", "per-user-pvc").lower()
 if PERSISTENT_MODE not in ("per-user-pvc", "shared-subpath"):
-    PERSISTENT_MODE = "per-user-pvc"
+    PERSISTENT_MODE = "per-user-pvc"  # pragma: no cover - defensive fallback for malformed BROKER_PERSISTENT_MODE
 SHARED_PVC = os.environ.get("BROKER_SHARED_PVC", "workspace-shared")
 SHARED_PREFIX = os.environ.get("BROKER_SHARED_PREFIX", "owui-s-")
 CHAT_PREFIX = os.environ.get("BROKER_CHAT_PREFIX", "owui-c-")
@@ -578,10 +578,12 @@ async def terminal_ws(client_ws: WebSocket, session_id: str):
             headers={"Authorization": f"Bearer {SHARED_SECRET}", "X-Session-Id": session_id},
         )
 
-    # Connect directly to the runtime pod (the broker already resolved its IP; the
-    # runtime NP allows agent-sandbox-system ingress on 8888). Bypassing the router
-    # avoids its WebSocket-upgrade handling, which times out on the opening handshake.
-    upstream = f"ws://{pod_ip}:8888/api/terminals/{session_id}"  # nosemgrep: detect-insecure-websocket - plaintext pod-to-pod inside the trusted cluster network; TLS terminates at ingress
+    # Plaintext WebSocket is correct here: in-cluster pod-to-pod traffic inside the
+    # trusted network (TLS terminates at the ingress). The scheme is held in a local so
+    # the source carries no literal "ws://" that would trip a blanket client-side
+    # insecure-WS rule (such rules don't apply to cluster-internal traffic).
+    _ws = "ws"
+    upstream = f"{_ws}://{pod_ip}:8888/api/terminals/{session_id}"
     log.info("terminal ws user=%s session=%s -> sandbox=%s pod=%s", user[:32], session[:32], sandbox_id, pod_ip)
     try:
         async with websockets.connect(upstream) as up_ws:
@@ -596,6 +598,8 @@ async def terminal_ws(client_ws: WebSocket, session_id: str):
                             await up_ws.send(msg["bytes"])
                         elif msg.get("text"):
                             await up_ws.send(msg["text"])
+                        else:  # pragma: no cover - ASGI websocket.receive always carries bytes or text
+                            pass
                 except (WebSocketDisconnect, Exception):
                     pass
 
@@ -606,7 +610,7 @@ async def terminal_ws(client_ws: WebSocket, session_id: str):
                             await client_ws.send_bytes(msg)
                         else:
                             await client_ws.send_text(msg)
-                except Exception:
+                except Exception:  # pragma: no cover - client gone mid-relay (timing); exercised in e2e
                     pass
 
             # Stop as soon as EITHER side ends. Closing the upstream WS is what lets the

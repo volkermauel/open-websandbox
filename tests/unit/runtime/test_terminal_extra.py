@@ -21,7 +21,9 @@ import asyncio
 import contextlib
 import json
 import os
+import pty
 import signal
+import subprocess
 
 import httpx
 import pytest
@@ -347,3 +349,133 @@ async def test_terminal_ws_auth_bad_payload(live_base, monkeypatch):
     finally:
         await http.aclose()
         server._term_cleanup("authjson")
+
+
+# --- create_terminal 503 paths -------------------------------------------------
+
+async def test_create_terminal_openpty_failure_503(workdir, client, monkeypatch):
+    # openpty() raises before any fd is assigned -> slave_fd/master_fd stay at
+    # their -1 initial -> the `if fd >= 0:` cleanup branch is False (skipped).
+    def _openpty_boom():
+        raise OSError("openpty unavailable")
+
+    monkeypatch.setattr(pty, "openpty", _openpty_boom)
+    r = await client.post("/api/terminals", headers={"X-Session-Id": "nopenpty"})
+    assert r.status_code == 503
+    assert "pty spawn failed" in r.json()["detail"]
+    # spawn failed before _terminals[sid] was populated
+    assert "nopenpty" not in server._terminals
+
+
+async def test_create_terminal_popen_failure_closes_fds_503(workdir, client, monkeypatch):
+    # Real openpty() succeeds (valid fds assigned) but Popen raises -> the
+    # `if fd >= 0:` branch is True and both fds are os.close()'d in cleanup.
+    def _popen_boom(*args, **kwargs):
+        raise OSError("popen boom")
+
+    monkeypatch.setattr(subprocess, "Popen", _popen_boom)
+    r = await client.post("/api/terminals", headers={"X-Session-Id": "nopopen"})
+    assert r.status_code == 503
+    assert "pty spawn failed" in r.json()["detail"]
+    assert "nopopen" not in server._terminals
+
+
+# --- _receiver inbound message-type branches (lines 799-812) --------------------
+
+async def test_terminal_ws_receiver_message_branches(live_base):
+    # Drive every inbound branch of the per-terminal _receiver loop: a bytes
+    # frame (if-bytes True), a resize control (elif-text True + type==resize
+    # True), a non-resize control (type!=resize -> inner-if False) and an empty
+    # text frame (bytes falsy AND text "" falsy -> elif False).
+    ws_base, http_base = live_base
+    http = httpx.AsyncClient(base_url=http_base)
+    try:
+        await http.post("/api/terminals", headers={"X-Session-Id": "rmsg"})
+        async with websockets.connect(f"{ws_base}/api/terminals/rmsg") as ws:
+            # (a) bytes frame -> if msg.get("bytes") True -> _term_write
+            await ws.send(b"echo branch_a_ok\n")
+            assert b"branch_a_ok" in await _recv_until(ws, b"branch_a_ok", timeout=5.0)
+
+            # (b) resize control (text frame, type=resize) -> elif True + inner True
+            await ws.send(json.dumps({"type": "resize", "cols": 40, "rows": 12}))
+            await asyncio.sleep(0.25)
+
+            # (c) non-resize text control -> payload type != resize -> inner False
+            await ws.send(json.dumps({"type": "something_else"}))
+            await asyncio.sleep(0.25)
+
+            # (d) empty text frame -> bytes is None (falsy) reach elif, text "" falsy
+            await ws.send("")
+            await asyncio.sleep(0.25)
+
+            # the terminal must still be usable after all control frames
+            await ws.send(b"echo stillalive\n")
+            assert b"stillalive" in await _recv_until(ws, b"stillalive", timeout=5.0)
+
+        # client disconnect -> server _receiver ends and the session is reaped
+        assert await _wait_cleaned(http, "rmsg", timeout=8.0)
+        assert "rmsg" not in server._terminals
+    finally:
+        await http.aclose()
+        server._term_cleanup("rmsg")
+
+
+# --- heartbeat death detection (line 782) ---------------------------------------
+# The existing background-job test uses plain `sleep 120 &`; when the session
+# leader (bash) exits the terminal layer drops the slave, so the master read
+# raises EIO (line 763) and the reader breaks BEFORE the 1s heartbeat can fire
+# -> line 782 stays uncovered. A SIGHUP/TERM-immune grandchild keeps holding
+# the slave open (master read just returns EAGAIN forever), so the ONLY death
+# signal is the reader's per-second `proc.poll()` heartbeat -> break@782.
+
+async def test_terminal_ws_heartbeat_death_with_hup_immune_job(live_base):
+    ws_base, http_base = live_base
+    http = httpx.AsyncClient(base_url=http_base)
+    try:
+        await http.post("/api/terminals", headers={"X-Session-Id": "hb"})
+        async with websockets.connect(f"{ws_base}/api/terminals/hb") as ws:
+            # survivor ignores HUP/TERM -> outlives the shell, keeps slave open
+            await ws.send(b"( trap '' HUP TERM; sleep 300 ) &\n")
+            await asyncio.sleep(0.4)
+            await ws.send(b"exit\n")
+            # drain shell output until the server closes the WS (heartbeat fired)
+            with contextlib.suppress(websockets.ConnectionClosed, asyncio.TimeoutError):
+                while True:
+                    await asyncio.wait_for(ws.recv(), timeout=0.2)
+        assert await _wait_cleaned(http, "hb", timeout=8.0)
+        assert "hb" not in server._terminals
+    finally:
+        await http.aclose()
+        server._term_cleanup("hb")
+
+
+# --- _pty_reader send failure (lines 788-789) -----------------------------------
+
+async def test_terminal_ws_reader_send_failure(live_base):
+    # Flood PTY output so the reader is constantly relaying, then abruptly drop
+    # the client TCP transport. With the client gone the reader's next
+    # `await ws.send_bytes(data)` raises on the dead connection -> except -> break.
+    ws_base, http_base = live_base
+    http = httpx.AsyncClient(base_url=http_base)
+    try:
+        await http.post("/api/terminals", headers={"X-Session-Id": "sfail"})
+        ws = await websockets.connect(f"{ws_base}/api/terminals/sfail")
+        try:
+            await ws.send(b"yes flooooood\n")
+            # confirm the relay is flowing before we cut the cord
+            with contextlib.suppress(asyncio.TimeoutError, websockets.ConnectionClosed):
+                await asyncio.wait_for(ws.recv(), timeout=2.0)
+            # abruptly drop the underlying TCP socket (no WS close handshake)
+            transport = getattr(ws, "transport", None)
+            if transport is not None:
+                with contextlib.suppress(Exception):
+                    transport.close()
+            await asyncio.sleep(1.0)
+        finally:
+            with contextlib.suppress(Exception):
+                await ws.close()
+        assert await _wait_cleaned(http, "sfail", timeout=10.0)
+        assert "sfail" not in server._terminals
+    finally:
+        await http.aclose()
+        server._term_cleanup("sfail")
