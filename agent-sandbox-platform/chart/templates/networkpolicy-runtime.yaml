@@ -35,6 +35,16 @@ spec:
       port: 53
     - protocol: TCP
       port: 53
+  - to:                               # DNS — public resolvers IPv6 (matches dnsPolicy: None)
+    - ipBlock:
+        cidr: 2001:4860:4860::8888/128    # Google Public DNS (IPv6)
+    - ipBlock:
+        cidr: 2606:4700:4700::1111/128    # Cloudflare Public DNS (IPv6)
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
   - to:                               # HTTPS+HTTP (IPv4) — pip/npm/git + curl
     - ipBlock:
         cidr: 0.0.0.0/0
