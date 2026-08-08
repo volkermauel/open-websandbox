@@ -18,7 +18,7 @@ tenants) · 🔵 P2 = battle-test / advanced. Effort: **S** ≤½ day · **M** �
 - **Not battle-tested.** No load/soak/chaos suite, no stateful upgrade/rollback e2e,
   no long-session/120s-suspend coverage.
 - **Scope tension to decide:** the v0.1.0 plan (release OpenSpec D5) *defers*
-  cosign/SBOM, per-tenant OIDC, and HA broker — but the external benchmark lists all
+ per-tenant OIDC, HA broker (cosign-signed images + per-image SBOM now DONE — #25) — but external benchmark lists
   three as "credible-v1.0 table-stakes." Reconcile the intended meaning of v0.1.0
   ("functional first cut" vs "production v1.0") before tagging.
 
@@ -76,8 +76,8 @@ MAU ceiling — raise for prod); `values.schema.json` so typos fail at install n
   works cross-node but in-pod state + WS die with no resume. Test eviction under v0.5.3,
   add client WS reconnect/resume. **M–L**
 - **120s-suspend & long sessions unexercised** — 1h-idle double-park-under-clock-skew. **M**
-- **Benchmark "table-stakes" still deferred (D5)** — cosign-signed images + SBOM; per-tenant
-  OIDC/RBAC. (Full gVisor e2e in CI is now DONE — `e2e.yml` runc+gVisor matrix.) Re-evaluate vs your threat model. **M each**
+- ✅ **cosign-signed images + per-image SBOM — DONE (#25)** every `v*.*.*` tag signs all three images (keyless sigstore / GitHub OIDC) and attaches a syft SPDX-JSON SBOM per image to the GitHub Release; signature pushed as an OCI ref-tag. See `docs/security.md`.
+- **Per-tenant OIDC/RBAC still deferred (D5)** single shared inter-component secret for now. (Full gVisor e2e in CI is DONE — `e2e.yml` runc+gVisor matrix.) **M**
 - **Per-tenant egress filtering** (benchmark judgment call) — today egress is a single
   global allowlist; for adversarial-code sandboxes, per-tenant egress may be table-stakes.
   **M**

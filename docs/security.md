@@ -58,3 +58,50 @@ scope for v0.1.0). See `openspec/changes/adopt-agent-sandbox/design.md` for the 
 ## Reporting a vulnerability
 
 See [`../SECURITY.md`](../SECURITY.md).
+
+## Image signature & SBOM verification
+
+Every `v*.*.*` tag release **cosign-signs all three images (keyless, sigstore via
+GitHub OIDC)** and attaches a **per-image SBOM (SPDX-JSON, generated with [syft](https://github.com/anchore/syft))**
+to the GitHub Release for that tag. The signature is pushed to the registry as an
+OCI ref-tag (`<image>:sha256-<digest>.sig`).
+
+> The published images are `ghcr.io/volkermauel/open-sandbox-{broker,runtime,router}:<tag>`
+> (substitute the repo owner if you fork). Note the repo is `open-websandbox` but the
+> image names are `open-sandbox-*`.
+
+### Verify the image signature (keyless)
+
+Keyless verification pins the **OIDC issuer** (always GitHub Actions) and the
+**workflow identity** (repo + workflow file + tag ref). A forged or re-tagged image
+fails verification.
+
+```bash
+TAG=v0.1.0                                                            # the tag you pulled
+IMAGE=ghcr.io/volkermauel/open-sandbox-broker                         # ...or -runtime / -router
+
+cosign verify --yes \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity "https://github.com/volkermauel/open-websandbox/.github/workflows/release.yml@refs/tags/${TAG}" \
+  "${IMAGE}:${TAG}"
+```
+
+- `--certificate-oidc-issuer` — `https://token.actions.githubusercontent.com` for any GitHub Actions OIDC token.
+- `--certificate-identity` — the signing workflow's subject: `https://github.com/<owner>/<repo>/.github/workflows/release.yml@refs/tags/<TAG>`.
+- A successful run prints the leaf certificate + Rekor transparency-log entry and exits `0`.
+
+### Download the per-image SBOM
+
+The SPDX-JSON SBOM for each image is attached to the GitHub Release (not a cosign
+attestation), so fetch it from the Release:
+
+```bash
+# Download all image SBOMs (broker/runtime/router) for a tag:
+gh release download "${TAG}" --repo volkermauel/open-websandbox \
+  --pattern 'open-sandbox-*.spdx.json'
+
+# List declared packages, e.g.: jq '.packages[].name' open-sandbox-broker-${TAG}.spdx.json | sort -u
+```
+
+(Pushing the SBOM as a cosign attestation so `cosign verify-attestation` works
+end-to-end is tracked as a follow-up; the image signature is already verifiable above.)
