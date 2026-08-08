@@ -4,7 +4,7 @@ context: |
   Project: open-sandbox
   Goal: Back Open WebUI's "Open Terminal" integration with an isolated, multi-tenant
         sandbox runtime on PLAIN infrastructure (MicroK8s + containerd), with NO
-        Cloudflare-proprietary dependencies.
+        proprietary runtime dependencies.
   Architecture: Built on kubernetes-sigs/agent-sandbox (controller + Sandbox /
         SandboxClaim / SandboxTemplate / SandboxWarmPool CRDs). A Python FastAPI
         **broker** manages per-user/per-chat sandboxes; a Python FastAPI **runtime**
@@ -29,4 +29,4 @@ context: |
         - ~/git/open-webui        — the host we integrate into (terminal API client, XTerminal)
         - ~/git/open-terminal     — the OWUI REST/OpenAPI contract we reproduce
         - ~/git/open-terminal-k8s-proxy — prior pod-per-session isolation baseline
-  Research artifacts live in ./research/ (01..05) + ./openspec/.
+  Historical artifacts live in ./openspec/.

@@ -1,9 +1,9 @@
 ## Why
 
-The earlier change `use-computerd-as-runtime` explored running Open WebUI's
-"Open Terminal" on **one shared `computerd` + per-exec `nsjail`** — maximising
+An earlier design explored running Open WebUI's
+"Open Terminal" on **one shared host daemon + per-exec `nsjail`** — maximising
 density but accepting **shared-kernel** isolation (fine for trusted internal
-users). The comparison in `research/05-comparison-agentsandbox.md` found this is
+users). The earlier design comparison found this is
 mutually exclusive with hostile-tenant-grade isolation: a single shared kernel
 cannot sandbox mutually-untrusted agent-generated code.
 
@@ -18,8 +18,8 @@ hide cold-start, Kubernetes-native CRDs, default-deny networking, and a
 ValidatingAdmissionPolicy. We trade per-session pods for gVisor-grade isolation;
 the warm pool keeps warm-session ready latency low.
 
-This change **supersedes** `use-computerd-as-runtime` (kept for its research and
-density analysis). The detailed architecture, threat model, invariants, and
+This change **supersedes** an earlier shared-host design. The detailed
+architecture, threat model, invariants, and
 GitOps layout live in **`AgentSandbox.md`**; this change scopes the phased
 rollout onto our on-prem MicroK8s and records cluster-specific decisions.
 
@@ -73,7 +73,7 @@ rollout onto our on-prem MicroK8s and records cluster-specific decisions.
 - **Upstream dependency:** `kubernetes-sigs/agent-sandbox` `v0.5.3` (pinned;
   manifest vendored, digest-recorded). gVisor `runsc` `release-20260727.0`.
 - **Cluster:** on-prem MicroK8s (classic snap, containerd 2.2.3, Calico CNI).
-  gVisor active on all three workers; no Cloudflare dependency. Coexists with
+  gVisor active on all three workers; no proprietary runtime dependencies. Coexists with
   CNPG, argocd, and existing workloads in isolated namespaces.
 - **Repo layout:** follows `AgentSandbox.md` §21 (`agent-sandbox-platform/`:
   upstream/, images/, broker/, deploy/, scripts/). Build location decided at
