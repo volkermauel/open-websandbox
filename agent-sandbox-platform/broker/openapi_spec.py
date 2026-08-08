@@ -17,10 +17,66 @@ security scheme, NOT as per-operation parameters (which would tempt the model to
 hallucinate values). Operations expose only the functional inputs the caller
 chooses (command, file path, ...).
 
-``info.version`` tracks the Helm chart ``appVersion``; the surface is additive
-within a minor — operations are appended, never silently removed or renamed
-until a major bump.
+``info.version`` is derived at import from the Helm chart ``appVersion`` (read
+from ``../chart/Chart.yaml``) so the served spec and the chart never silently
+drift; if the chart is absent it falls back to the ``OPEN_WEBSANDBOX_VERSION``
+env override and then a sentinel default. The surface is additive within a
+minor — operations are appended, never silently removed or renamed until a
+major bump.
 """
+
+import os
+from pathlib import Path
+
+import yaml
+
+# Helm chart whose ``appVersion`` is the single source of truth for
+# ``info.version``. Resolved relative to this module so the lookup works from the
+# broker deployment and from an ad-hoc ``import openapi_spec`` in tests.
+_CHART_PATH = Path(__file__).resolve().parents[1] / "chart" / "Chart.yaml"
+
+# Sentinel used only when neither the chart nor an env override is available.
+_DEFAULT_API_VERSION = "0.0.0"
+
+
+def _chart_appversion(path: Path) -> str | None:
+    """Return the Helm chart ``appVersion`` from *path*, or ``None`` if unreadable.
+
+    The chart may be absent (e.g. the module imported standalone, or packaged
+    without the chart), malformed, or lack ``appVersion``; every such case yields
+    ``None`` so an OpenAPI-version lookup can never crash the broker import.
+    """
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    version = data.get("appVersion")
+    if version is None or isinstance(version, bool):
+        return None
+    # Tolerate an unquoted numeric ``appVersion`` (e.g. ``appVersion: 5``).
+    if isinstance(version, (int, float)):
+        version = str(version)
+    if isinstance(version, str):
+        version = version.strip()
+        return version or None
+    return None
+
+
+def _resolve_openapi_version(chart_path: Path | None = None) -> str:
+    """Resolve the OpenAPI ``info.version`` from a single source of truth.
+
+    Precedence (matches the module docstring): the Helm chart ``appVersion`` is
+    authoritative; if the chart is absent/unreadable, fall back to the
+    ``OPEN_WEBSANDBOX_VERSION`` env override, then to :data:`_DEFAULT_API_VERSION`.
+    """
+    path = chart_path if chart_path is not None else _CHART_PATH
+    return (
+        _chart_appversion(path)
+        or os.environ.get("OPEN_WEBSANDBOX_VERSION")
+        or _DEFAULT_API_VERSION
+    )
 
 # Built incrementally below so the module stays importable (valid Python) at
 # every step. ``OPENAPI`` is the canonical attribute imported by broker/main.py
@@ -29,7 +85,7 @@ OPENAPI: dict = {
     "openapi": "3.0.3",
     "info": {
         "title": "open-sandbox runtime API",
-        "version": "0.1.0",
+        "version": _resolve_openapi_version(),
         "description": (
             "Open-sandbox runtime API surface, served by the code-standard broker "
             "(an authenticated reverse proxy in front of per-chat gVisor sandboxes). "
