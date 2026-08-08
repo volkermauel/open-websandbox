@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Multi-tenant isolation e2e tests (negative tests) for the sandbox broker.
 
 Runs against the same live broker as ``test_smoke`` but exercises the

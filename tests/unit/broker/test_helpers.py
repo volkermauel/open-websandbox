@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Pure helper + config-normalization tests (no k8s/httpx mocking needed)."""
 from __future__ import annotations
 

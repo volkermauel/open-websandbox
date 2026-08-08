@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Smoke + correctness tests for the open-sandbox broker→router→runtime path.
 
 Run against a live broker (KIND/runc via the Helm chart). The sandbox is claimed once

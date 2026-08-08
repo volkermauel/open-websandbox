@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Leader election — only the lease-holding broker replica runs the reaper."""
 from __future__ import annotations
 

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Prometheus ``/metrics`` + graceful SIGTERM shutdown coverage for the runtime server.
 
 Exercises the request-counting middleware, the ``/metrics`` exposition endpoint

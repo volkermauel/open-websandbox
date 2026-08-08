@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Reaper tests — park/reap persistent + ephemeral claims, chat sandboxes, lifecycle."""
 from __future__ import annotations
 

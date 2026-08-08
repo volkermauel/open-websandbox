@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Error-path + branch coverage for the ``/files/*`` and LLM-tool surface.
 
 Every error here is produced by a REAL filesystem condition (no mocking of the

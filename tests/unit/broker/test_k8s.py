@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """k8s CRUD helper tests — driven via the `api`/`core` MagicMock fixtures."""
 from __future__ import annotations
 

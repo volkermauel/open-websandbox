@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Fail-closed RUNTIME_API_KEY guard — mirrors the broker's BROKER_SHARED_SECRET story.
 
 Covers:

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """code-standard runtime server.
 
 Hardened FastAPI app that mirrors the OWUI open-terminal surface and the

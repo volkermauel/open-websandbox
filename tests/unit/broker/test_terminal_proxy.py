@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Terminal WS tests — auth, missing identity, resolve fail, success proxy, upstream fail."""
 from __future__ import annotations
 

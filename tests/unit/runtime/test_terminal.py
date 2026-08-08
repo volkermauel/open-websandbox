@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Interactive terminal (PTY) tests over the real WebSocket.
 
 ``POST /api/terminals/{id}`` forks a shell on a real ``pty.openpty``; the WS at

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Resolve tests — watch-until-ready, sandbox get-or-create, migrate trigger, timeout."""
 from __future__ import annotations
 

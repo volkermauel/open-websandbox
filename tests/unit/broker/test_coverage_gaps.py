@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Targeted tests for the remaining coverage gaps in broker main.py.
 
 Each test closes a specific uncovered branch (retry-loop continuations, the

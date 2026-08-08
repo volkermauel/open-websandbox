@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """code-standard broker — the Open WebUI front door.
 
 Two profiles. The default is chosen at DEPLOY time via ``BROKER_DEFAULT_PROFILE``,

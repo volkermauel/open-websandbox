@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Shared fixtures for the KIND/runc end-to-end suite.
 
 These tests run against a *live* broker (installed via the Helm chart into a KIND
