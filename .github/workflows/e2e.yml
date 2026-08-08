@@ -36,12 +36,33 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
 
       # gVisor leg only: install runsc + shim + gvisor-bin sidecar dir on the host so the
       # KIND node can bind-mount them. GHA ubuntu runners are full VMs → runsc runs.
       - name: Install gVisor runsc on host
         if: matrix.runtime == 'gvisor'
         run: bash infra/kind/install-runsc.sh
+
+      # Cache the kindest/node image tarball so it isn't re-pulled every run.
+      # helm/kind-action has no built-in node-image cache, so we save/load the
+      # Docker image ourselves; when present, `kind create cluster` reuses it.
+      # NOTE: if node_image below is bumped, bump the cache key to match.
+      - name: Cache KIND node image
+        id: kind-image-cache
+        uses: actions/cache@v5
+        with:
+          path: /tmp/kindest-node.tar
+          key: kindest-node-v1.31.0
+      - name: Load KIND node image from cache
+        if: steps.kind-image-cache.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/kindest-node.tar
+      - name: Pull & save KIND node image (cache miss)
+        if: steps.kind-image-cache.outputs.cache-hit != 'true'
+        run: |
+          docker pull kindest/node:v1.31.0
+          docker save kindest/node:v1.31.0 -o /tmp/kindest-node.tar
 
       # helm/kind-action installs kind + creates the cluster. For gVisor it uses a config
       # that mounts the host runsc into the node + registers it with containerd.
@@ -63,10 +84,31 @@ jobs:
           kubectl apply -f infra/kind/runtimeclass-gvisor.yaml
           docker exec "$KIND_CLUSTER-control-plane" /usr/local/bin/runsc --version
 
-      - name: Build platform images (broker + runtime)
-        run: |
-          docker build -t open-sandbox-broker:v0.1.0 agent-sandbox-platform/broker/
-          docker build -t open-sandbox-runtime:v0.1.0 agent-sandbox-platform/runtime/
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # Build via buildx with a GitHub Actions (type=gha) layer cache, shared
+      # across matrix legs and with the release.yml builds by scope name.
+      # provenance:false keeps a plain single-platform image that `kind load` accepts.
+      - name: Build platform image (broker)
+        uses: docker/build-push-action@v7
+        with:
+          context: agent-sandbox-platform/broker
+          load: true
+          provenance: false
+          tags: open-sandbox-broker:v0.1.0
+          cache-from: type=gha,scope=open-sandbox-broker
+          cache-to: type=gha,mode=max,scope=open-sandbox-broker
+
+      - name: Build platform image (runtime)
+        uses: docker/build-push-action@v7
+        with:
+          context: agent-sandbox-platform/runtime
+          load: true
+          provenance: false
+          tags: open-sandbox-runtime:v0.1.0
+          cache-from: type=gha,scope=open-sandbox-runtime
+          cache-to: type=gha,mode=max,scope=open-sandbox-runtime
 
       # Shallow-fetch upstream at the pinned tag into ./agent-sandbox so the router can be
       # self-built (no prebuilt image is published). Context = agent-sandbox/ because
@@ -79,7 +121,15 @@ jobs:
           path: agent-sandbox
 
       - name: Self-build sandbox-router
-        run: docker build -t open-sandbox-router:v0.1.0 -f agent-sandbox/sandbox-router/Dockerfile agent-sandbox/
+        uses: docker/build-push-action@v7
+        with:
+          context: agent-sandbox
+          file: agent-sandbox/sandbox-router/Dockerfile
+          load: true
+          provenance: false
+          tags: open-sandbox-router:v0.1.0
+          cache-from: type=gha,scope=open-sandbox-router
+          cache-to: type=gha,mode=max,scope=open-sandbox-router
 
       - name: Load images into KIND
         run: |
