@@ -10,6 +10,8 @@ Hardening over the reference:
   * per-request command timeout (default 120s, capped at MAX_TIMEOUT).
   * stdout/stderr truncated to MAX_OUTPUT_BYTES per stream.
   * all file ops are confined to WORKDIR (/workspace) via path normalization.
+  * fail-closed RUNTIME_API_KEY: refuses to boot on an unset/placeholder key and
+    authenticates the terminal surface (mirrors the broker's BROKER_SHARED_SECRET).
 
 Runs as non-root uid 1000; WORKDIR=/workspace (an emptyDir at runtime).
 """
@@ -42,11 +44,13 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Security,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
 from fastapi.responses import FileResponse, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
 from pydantic import BaseModel, Field
 
@@ -654,15 +658,70 @@ async def files_view(path: str, subdir: str | None = Header(default=None, alias=
     mime, _ = mimetypes.guess_type(full)
     return FileResponse(full, media_type=mime or "application/octet-stream", filename=os.path.basename(full))
 
+# --- fail-closed inter-component auth (RUNTIME_API_KEY) -----------------------
+# Mirrors the broker's BROKER_SHARED_SECRET story (main._auth + main._validate_config):
+# the runtime gates its terminal surface on RUNTIME_API_KEY. _validate_runtime_config()
+# refuses to boot on an unset/placeholder key (fail-closed); at request time an UNSET key
+# disables the guard (local dev/tests only — the boot guard ensures a real deploy always
+# has one) and a presented Bearer must match (constant-time). The HTTP hops the broker
+# reaches WITHOUT a credential today (POST /execute, /files/*) are intentionally NOT
+# gated here — the broker does not yet attach the credential on those hops (tracked
+# separately in #19); gating them now would 401 the broker's own proxied traffic. The
+# NetworkPolicy (router namespace -> :8888 only) remains the ingress boundary until the
+# per-session-key epic lands.
+_PLACEHOLDER_API_KEYS = frozenset({
+    "", "dev-shared-secret-change-me", "change-me", "changeme", "placeholder",
+})
+
+
+def _runtime_api_key() -> str:
+    """RUNTIME_API_KEY read at call time so env/test overrides take effect (cf. broker)."""
+    return os.environ.get("RUNTIME_API_KEY", "")
+
+
+def _validate_runtime_config() -> None:
+    """Fail-closed startup guard: refuse to run with an unset/placeholder RUNTIME_API_KEY.
+
+    An unset/placeholder key would leave the terminal surface unauthenticated, so we
+    refuse to start rather than run open. Mirrors the broker's _validate_config(); wired
+    into the startup event. Tested directly."""
+    if _runtime_api_key() in _PLACEHOLDER_API_KEYS:
+        raise RuntimeError(
+            "RUNTIME_API_KEY is unset or a known placeholder — refusing to start. "
+            "Set a strong key (the Helm chart derives one from the broker shared secret)."
+        )
+
+
+_runtime_bearer = HTTPBearer(auto_error=False)
+
+
+def _auth_runtime(
+    credentials: HTTPAuthorizationCredentials | None = Security(_runtime_bearer),
+) -> None:
+    """Validate the runtime API key (constant-time). Unset key = disabled (dev/test).
+
+    Mirrors the broker's _auth(): when RUNTIME_API_KEY is unset the guard is a no-op
+    (local dev/tests). _validate_runtime_config() refuses to boot with an
+    unset/placeholder key, so in any real deploy this branch always runs and a
+    missing/mismatched Bearer is rejected with 401."""
+    key = _runtime_api_key()
+    if not key:
+        return
+    if not credentials or not hmac.compare_digest(credentials.credentials.encode(), key.encode()):
+        raise HTTPException(status_code=401, detail="invalid runtime api key")
+
+
 # --- interactive terminal (PTY) -------------------------------------------------
 # open-terminal-compatible /api/terminals surface so OWUI's terminal UI connects
 # unchanged. POST forks a shell on a PTY scoped to the chat workspace folder; the WS
 # at /api/terminals/{id} streams BINARY stdin/stdout with TEXT
-# {"type":"resize","cols":N,"rows":N} control frames, and honours a first-message
-# {"type":"auth","token":...} handshake only when RUNTIME_API_KEY is set (default
-# off: the broker already authenticated the caller and the runtime is not directly
-# exposed). Verified under gVisor runsc: openpty/fork/ioctl TIOCSWINSZ/select are all
-# emulated. One terminal per chat (session id = X-Session-Id); destroyed on WS close.
+# {"type":"resize","cols":N,"rows":N} control frames. Inter-component auth is
+# fail-closed: _validate_runtime_config() refuses to boot without RUNTIME_API_KEY,
+# POST /api/terminals requires a matching Bearer, and an optional first
+# {"type":"auth","token":...} WS frame is validated inline in _receiver (the broker
+# consumes OWUI's frame upstream and forwards raw bytes, so the frame is not required).
+# Verified under gVisor runsc: openpty/fork/ioctl TIOCSWINSZ/select are all emulated.
+# One terminal per chat (session id = X-Session-Id); destroyed on WS close.
 
 MAX_TERMINAL_SESSIONS = _env_int("MAX_TERMINAL_SESSIONS", 8)
 _SHELL = os.environ.get("SHELL", "/bin/bash")
@@ -703,6 +762,7 @@ def _term_write(master_fd: int, data: bytes) -> None:
 async def create_terminal(
     subdir: str | None = Header(default=None, alias="X-Workspace-Subdir"),
     session_id: str | None = Header(default=None, alias="X-Session-Id"),
+    _=Security(_auth_runtime),
 ):
     base = _request_base(subdir)
     for sid in [s for s, v in _terminals.items() if not _term_alive(v)]:
@@ -772,16 +832,9 @@ async def terminal_ws(ws: WebSocket, session_id: str):
             _term_cleanup(session_id)
         await ws.close(code=4004, reason="unknown or ended session")
         return
-    rtkey = os.environ.get("RUNTIME_API_KEY", "")
-    if rtkey:
-        try:
-            payload = json.loads(await asyncio.wait_for(ws.receive_text(), timeout=10.0))
-            if payload.get("type") != "auth" or not hmac.compare_digest(str(payload.get("token", "")), rtkey):
-                await ws.close(code=4001, reason="invalid api key")
-                return
-        except Exception:
-            await ws.close(code=4001, reason="auth timeout or invalid payload")
-            return
+    # Inter-component auth runs inline in _receiver (an optional first
+    # {"type":"auth","token":...} TEXT frame); the broker forwards raw bytes and never
+    # sends one, so we must not require it up-front (broker-compat).
 
     master_fd, proc = s["master_fd"], s["proc"]
     stop = asyncio.Event()
@@ -841,12 +894,27 @@ async def terminal_ws(ws: WebSocket, session_id: str):
                 elif msg.get("text"):
                     try:
                         payload = json.loads(msg["text"])
-                        if payload.get("type") == "resize":
-                            rows, cols = int(payload.get("rows", 24)), int(payload.get("cols", 80))
-                            with contextlib.suppress(OSError):
-                                fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
                     except (json.JSONDecodeError, ValueError, TypeError):
                         log.debug("ignoring malformed terminal control message")
+                        continue
+                    ptype = payload.get("type") if isinstance(payload, dict) else None
+                    if ptype == "auth":
+                        # Fail-closed inter-component auth (constant-time). The broker
+                        # consumes OWUI's auth frame upstream and forwards raw bytes, so a
+                        # direct client's auth frame is validated HERE, inline. A wrong
+                        # token (or any token while the key is unset) tears the session
+                        # down (4001). RUNTIME_API_KEY is guaranteed set at boot by
+                        # _validate_runtime_config(); the unset case only arises in dev.
+                        if not hmac.compare_digest(str(payload.get("token", "")), _runtime_api_key()):
+                            await ws.close(code=4001, reason="invalid api key")
+                            break
+                    elif ptype == "resize":
+                        try:
+                            rows, cols = int(payload.get("rows", 24)), int(payload.get("cols", 80))
+                        except (TypeError, ValueError):
+                            rows, cols = 24, 80  # tolerate a malformed resize frame
+                        with contextlib.suppress(OSError):
+                            fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         except (WebSocketDisconnect, Exception):  # pragma: no cover - receiver fault/disconnect; exercised in e2e
             log.debug("terminal receiver ended")
 
@@ -866,6 +934,17 @@ async def terminal_ws(ws: WebSocket, session_id: str):
             await ws.close()
         await asyncio.gather(reader, receiver, return_exceptions=True)
         _term_cleanup(session_id)
+
+
+@app.on_event("startup")
+async def _validate_on_startup() -> None:
+    """Fail-closed boot guard: refuse to serve with an unset/placeholder RUNTIME_API_KEY.
+
+    Mirrors the broker's startup _validate_config(). Local dev/tests bypass this
+    (uvicorn lifespan="off" / the in-process ASGI transport never fire startup events);
+    production uvicorn runs lifespan on, so a misconfigured deploy crashes fast instead
+    of running open."""
+    _validate_runtime_config()
 
 
 @app.on_event("shutdown")
