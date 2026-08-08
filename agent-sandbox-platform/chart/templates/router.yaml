@@ -225,7 +225,7 @@ spec:
       port: 53
   - to:
     - ipBlock:
-        cidr: ::/0   # kube-dns IPv6 (coredns) — dual-stack clusters resolve via an IPv6 service CIDR
+        cidr: {{ .Values.router.kubeDnsCidrIPv6 }}   # kube-dns IPv6 (coredns) — scoped to the cluster's kube-dns IPv6 ClusterIP (values.router.kubeDnsCidrIPv6); do NOT widen to ::/0
     ports:
     - protocol: UDP
       port: 53

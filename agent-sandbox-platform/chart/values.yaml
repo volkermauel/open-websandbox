@@ -69,7 +69,7 @@ sandboxTemplate:
   uid: 1000
   dns:
     policy: None
-    nameservers: [8.8.8.8, 1.1.1.1]
+    nameservers: [8.8.8.8, 1.1.1.1, 2001:4860:4860::8888, 2606:4700:4700::1111]
     ndots: 1
   storage:
     workspace: 4Gi
@@ -94,6 +94,7 @@ quota:
 networkPolicy:
   egress:
     dnsNameservers: [8.8.8.8, 1.1.1.1]
+    dnsNameserversV6: [2001:4860:4860::8888, 2606:4700:4700::1111]   # public resolvers (IPv6) — paired with dnsNameservers; keep aligned with sandboxTemplate.dns.nameservers
     httpsPorts: [443, 80]
     exceptCIDRs:
       - 10.0.0.0/8
@@ -110,3 +111,8 @@ router:
   #   kubeadm 10.96.0.1/10.96.0.10   k3s 10.43.0.1/10.43.0.10   MicroK8s 10.152.183.1/10.152.183.10
   kubeApiServerCidr: "10.96.0.1/32"
   kubeDnsCidr: "10.96.0.10/32"
+  # IPv6 kube-dns (coredns) Service ClusterIP — scoped egress for dual-stack clusters.
+  # Set to YOUR cluster's kube-dns IPv6 ClusterIP (/128). Default mirrors kubeadm's dual-stack
+  # service CIDR (kube-dns = fd00:1::a). NEVER widen to ::/0 (egresses the whole IPv6 internet
+  # on :53); single-stack-IPv4 clusters can leave the default — the IPv4 rule still covers DNS.
+  kubeDnsCidrIPv6: "fd00:1::a/128"
