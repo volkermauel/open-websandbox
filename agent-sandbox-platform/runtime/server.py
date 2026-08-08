@@ -34,12 +34,22 @@ import termios
 import urllib.parse
 import uuid as _uuid
 import zipfile
-from typing import Optional
 
-from fastapi import FastAPI, File, Header, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel, Field
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
+from pydantic import BaseModel, Field
+
 
 def _env_int(name: str, default: int) -> int:
     """Parse an int env var, falling back to `default` on missing/bad input."""
@@ -101,7 +111,7 @@ async def metrics() -> Response:
 
 class ExecuteRequest(BaseModel):
     command: str
-    timeout: Optional[int] = Field(default=None, ge=1, le=MAX_TIMEOUT)
+    timeout: int | None = Field(default=None, ge=1, le=MAX_TIMEOUT)
 
 
 class ExecuteResponse(BaseModel):
@@ -141,7 +151,7 @@ def _safe_path(rel: str, base: str = WORKDIR) -> str:
     return full
 
 
-def _request_base(subdir: Optional[str]) -> str:
+def _request_base(subdir: str | None) -> str:
     """Effective workspace base for this request: WORKDIR, or WORKDIR/<subdir>.
 
     The broker sets X-Workspace-Subdir on persistent-profile requests so each chat
@@ -168,7 +178,7 @@ async def health():
 
 
 @app.post("/execute", response_model=ExecuteResponse)
-async def execute(req: ExecuteRequest, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def execute(req: ExecuteRequest, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     base = _request_base(subdir)
     timeout = min(req.timeout or DEFAULT_TIMEOUT, MAX_TIMEOUT)
     timed_out = False
@@ -182,7 +192,7 @@ async def execute(req: ExecuteRequest, subdir: Optional[str] = Header(default=No
         # asyncio subprocess keeps this NON-BLOCKING: the event loop multiplexes the
         # wait, so a long command neither pins a worker thread nor freezes the rest of
         # the runtime (file ops, interactive terminals). Verified concurrent under gVisor.
-        proc = await asyncio.create_subprocess_shell(  # noqa: S603,S602
+        proc = await asyncio.create_subprocess_shell(
             req.command,
             cwd=base,
             stdout=asyncio.subprocess.PIPE,
@@ -239,8 +249,8 @@ class MoveRequest(BaseModel):
 class ReplacementChunk(BaseModel):
     target: str
     replacement: str
-    start_line: Optional[int] = Field(default=None, ge=1)
-    end_line: Optional[int] = Field(default=None, ge=1)
+    start_line: int | None = Field(default=None, ge=1)
+    end_line: int | None = Field(default=None, ge=1)
     allow_multiple: bool = False
 
 
@@ -261,20 +271,20 @@ async def list_ports():
 
 
 @app.get("/files/cwd")
-async def get_cwd(subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def get_cwd(subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     base = _request_base(subdir)
     return {"cwd": base, "home": base}
 
 
 @app.post("/files/cwd")
-async def set_cwd(req: CwdRequest, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def set_cwd(req: CwdRequest, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     resolved = _safe_path(req.path, _request_base(subdir))
     if not os.path.isdir(resolved):
         raise HTTPException(status_code=404, detail="Directory not found")
     return {"cwd": resolved}
 
 
-def _entry(p: str) -> Optional[dict]:
+def _entry(p: str) -> dict | None:
     try:
         st = os.stat(p)
         return {
@@ -288,7 +298,7 @@ def _entry(p: str) -> Optional[dict]:
 
 
 @app.get("/files/list")
-async def list_dir(directory: str = ".", subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def list_dir(directory: str = ".", subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     if str(directory).strip().lower() in ("", "null"):
         directory = "."
     resolved = _safe_path(directory, _request_base(subdir))
@@ -302,11 +312,11 @@ async def list_dir(directory: str = ".", subdir: Optional[str] = Header(default=
 
 
 @app.get("/files/read")
-async def read_file(path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def read_file(path: str, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     return await asyncio.to_thread(_read_file_impl, path, subdir)
 
 
-def _read_file_impl(path: str, subdir: Optional[str]):
+def _read_file_impl(path: str, subdir: str | None):
     full = _safe_path(path, _request_base(subdir))
     if not os.path.isfile(full):
         raise HTTPException(status_code=404, detail="File not found")
@@ -326,7 +336,7 @@ def _read_file_impl(path: str, subdir: Optional[str]):
 
 
 @app.post("/files/write")
-async def write_file(req: WriteRequest, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def write_file(req: WriteRequest, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     base = _request_base(subdir)
     full = _safe_path(req.path, base)
     data = req.content.encode("utf-8")
@@ -340,7 +350,7 @@ async def write_file(req: WriteRequest, subdir: Optional[str] = Header(default=N
 
 
 @app.post("/files/mkdir")
-async def mkdir(req: PathRequest, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def mkdir(req: PathRequest, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     full = _safe_path(req.path, _request_base(subdir))
     try:
         os.makedirs(full, exist_ok=True)
@@ -350,7 +360,7 @@ async def mkdir(req: PathRequest, subdir: Optional[str] = Header(default=None, a
 
 
 @app.post("/files/move")
-async def move(req: MoveRequest, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def move(req: MoveRequest, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     base = _request_base(subdir)
     src = _safe_path(req.source, base)
     dst = _safe_path(req.destination, base)
@@ -366,7 +376,7 @@ async def move(req: MoveRequest, subdir: Optional[str] = Header(default=None, al
 
 
 @app.delete("/files/delete")
-async def delete_entry(path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def delete_entry(path: str, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     full = _safe_path(path, _request_base(subdir))
     if not os.path.exists(full):
         raise HTTPException(status_code=404, detail="Path not found")
@@ -379,7 +389,7 @@ async def delete_entry(path: str, subdir: Optional[str] = Header(default=None, a
 
 
 @app.post("/files/replace")
-async def replace(req: ReplaceRequest, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def replace(req: ReplaceRequest, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     full = _safe_path(req.path, _request_base(subdir))
     if not os.path.isfile(full):
         raise HTTPException(status_code=404, detail="File not found")
@@ -425,7 +435,7 @@ def _apply_replacement(content: str, chunk: ReplacementChunk) -> str:
     return "\n".join(lines)
 
 
-def _walk_files(root: str, include: Optional[list[str]] = None) -> list[str]:
+def _walk_files(root: str, include: list[str] | None = None) -> list[str]:
     """All regular files under `root` (sorted); optional fnmatch include filter."""
     if os.path.isfile(root):
         return [root]
@@ -445,9 +455,9 @@ async def grep(
     path: str = ".",
     regex: bool = True,
     case_insensitive: bool = False,
-    include: Optional[list[str]] = Query(default=None),
+    include: list[str] | None = Query(default=None),
     max_results: int = Query(default=50, ge=1, le=500),
-    subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir"),
+    subdir: str | None = Header(default=None, alias="X-Workspace-Subdir"),
 ):
     return await asyncio.to_thread(
         _grep_impl, query, path, regex, case_insensitive, include, max_results, subdir
@@ -483,7 +493,7 @@ async def glob_search(
     path: str = ".",
     type: str = "any",
     max_results: int = Query(default=50, ge=1, le=500),
-    subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir"),
+    subdir: str | None = Header(default=None, alias="X-Workspace-Subdir"),
 ):
     return await asyncio.to_thread(_glob_impl, pattern, path, type, max_results, subdir)
 
@@ -520,7 +530,7 @@ def _glob_impl(pattern, path, type, max_results, subdir) -> dict:
 async def upload(
     file: UploadFile = File(...),
     directory: str = "",
-    subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir"),
+    subdir: str | None = Header(default=None, alias="X-Workspace-Subdir"),
 ):
     base = _request_base(subdir)
     target_dir = base if str(directory).strip().lower() in ("", "null") else _safe_path(directory, base)
@@ -543,11 +553,11 @@ async def upload(
 
 
 @app.post("/files/archive")
-async def archive(req: ArchiveRequest, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def archive(req: ArchiveRequest, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     return await asyncio.to_thread(_archive_impl, req, subdir)
 
 
-def _archive_impl(req: ArchiveRequest, subdir: Optional[str]) -> Response:
+def _archive_impl(req: ArchiveRequest, subdir: str | None) -> Response:
     base = _request_base(subdir)
     if not req.paths:
         raise HTTPException(status_code=400, detail="No paths provided")
@@ -583,7 +593,7 @@ def _archive_impl(req: ArchiveRequest, subdir: Optional[str]) -> Response:
 
 
 @app.post("/upload")
-async def tool_upload(file: UploadFile = File(...), subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def tool_upload(file: UploadFile = File(...), subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     base = _request_base(subdir)
     filename = os.path.basename(file.filename or "upload")
     full = os.path.realpath(os.path.join(base, filename))
@@ -601,7 +611,7 @@ async def tool_upload(file: UploadFile = File(...), subdir: Optional[str] = Head
 
 
 @app.get("/download/{file_path:path}")
-async def tool_download(file_path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def tool_download(file_path: str, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     full = _safe_path(file_path, _request_base(subdir))
     if not os.path.isfile(full):
         raise HTTPException(status_code=404, detail="File not found")
@@ -610,7 +620,7 @@ async def tool_download(file_path: str, subdir: Optional[str] = Header(default=N
 
 
 @app.get("/list/{file_path:path}")
-async def tool_list(file_path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def tool_list(file_path: str, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     fp = file_path.strip() or "."
     resolved = _safe_path(fp, _request_base(subdir))
     if not os.path.isdir(resolved):
@@ -630,13 +640,13 @@ async def tool_list(file_path: str, subdir: Optional[str] = Header(default=None,
 
 
 @app.get("/exists/{file_path:path}")
-async def tool_exists(file_path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def tool_exists(file_path: str, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     full = _safe_path(file_path.strip() or ".", _request_base(subdir))
     return {"exists": os.path.exists(full), "is_file": os.path.isfile(full), "is_dir": os.path.isdir(full)}
 
 
 @app.get("/files/view")
-async def files_view(path: str, subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir")):
+async def files_view(path: str, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     """Raw file bytes for download/display (OWUI downloadFileBlob -> res.blob())."""
     full = _safe_path(path, _request_base(subdir))
     if not os.path.isfile(full):
@@ -691,8 +701,8 @@ def _term_write(master_fd: int, data: bytes) -> None:
 
 @app.post("/api/terminals")
 async def create_terminal(
-    subdir: Optional[str] = Header(default=None, alias="X-Workspace-Subdir"),
-    session_id: Optional[str] = Header(default=None, alias="X-Session-Id"),
+    subdir: str | None = Header(default=None, alias="X-Workspace-Subdir"),
+    session_id: str | None = Header(default=None, alias="X-Session-Id"),
 ):
     base = _request_base(subdir)
     for sid in [s for s, v in _terminals.items() if not _term_alive(v)]:
@@ -706,7 +716,7 @@ async def create_terminal(
     try:
         master_fd, slave_fd = pty.openpty()
         fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
-        proc = subprocess.Popen(  # noqa: S603 - spawns the interactive shell (trusted tool surface)
+        proc = subprocess.Popen(
             [_SHELL], stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, cwd=base,
             start_new_session=True, env={**os.environ, "TERM": "xterm-256color"},
         )

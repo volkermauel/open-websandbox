@@ -20,23 +20,31 @@ injecting X-Sandbox-Id / X-Sandbox-Namespace / X-Sandbox-Pod-IP (priority-1 reso
 """
 import asyncio
 import contextlib
+import copy
 import datetime
 import hashlib
 import hmac
-import copy
 import json
 import logging
 import os
 import time
-from typing import Optional, cast
+from typing import cast
 
 import httpx
 import websockets
-from fastapi import FastAPI, HTTPException, Request, Response, Security, WebSocket, WebSocketDisconnect
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
-from openapi_spec import OPENAPI
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    Security,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from kubernetes import client, config
+from openapi_spec import OPENAPI
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
 
 # --- config -----------------------------------------------------------------
 SHARED_SECRET = os.environ.get("BROKER_SHARED_SECRET", "")
@@ -105,7 +113,7 @@ core = client.CoreV1Api()  # per-user-pvc mode: manage per-user PVCs
 bearer = HTTPBearer(auto_error=False)
 
 
-def _auth(credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer)) -> None:
+def _auth(credentials: HTTPAuthorizationCredentials | None = Security(bearer)) -> None:
     """Validate the shared Bearer secret (constant-time). Unset secret = disabled (dev)."""
     if not SHARED_SECRET:
         return
@@ -125,7 +133,7 @@ def _persistent_claim_name(user_id: str) -> str:
     return f"{PERSISTENT_PREFIX}{hashlib.sha256(user_id.encode()).hexdigest()[:12]}"
 
 
-def _get_claim(name: str) -> Optional[dict]:
+def _get_claim(name: str) -> dict | None:
     try:
         return cast(dict, api.get_namespaced_custom_object(GROUP, VER, RUNTIME_NS, "sandboxclaims", name))
     except client.ApiException as exc:
@@ -134,7 +142,7 @@ def _get_claim(name: str) -> Optional[dict]:
         raise
 
 
-def _create_claim(name: str, profile: str) -> Optional[dict]:
+def _create_claim(name: str, profile: str) -> dict | None:
     spec: dict = {"warmPoolRef": {"name": WARMPOOL}}
     if profile == PERSISTENT:
         # Forces a cold start (warm pool pods have no PVC). The controller merges this
@@ -168,18 +176,18 @@ def _claim_ready(claim: dict) -> bool:
                for c in claim.get("status", {}).get("conditions", []))
 
 
-def _sandbox_name(claim: dict) -> Optional[str]:
+def _sandbox_name(claim: dict) -> str | None:
     return (claim.get("status", {}).get("sandbox", {}) or {}).get("name")
 
 
-def _claim_pod_ip(claim: dict) -> Optional[str]:
+def _claim_pod_ip(claim: dict) -> str | None:
     """Pod IP from the claim's own status (populated by the controller once the pod is up)."""
     sbx = (claim.get("status", {}).get("sandbox", {}) or {})
     ips = sbx.get("podIPs") or []
     return ips[0] if ips else None
 
 
-def _sandbox_operating_mode(sandbox_name: str) -> Optional[str]:
+def _sandbox_operating_mode(sandbox_name: str) -> str | None:
     try:
         sbx = cast(dict, api.get_namespaced_custom_object(SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes", sandbox_name))
         return sbx.get("spec", {}).get("operatingMode")
@@ -256,7 +264,7 @@ def _persistent_volume(user_id: str) -> tuple[str, str]:
     return _ensure_user_pvc(user_id), ""
 
 
-def _get_sandbox(name: str) -> Optional[dict]:
+def _get_sandbox(name: str) -> dict | None:
     try:
         return cast(dict, api.get_namespaced_custom_object(SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes", name))
     except client.ApiException as exc:
@@ -265,7 +273,7 @@ def _get_sandbox(name: str) -> Optional[dict]:
         raise
 
 
-def _create_chat_sandbox(name: str, user_id: str, session_id: str) -> Optional[dict]:
+def _create_chat_sandbox(name: str, user_id: str, session_id: str) -> dict | None:
     """Create a per-chat Sandbox whose /workspace IS the chat's folder (subPath slice).
 
     The podTemplate is cloned from the base SandboxTemplate; the `workspace` volume is
@@ -310,7 +318,7 @@ def _sandbox_ready(sbx: dict) -> bool:
                for c in (sbx.get("status", {}) or {}).get("conditions", []))
 
 
-def _sandbox_pod_ip(sbx: dict) -> Optional[str]:
+def _sandbox_pod_ip(sbx: dict) -> str | None:
     ips = (sbx.get("status", {}) or {}).get("podIPs") or []
     return ips[0] if ips else None
 
@@ -340,7 +348,7 @@ def _touch_sandbox(name: str) -> None:
         log.debug("non-fatal sandbox last-used touch: %s", exc)
 
 
-def _watch_until_ready(group: str, plural: str, name: str, is_ready, deadline_s: float, on_event=None) -> Optional[dict]:
+def _watch_until_ready(group: str, plural: str, name: str, is_ready, deadline_s: float, on_event=None) -> dict | None:
     """List a custom object once, then Watch it until is_ready(obj) or the deadline.
 
     Event-driven replacement for a 1s poll loop: the initial GET reflects current state
@@ -407,7 +415,7 @@ async def _resolve_chat_sandbox(user_id: str, session_id: str) -> tuple[str, str
     return name, pod_ip
 
 
-async def _ensure_sandbox_running_ip(name: str, timeout: float = 90.0) -> Optional[str]:
+async def _ensure_sandbox_running_ip(name: str, timeout: float = 90.0) -> str | None:
     """Resume a parked sandbox (if needed) and wait for its pod IP via a Watch. None on timeout/missing."""
     obj = await asyncio.to_thread(
         _watch_until_ready, SANDBOX_GROUP, "sandboxes", name, _sandbox_ready_with_ip,
@@ -826,7 +834,7 @@ def _delete_sandbox(name: str) -> None:
         log.warning("reap failed for sandbox %s: %s", name, exc)
 
 # Tracked so shutdown can cancel it.
-_reaper_task: Optional[asyncio.Task] = None
+_reaper_task: asyncio.Task | None = None
 
 
 # --- Leader election (HA: only the elected broker runs the background reaper) ---
@@ -840,9 +848,9 @@ _LEADER_IDENTITY = os.environ.get("HOSTNAME") or f"broker-{os.getpid()}"
 _LEADER_DURATION = _env_int("BROKER_LEADER_DURATION_SECONDS", 15)
 _LEADER_RENEW_SECONDS = _env_int("BROKER_LEADER_RENEW_SECONDS", 5)
 _is_leader = False
-_reaper_task: Optional[asyncio.Task] = None
-_leader_task: Optional[asyncio.Task] = None
-_coord_api: Optional[client.CoordinationV1Api] = None
+_reaper_task: asyncio.Task | None = None
+_leader_task: asyncio.Task | None = None
+_coord_api: client.CoordinationV1Api | None = None
 
 
 def _coord() -> client.CoordinationV1Api:
