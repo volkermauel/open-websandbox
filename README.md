@@ -1,151 +1,135 @@
-# open-sandbox
+# open-websandbox
 
-**A Kubernetes sandbox runtime that backs Open WebUI's "Open Terminal" feature.**
+[![CI](https://github.com/volkermauel/open-websandbox/actions/workflows/ci.yml/badge.svg)](https://github.com/volkermauel/open-websandbox/actions/workflows/ci.yml)
+[![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](./LICENSE)
+[![Status: pre-release](https://img.shields.io/badge/status-pre--release%20%7C%20v0.1.0-orange.svg)](./docs/release-readiness.md)
 
-Each chat gets an isolated Linux sandbox running under **gVisor (`runsc`)**. An
-agent (or a human in the terminal UI) can run shell commands, edit files, and
-install packages — on what looks like a throwaway VM, but without a VM's blast
-radius. One gVisor sandbox **per active chat**; a warm pool hides cold-start;
+**A Kubernetes sandbox runtime that backs Open WebUI's *Open Terminal* feature.**
+
+Each chat gets an isolated Linux sandbox running under **gVisor (`runsc`)**. An agent
+(or a human in the terminal UI) can run shell commands, edit files, and install
+packages on what looks like a throwaway VM — but without a VM's blast radius. One
+gVisor sandbox runs **per active chat**; a warm pool hides cold-start latency; and
 default-deny networking keeps sandboxes off the rest of the cluster.
 
-No Cloudflare- or `computerd`-proprietary dependencies. The control plane rests
-on the upstream [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox)
-controller (pinned **v0.5.3**, manifest vendored + SHA256-recorded here).
-
-> The published-image **registry owner is not yet finalized.** This README uses
-> a shell variable — `export OWNER=<your-github-org>` — and references images as
-> `ghcr.io/$OWNER/open-sandbox-{broker,runtime,router}`. Never hard-code an
-> owner you have not been given.
+> **Project name.** This repository is **open-websandbox** (licensed
+> [AGPL-3.0-only](./LICENSE)). Its container images and Helm chart still carry the
+> historical names `open-sandbox-*` / chart `open-sandbox`; a global rename is
+> tracked in [#3](https://github.com/volkermauel/open-websandbox/issues/3). The
+> control plane rests on the upstream
+> [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox)
+> project (controller + CRDs under `agents.x-k8s.io`) — those upstream references
+> are kept verbatim and are **not** part of our rename.
 
 ## How it works (one paragraph)
 
-Open WebUI calls the **broker** (Python/FastAPI), which authenticates the
-request, get-or-creates the right sandbox user + session via the agent-sandbox
-CRDs, and reverse-proxies the in-sandbox **runtime** (Python/FastAPI on
-`:8888`) through the Go **sandbox-router** (Pod-IP cache fast path). The
-broker's idle reaper **parks** idle persistent sandboxes (pod gone, PVC kept)
-and **reaps** truly stale ones, so there is no permanent pod per user. The
-runtime exposes `POST /execute`, `GET|POST /files/*`, `GET /ports`, and an
-interactive PTY over `WS /api/terminals/{id}`. See
-[`docs/architecture.md`](docs/architecture.md) for the full flow and isolation
-layers.
+Open WebUI calls the **broker** (Python/FastAPI), which authenticates the request,
+gets-or-creates the right sandbox user + session via the agent-sandbox CRDs, and
+reverse-proxies the in-sandbox **runtime** (Python/FastAPI on `:8888`) through the
+Go **sandbox-router** (a Pod-IP cache for the fast path; falls back to cluster DNS).
+The broker's idle reaper **parks** idle persistent sandboxes (Pod gone, PVC kept)
+and **reaps** abandoned ones. The runtime exposes `POST /execute`, `GET|POST /files/*`,
+`GET /ports`, and interactive PTY terminals over `WS /api/terminals/{id}`. See
+[`docs/architecture.md`](./docs/architecture.md) for the component layers, per-chat
+lifecycle, and the four isolation layers.
 
+```mermaid
+flowchart LR
+    WebUI["Open WebUI"] -->|HTTP / WS :8080| Broker
+    subgraph cp["agent-sandbox-system (control plane)"]
+        Broker["broker<br/>(Python/FastAPI)"]
+        Router["sandbox-router<br/>(Go)"]
+        Ctrl["agent-sandbox-controller<br/>(upstream, v0.5.3)"]
+    end
+    subgraph rt["agent-sandbox-runtime (sandboxes)"]
+        WarmPool["SandboxWarmPool<br/>code-standard-warmpool (x2)"]
+        Pod["runtime Pod<br/>(gVisor, :8888)"]
+    end
+    Broker -->|HTTP proxy<br/>+ X-Sandbox-Pod-IP| Router
+    Broker -.->|WS :8888 direct<br/>(terminals)| Pod
+    Router -->|HTTP :8888| Pod
+    Broker -->|get/create| Ctrl
+    Ctrl -->|reconciles| WarmPool
+    WarmPool -.->|owns| Pod
 ```
-Open WebUI ──HTTP/WS──► owui-broker :8080 ──► sandbox-router ──► runtime :8888 (in gVisor pod)
-   (Bearer + X-User-Id/X-Session-Id)            (Pod-IP cache)       /execute /files/* /ports /api/terminals
-```
 
-## Quickstart
+## Current status
 
-Copy-pasteable end-to-end install. It assumes cluster-admin on a cluster that
-already meets the [Prerequisites](#prerequisites). Substitute `<your-github-org>`
-with the GitHub org/namespace that owns the published images.
+**v0.1.0 — pre-release.** The platform is functionally complete and unit-tested, and
+the full install path runs green in the KIND e2e suite, but it has **not** carried
+real tenant traffic in production. Treat it as ready for evaluation and staging, not
+as battle-proven. What is proven vs. open is tracked in
+[`docs/release-readiness.md`](./docs/release-readiness.md).
+
+## Quick start
+
+A cluster-admin can bring up the whole stack — controller + CRDs, three images, Helm
+chart, warm pool, and a smoke test — in a few minutes. The copy-pasteable walk-through
+lives in **[`docs/quickstart.md`](./docs/quickstart.md)**.
+
+> **Pre-release — artifacts not published yet.** No GitHub Release has been cut, so the
+> `ghcr.io/volkermauel/open-sandbox-*:v0.1.0` images, the OCI chart, and the release
+> tarball referenced below don't exist yet — the `helm install` will hit
+> `ImagePullBackOff` until `v0.1.0` is tagged. Until then, build the three images and
+> install from a local checkout; see [**`docs/quickstart.md`**](./docs/quickstart.md).
 
 ```bash
-# 1. Clone and enter the repo.
-git clone <this-repo-url> open-sandbox && cd open-sandbox
+# 1. Prereqs already in place: Kubernetes >= 1.28, gVisor RuntimeClass, RWX storage.
+# 2. Namespaces (the chart does not create them):
+kubectl create namespace agent-sandbox-system agent-sandbox-runtime
 
-# 2. Set the registry owner for the published images.
-#    Images are: ghcr.io/$OWNER/open-sandbox-{broker,runtime,router}:v0.1.0
-export OWNER=<your-github-org>
-
-# 3. Create the two namespaces the chart expects (chart does not create them).
-kubectl create namespace agent-sandbox-system    # broker + router (control plane)
-kubectl create namespace agent-sandbox-runtime  # sandbox pods + SandboxTemplate/WarmPool
-
-# 4. Install the agent-sandbox CRDs + controller (v0.5.3, SHA256-verified).
+# 3. Upstream agent-sandbox controller + CRDs (v0.5.3, SHA256-verified):
 sha256sum -c agent-sandbox-platform/upstream/SHA256SUMS
 kubectl apply -f agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
 kubectl -n agent-sandbox-system wait deploy/agent-sandbox-controller \
   --for=condition=Available --timeout=120s
 
-# 5. Generate a strong broker shared secret.
-SECRET=$(openssl rand -hex 32)
+# 4. Install the chart (pulls ghcr.io/volkermauel/open-sandbox-*:v0.1.0 — published by release.yml on the first v0.1.0 tag):
+helm install open-websandbox agent-sandbox-platform/chart \
+  --set imageRegistry=ghcr.io --set imageOwner=volkermauel --set imageTag=v0.1.0 \
+  --set imagePullPolicy=IfNotPresent
 
-# 6. Render a values file that points the chart at your registry + secret.
-#    Review/override the cluster-CIDR keys (router.*) and storageClass below —
-#    the chart defaults bake kubeadm service-CIDRs and a cephfs storage class.
-cat > /tmp/open-sandbox-values.yaml <<EOF
-imageRegistry: ghcr.io
-imageOwner: ${OWNER}
-imageTag: v0.1.0
-imagePullPolicy: IfNotPresent
-
-broker:
-  sharedSecret: "${SECRET}"
-
-sandboxTemplate:
-  runtimeClassName: gvisor      # "" => runc (no gVisor); used by the KIND e2e suite
-
-# --- Override these for your cluster's service CIDRs (defaults are kubeadm) ---
-router:
-  kubeApiServerCidr: "10.96.0.1/32"   # ClusterIP of the `kubernetes` Service; kubeadm: 10.96.0.1, k3s: 10.43.0.1
-  kubeDnsCidr: "10.96.0.10/32"        # ClusterIP of kube-dns/coredns; kubeadm: 10.96.0.10, k3s: 10.43.0.10
-sharedPvc:
-  storageClass: cephfs           # your RWX StorageClass (or set profile.persistentStorageClass)
-EOF
-
-# 7. Install via Helm.
-helm install open-sandbox agent-sandbox-platform/chart/ -f /tmp/open-sandbox-values.yaml
-
-# 8. Wait for the control plane and the warm pool (2 pre-warmed sandboxes).
-kubectl -n agent-sandbox-system rollout status deploy/owui-broker deploy/sandbox-router
+# 5. Wait for the control plane + warm pool:
+kubectl -n agent-sandbox-system wait deploy/owui-broker deploy/sandbox-router --for=condition=Available
 kubectl -n agent-sandbox-runtime wait sandboxwarmpool/code-standard-warmpool \
-  --for=jsonpath='{.status.readyReplicas}'=2 --timeout=180s \
-  || kubectl -n agent-sandbox-runtime get sandboxwarmpool,pods
-
-# 9. Verify — the broker answers /api/config with the shared secret.
-kubectl -n agent-sandbox-system port-forward svc/owui-broker 8080:8080 &
-TOKEN=$(kubectl -n agent-sandbox-system get secret owui-broker-secret \
-  -o jsonpath='{.data.shared-secret}' | base64 -d)
-curl -sS http://localhost:8080/api/config -H "Authorization: Bearer ${TOKEN}"
-# expect: {"features":{"terminal":true,"notebooks":false,"desktop":false}}
+  --for=jsonpath='{.status.readyReplicas}'=2 --timeout=180s
 ```
 
-If step 9 returns the JSON above, the broker is up, authenticating, and ready
-for Open WebUI to wire in. Next: point Open WebUI at
-`http://owui-broker.agent-sandbox-system.svc:8080`, sending per session
-`Authorization: Bearer <shared-secret>`, `X-User-Id`, `X-Session-Id`. Full
-Open WebUI wiring + header table: [`docs/deploy.md`](docs/deploy.md).
+Then point Open WebUI at `http://owui-broker.agent-sandbox-system.svc:8080` with the
+`Authorization` header set to the broker shared secret (auto-generated; retrieve it
+from `Secret/owui-broker-secret`). Full Open WebUI wiring in
+[`docs/deploy.md`](./docs/deploy.md).
 
 ## Prerequisites
 
-Before the Quickstart, the cluster must already have:
+- **Kubernetes >= 1.28**
+- **gVisor `RuntimeClass`** installed cluster-wide (see [`infra/gvisor/`](./infra/gvisor/))
+- **RWX `StorageClass`** (e.g. CephFS / `ReadWriteMany`) — persistent sandboxes need
+  RWX to park/resume.
+- A working CNI that enforces `NetworkPolicy`, and cluster-admin rights (to apply CRDs).
 
-- Kubernetes **≥ 1.28**.
-- **gVisor (`runsc`) installed and a `gvisor` RuntimeClass** cluster-wide — see
-  [`infra/gvisor/`](infra/gvisor/) (online-safe node install/activate playbooks
-  - the `RuntimeClass` + a verify probe).
-- **An RWX `StorageClass`** (e.g. `cephfs` / CephFS `ReadWriteMany`).
-  Persistent sandboxes need RWX for park/resume.
-- A working RWX provisioner, Calico (or other CNI enforcing `NetworkPolicy`),
-  and cluster-admin rights (to apply CRDs).
-
-For the full prerequisites checklist, base-manifest build/load steps, broker
-env-var reference, and Open WebUI wiring, see [`docs/deploy.md`](docs/deploy.md).
+For the full prerequisites checklist, image build/load steps, broker env-var reference,
+and Open WebUI wiring, see [`docs/deploy.md`](./docs/deploy.md).
 
 ## Documentation
 
 | Doc | What's in it |
 |-----|--------------|
-| [`docs/architecture.md`](docs/architecture.md) | broker↔router↔runtime↔controller flow (with diagram), per-chat lifecycle (warm → claim → park/suspend → reap), ephemeral vs. persistent workspaces, four isolation layers. |
-| [`docs/deploy.md`](docs/deploy.md) | Full prerequisites + install: gVisor nodes, controller + CRDs, RWX storage, namespaces, private-registry image pull, building/loading 3 images, broker shared-secret, Open WebUI wiring, broker env-var table, prod values presets. |
-| [`docs/operations.md`](docs/operations.md) | Runbook: warm-pool tuning, idle park/reap policy, ResourceQuota/LimitRange limits, Backup & Restore (per-user PVCs), troubleshooting (reaper stuck, WS-proxy 504, PVC Pending, sandbox NotReady, silent partial-outage), rolling runtime image, upgrade/rollback. |
-| [`docs/release-readiness.md`](docs/release-readiness.md) | What is and isn't proven for production; open risks. |
-| [`infra/gvisor/`](infra/gvisor/) | Online-safe gVisor node install/activate playbooks + `RuntimeClass` + probe. |
-| [`openspec/`](openspec/) | OpenSpec change [`adopt-agent-sandbox`](openspec/changes/adopt-agent-sandbox/) — design + spec deltas. |
-| [`AgentSandbox.md`](AgentSandbox.md) | Source-analysis of the Open WebUI open-terminal AgentSandbox design (architecture, threat model, mandatory invariants, manifests). |
-| [`CHANGELOG.md`](CHANGELOG.md) | Release history (Keep a Changelog). |
+| [**Quick start**](./docs/quickstart.md) | Copy-pasteable end-to-end install + smoke test for a cluster-admin. |
+| [Architecture](./docs/architecture.md) | broker ↔ router ↔ runtime ↔ controller flow (Mermaid), per-chat lifecycle (warm → claim → park/suspend → reap), ephemeral vs. persistent workspaces, four isolation layers. |
+| [Deployment guide](./docs/deploy.md) | Full prerequisites + install: gVisor nodes, controller + CRDs, RWX storage, namespaces, private-registry image pull, building/loading the 3 images, broker shared-secret, Open WebUI wiring, broker env-var table, production values presets. |
+| [Operations runbook](./docs/operations.md) | Warm-pool tuning, idle park/reap policy, ResourceQuota/LimitRange limits, Backup & Restore (per-user PVCs), troubleshooting, rolling the runtime image, upgrade/rollback. |
+| [Security model](./docs/security.md) | The four isolation layers and threat model. |
+| [Release readiness](./docs/release-readiness.md) | What is *not* proven production yet; open risks. |
+| [Production-readiness checklist](./docs/production-readiness-checklist.md) | Table-stakes hardening before real tenants. |
+| [`infra/gvisor/`](./infra/gvisor/) | Online-safe gVisor install/activate + `RuntimeClass`. |
+| [`CHANGELOG.md`](./CHANGELOG.md) | Release history. |
 
-## Reference deployment
+## Contributing
 
-The chart's defaults target a typical kubeadm-style cluster (`10.96.0.0/12`
-service CIDR, `cephfs` RWX storage) and were developed on an on-prem gVisor
-cluster — **override `router.kubeApiServerCidr` / `kubeDnsCidr` and the storage
-class for your cluster.**
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md). This is a young project — issues and PRs
+are welcome.
 
-## Contributing & status
+## License
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). The v0.1.0 release is functional and
-unit-covered, but **not battle-tested** — read
-[`docs/release-readiness.md`](docs/release-readiness.md) before relying on it.
+[AGPL-3.0-only](./LICENSE) © the open-websandbox contributors.

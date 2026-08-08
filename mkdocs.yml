@@ -75,6 +75,7 @@ plugins:
 
 nav:
   - Overview: index.md
+  - Quick start: quickstart.md
   - Architecture: architecture.md
   - Deployment guide: deploy.md
   - Operations runbook: operations.md

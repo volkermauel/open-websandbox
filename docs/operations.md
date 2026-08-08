@@ -1,6 +1,6 @@
 # Operations runbook
 
-Day-2 operations for **open-sandbox**: tuning the warm pool, the idle
+Day-2 operations for **open-websandbox**: tuning the warm pool, the idle
 park/reap policy, capacity guardrails, common troubleshooting, rolling the
 runtime image, and upgrade/rollback. See [`architecture.md`](architecture.md)
 for how the pieces fit and [`deploy.md`](deploy.md) for the install it assumes.
@@ -114,7 +114,7 @@ per-pod template limits — to admit more concurrent sandboxes.
 
 ## Backup & Restore (per-user PVCs)
 
-The only durable state in open-sandbox is each user's `/workspace`, held on a
+The only durable state in open-websandbox is each user's `/workspace`, held on a
 per-user RWX PVC named `workspace-p-<12-hex>` in `agent-sandbox-runtime` (the
 hash is `sha256(user_id)[:12]`, so the name is **deterministic per user** — a
 restored PVC re-binds to the same user when the broker recreates the claim on
