@@ -1,0 +1,14 @@
+# Test dependencies for the runtime/broker unit tests (editable source).
+#
+# Runtime/broker app deps come from their respective requirements-*.txt locks.
+# This file lists only the test tooling, pinned to exact versions; the
+# fully-resolved lock (all transitives + hashes), which is what gets installed
+# in CI, is generated into requirements-test.txt.
+#
+# Regenerate the lock after editing this file:
+#   uv pip compile --generate-hashes requirements-test.in -o requirements-test.txt
+pytest==9.1.1
+pytest-asyncio==1.4.0
+httpx==0.28.1
+websockets==17.0.1
+pytest-cov==7.1.0
