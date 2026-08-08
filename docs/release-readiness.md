@@ -77,7 +77,7 @@ MAU ceiling — raise for prod); `values.schema.json` so typos fail at install n
   add client WS reconnect/resume. **M–L**
 - **120s-suspend & long sessions unexercised** — 1h-idle double-park-under-clock-skew. **M**
 - **Benchmark "table-stakes" still deferred (D5)** — cosign-signed images + SBOM; per-tenant
-  OIDC/RBAC; full gVisor e2e in CI. Re-evaluate vs your threat model. **M each**
+  OIDC/RBAC. (Full gVisor e2e in CI is now DONE — `e2e.yml` runc+gVisor matrix.) Re-evaluate vs your threat model. **M each**
 - **Per-tenant egress filtering** (benchmark judgment call) — today egress is a single
   global allowlist; for adversarial-code sandboxes, per-tenant egress may be table-stakes.
   **M**

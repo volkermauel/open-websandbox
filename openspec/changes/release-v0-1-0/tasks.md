@@ -30,7 +30,8 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` done.
 ## CI — `.github/workflows/`
 
 - [x] `ci.yml` — ruff + pytest unit (push)  *(code is ruff-clean)*
-- [ ] `e2e.yml` — KIND runc e2e (PR)
+- [x] `e2e.yml` — KIND e2e matrix (runc + gVisor), every push/PR — *(consolidated: helm/kind-action, host-mounted runsc via extraMounts, real broker secret, warm-pool wait on Sandbox Ready)*
+- [x] e2e caught + fixed a real bug: `/readyz` queried `sandboxclaims` under the wrong API group (agents.x-k8s.io vs extensions) → 404 → broker NotReady forever; regression test added
 - [x] `release.yml` — build+publish 3 images (on tag)  *(router self-built from upstream@v0.5.3)*
 
 ## Docs
