@@ -233,6 +233,7 @@ def _auth_runtime(
     unauthenticated). _validate_runtime_config() makes the same check at boot. A
     presented Bearer must match the configured key (constant-time), else 401."""
     key = _runtime_api_key()
+    print(f"[AUTH-DBG] runtime key[:6]={key[:6]!r} token[:6]={(credentials.credentials[:6] if credentials else None)!r}", flush=True)
     if key in _PLACEHOLDER_API_KEYS:
         raise HTTPException(status_code=503, detail="RUNTIME_API_KEY is not configured")
     if not credentials or not hmac.compare_digest(credentials.credentials.encode(), key.encode()):

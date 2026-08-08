@@ -141,6 +141,7 @@ def _runtime_auth_headers() -> dict:
     RUNTIME_API_KEY defaults to SHARED_SECRET when unset (one shared secret), so this is
     populated whenever the broker is configured. The runtime's _auth_runtime validates it
     fail-closed (503 on unset, 401 on mismatch) — see runtime/server.py."""
+    print(f"[AUTH-DBG] broker sends key[:6]={RUNTIME_API_KEY[:6]!r}", flush=True)
     return {"Authorization": f"Bearer {RUNTIME_API_KEY}"}
 
 
