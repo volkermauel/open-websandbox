@@ -3,7 +3,7 @@
 # extensions) + a curated set of common libraries. Non-root uid 1000.
 # /workspace is the agent work dir — mounted as emptyDir (ephemeral) or PVC
 # (persistent, via volumeClaimTemplates) by the SandboxTemplate at runtime.
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 # Toolchain + CLIs for dynamic dep installs and common agent needs.
 RUN apt-get update && apt-get install -y --no-install-recommends \

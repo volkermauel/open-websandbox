@@ -105,7 +105,7 @@
           "required": ["policy", "nameservers", "ndots"],
           "properties": {
             "policy": { "type": "string", "enum": ["None", "Default", "ClusterFirst", "ClusterFirstWithHostNet"] },
-            "nameservers": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "nameservers": { "type": "array", "items": { "type": "string", "pattern": "^([0-9]{1,3}(\\.[0-9]{1,3}){3}|[0-9a-fA-F:]+)$" }, "minItems": 1 },
             "ndots": { "type": "integer", "minimum": 0, "maximum": 65535 }
           }
         },
@@ -167,9 +167,10 @@
         "egress": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["dnsNameservers", "httpsPorts", "exceptCIDRs"],
+          "required": ["dnsNameservers", "dnsNameserversV6", "httpsPorts", "exceptCIDRs"],
           "properties": {
-            "dnsNameservers": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "dnsNameservers": { "type": "array", "items": { "type": "string", "pattern": "^([0-9]{1,3}(\\.[0-9]{1,3}){3}|[0-9a-fA-F:]+)$" }, "minItems": 1 },
+            "dnsNameserversV6": { "type": "array", "items": { "type": "string", "pattern": "^([0-9a-fA-F:]+)$" }, "minItems": 1 },
             "httpsPorts": { "type": "array", "items": { "type": "integer", "minimum": 1, "maximum": 65535 }, "minItems": 1 },
             "exceptCIDRs": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
           }
@@ -179,12 +180,13 @@
     "router": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repository", "replicas", "kubeApiServerCidr", "kubeDnsCidr"],
+      "required": ["repository", "replicas", "kubeApiServerCidr", "kubeDnsCidr", "kubeDnsCidrIPv6"],
       "properties": {
         "repository": { "type": "string", "minLength": 1 },
         "replicas": { "type": "integer", "minimum": 1 },
         "kubeApiServerCidr": { "type": "string", "minLength": 1 },
-        "kubeDnsCidr": { "type": "string", "minLength": 1 }
+        "kubeDnsCidr": { "type": "string", "minLength": 1 },
+        "kubeDnsCidrIPv6": { "type": "string", "minLength": 1 }
       }
     }
   },
