@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > The published-image registry owner is not yet finalized; images are referenced
 > as `ghcr.io/$OWNER/open-sandbox-{broker,runtime,router}` (see
-> [Quickstart](README.md#quickstart)). Version comparison links will be added
+> [Quickstart](docs/quickstart.md)). Version comparison links will be added
 > once the canonical repository URL is fixed.
 
 ## [Unreleased]
