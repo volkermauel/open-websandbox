@@ -2,7 +2,7 @@
 
 A portable, isolated, multi-tenant **sandbox runtime** for Open WebUI's **Open Terminal**
 integration — built on **kubernetes-sigs/agent-sandbox** and **gVisor**, with zero
-Cloudflare-proprietary dependencies.
+proprietary runtime dependencies.
 
 ## What this project is
 
@@ -41,8 +41,6 @@ CRDs. Sandboxes run under the **gVisor** (runsc) RuntimeClass.
 - `openspec/changes/adopt-agent-sandbox/design.md` — architecture & decision log (D1–D14)
 - `openspec/changes/adopt-agent-sandbox/specs/` — capability specs
 - `openspec/changes/adopt-agent-sandbox/tasks.md` — phased implementation (Phases 0–4 done; 5–6 release-prep)
-- `research/05-comparison-agentsandbox.md` — why agent-sandbox
-- `research/01..04` — prior-art / contract analysis (computer, open-terminal, k8s-proxy, off-CF)
 - `infra/gvisor/` — gVisor node setup playbooks
 
 ## Status

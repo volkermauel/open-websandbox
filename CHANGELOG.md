@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-08-07
 
 First usable release of **open-sandbox**, the multi-tenant Kubernetes sandbox
-runtime that backs Open WebUI's "Open Terminal" feature. No Cloudflare- or
-`computerd`-proprietary dependencies; the control plane rests on the upstream
+runtime that backs Open WebUI's "Open Terminal" feature. No proprietary runtime
+dependencies; the control plane rests on the upstream
 [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox)
 controller, pinned at **v0.5.3** (manifest vendored and SHA256-recorded under
 [`agent-sandbox-platform/upstream/`](agent-sandbox-platform/upstream/)).

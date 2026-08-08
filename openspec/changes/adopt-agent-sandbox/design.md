@@ -2,7 +2,7 @@
 
 An ADR-style record of the **cluster-specific** decisions for adopting
 `kubernetes-sigs/agent-sandbox` as the Open WebUI "Open Terminal" sandbox
-runtime, pivoting away from the earlier `use-computerd-as-runtime` direction.
+runtime, superseding an earlier shared-host sandboxing direction.
 
 The authoritative, detailed design lives in **[`AgentSandbox.md`](../../../AgentSandbox.md)**
 (architecture §5, threat model §2, mandatory invariants §4, manifests §6–§17,
@@ -20,8 +20,8 @@ Consequences** and a status. Statuses: **[ACCEPTED]**, **[NEEDS DECISION]**.
 
 ### Context
 
-The `computerd` design maximizes density — one shared `computerd`, per-exec
-`nsjail` — but isolation is **shared-kernel**: a kernel or `nsjail` bypass
+The earlier shared-host design maximized density — one shared daemon, per-exec
+`nsjail` — but isolation was **shared-kernel**: a kernel or `nsjail` bypass
 exposes every co-resident session. That is acceptable only when callers are
 trusted. The target workload is agent-generated code (semi-untrusted), so
 [`AgentSandbox.md`](../../../AgentSandbox.md) §2 requires per-session
@@ -49,8 +49,7 @@ invariants.
   `gvisor-runtime-node`) and the agent-sandbox controller.
 - **(−)** Per-session pod cost vs one shared daemon; mitigated by warm pool.
 
-**Status: [ACCEPTED]** — supersedes `use-computerd-as-runtime` (kept for its
-density analysis and research).
+**Status: [ACCEPTED]** — supersedes the earlier shared-host design.
 
 ---
 
@@ -234,7 +233,7 @@ override. Two persistent backends, selected by `BROKER_PERSISTENT_MODE`:
 Per [`AgentSandbox.md`](../../../AgentSandbox.md) §3: no permanent desktops/VMs,
 no Windows, no GPU, no uncontrolled internet egress, no in-sandbox Kubernetes
 API, no arbitrary inbound ports. Interactive PTY / notebooks / port-proxy
-(open-terminal extras) are out of scope for v1 — same as the `computerd` change's
+(open-terminal extras) are out of scope for v1 — same as the earlier design's
 Phase 5.
 
 ## Open questions
