@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Round-trip coverage for the open-terminal ``/files/*`` + LLM-tool surface.
 
 write -> read -> list -> mkdir -> move -> replace -> delete is exercised end to

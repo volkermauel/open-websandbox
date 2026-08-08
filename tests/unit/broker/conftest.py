@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Shared fixtures for broker unit tests.
 
 The broker (``agent-sandbox-platform/broker/main.py``) has three import-time side

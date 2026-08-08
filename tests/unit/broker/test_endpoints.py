@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Endpoint tests — healthz, openapi, docs, api/config, api/status, proxy catch-all."""
 from __future__ import annotations
 

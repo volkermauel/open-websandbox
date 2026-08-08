@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Extra ``/execute`` + module-helper coverage.
 
 Covers the branches the happy-path suite in ``test_execute.py`` misses:

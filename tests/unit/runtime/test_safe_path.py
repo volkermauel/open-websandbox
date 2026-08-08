@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Path-confinement tests for ``server._safe_path`` / ``_request_base``.
 
 This is the security-critical boundary of the runtime: every file endpoint funnels

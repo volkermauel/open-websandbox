@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Migrate tests — staging->chat file move, clear, and every failure branch."""
 from __future__ import annotations
 

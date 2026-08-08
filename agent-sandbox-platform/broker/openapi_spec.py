@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Curated OpenAPI 3.0 spec for the code-standard broker (open-sandbox runtime API).
 
 The broker is an authenticated reverse proxy in front of per-chat gVisor
