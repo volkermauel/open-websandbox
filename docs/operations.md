@@ -434,7 +434,7 @@ is stateless and recovers claims on restart) / `deploy/sandbox-router`.
 - **gVisor** (`runsc`): node-level, see [`infra/gvisor/README.md`](../infra/gvisor/README.md).
   Stage with `install-gvisor-node.sh` (inert until containerd restart), activate
   with `activate-gvisor-node.sh` (online-safe — running pods survive the
-  containerd restart). If a node hosts the **CloudNativePG primary**, fail it
-  over (`kubectl cnpg promote ...`) before activating — see the gVisor README's
-  CNPG caveat. Re-verify with `manifests/gvisor-verify.yaml` after any node or
-  MicroK8s upgrade.
+  containerd restart). If a node hosts a **stateful primary** (e.g. a database),
+  fail it over before activating (per its operator's docs) — see the gVisor
+  README's stateful-primary caveat. Re-verify with `manifests/gvisor-verify.yaml`
+  after any node or MicroK8s upgrade.

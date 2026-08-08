@@ -64,7 +64,7 @@ SECRET=$(openssl rand -hex 32)
 
 # 6. Render a values file that points the chart at your registry + secret.
 #    Review/override the cluster-CIDR keys (router.*) and storageClass below —
-#    the chart defaults bake MicroK8s service-CIDRs and a CephFS class.
+#    the chart defaults bake kubeadm service-CIDRs and a cephfs storage class.
 cat > /tmp/open-sandbox-values.yaml <<EOF
 imageRegistry: ghcr.io
 imageOwner: ${OWNER}
@@ -77,7 +77,7 @@ broker:
 sandboxTemplate:
   runtimeClassName: gvisor      # "" => runc (no gVisor); used by the KIND e2e suite
 
-# --- Override these for clusters that are NOT the reference MicroK8s install ---
+# --- Override these for your cluster's service CIDRs (defaults are kubeadm) ---
 router:
   kubeApiServerCidr: "10.96.0.1/32"   # ClusterIP of the `kubernetes` Service; kubeadm: 10.96.0.1, k3s: 10.43.0.1
   kubeDnsCidr: "10.96.0.10/32"        # ClusterIP of kube-dns/coredns; kubeadm: 10.96.0.10, k3s: 10.43.0.10
@@ -139,10 +139,10 @@ env-var reference, and Open WebUI wiring, see [`docs/deploy.md`](docs/deploy.md)
 
 ## Reference deployment
 
-The reference is on-prem MicroK8s v1.36, 3 control-plane + 3 worker nodes,
-Calico CNI, `cephfs` RWX storage. The chart's defaults reproduce that
-environment — **override `router.kubeApiServerCidr` / `kubeDnsCidr` and the
-storage class for any other cluster.**
+The chart's defaults target a typical kubeadm-style cluster (`10.96.0.0/12`
+service CIDR, `cephfs` RWX storage) and were developed on an on-prem gVisor
+cluster — **override `router.kubeApiServerCidr` / `kubeDnsCidr` and the storage
+class for your cluster.**
 
 ## Contributing & status
 

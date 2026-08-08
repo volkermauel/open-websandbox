@@ -8,15 +8,13 @@
 #
 #   Online-safe model: a containerd restart does NOT kill running containers
 #   (they are separate runc processes; kubelet reconciles). Verified live on
-#   this cluster with zero pod disruption across w1/w2/w3 (2026-08-04).
+#   this cluster with zero pod disruption across worker restarts.
 #
-# !!! CNPG PRIMARY CAVEAT !!!
-#   If the node hosts a CloudNativePG *primary*, fail it over FIRST so there is
-#   no primary at risk during the restart:
-#       kubectl cnpg promote <cluster> <replica-instance-on-another-node> -n <ns>
-#   For drain-style maintenance use the nodeMaintenanceWindow procedure instead
-#   (see the cnpg-node-maintenance-drain skill). Replicas surviving a restart is
-#   fine; a primary bouncing mid-write is what you avoid.
+# !!! STATEFUL PRIMARY CAVEAT !!!
+#   If the node hosts a stateful *primary* (e.g. a database), fail it over FIRST
+#   so there is no primary at risk during the restart (follow its operator docs,
+#   e.g. promote a replica). Replicas surviving a restart is fine; a primary
+#   bouncing mid-write is what you avoid.
 #
 # Usage: ./activate-gvisor-node.sh <node-ip|hostname> [ssh-user] [kube-node-name]
 #   <node-ip|hostname>  SSH target (default ssh user: ubuntu)

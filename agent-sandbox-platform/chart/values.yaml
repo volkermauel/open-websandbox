@@ -104,9 +104,9 @@ networkPolicy:
 router:
   repository: open-sandbox-router
   replicas: 1
-  # Cluster IPs the router must reach (egress). Defaults are MicroK8s service-CIDR values;
+  # Cluster IPs the router must reach (egress). Defaults follow kubeadm service-CIDR values;
   # override for your cluster. These are the ClusterIPs of the `kubernetes` Service
   # (informers + tokenreview) and kube-dns (coredns):
-  #   kubeadm 10.96.0.1/10.96.0.10   k3s 10.43.0.1/10.43.0.10   MicroK8s 10.96.0.1/10.96.0.10
+  #   kubeadm 10.96.0.1/10.96.0.10   k3s 10.43.0.1/10.43.0.10   MicroK8s 10.152.183.1/10.152.183.10
   kubeApiServerCidr: "10.96.0.1/32"
   kubeDnsCidr: "10.96.0.10/32"

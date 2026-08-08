@@ -2,8 +2,8 @@
 
 Idempotent scripts to add the **gVisor (`runsc`)** containerd runtime to a
 snap-packaged MicroK8s worker node, and to bring it online safely. Used to
-enable gVisor on all three workers (`gvisor-worker-1/w2/w3`) of the lab cluster
-on 2026-08-04 — keep this playbook to extend the cluster (new nodes) or rebuild
+enable gVisor on all three workers (`gvisor-worker-1/2/3`) of the lab cluster
+Keep this playbook to extend the cluster (new nodes) or rebuild
 after a node replacement.
 
 This is the platform prerequisite for the AgentSandbox direction
@@ -17,8 +17,8 @@ A `containerd` restart **does not kill running containers** — they are separat
 `runc` processes; the kubelet reconnects and reconciles. MicroK8s does **not**
 watch `containerd-template.toml` for changes, so editing the template is
 **inert** until you restart the `snap.microk8s.daemon-containerd` service.
-Verified live: zero pod disruption across all three worker restarts (CNPG
-replicas, argocd, batch postgres/message-queue, etc. all stayed Running).
+Verified live: zero pod disruption across worker restarts (stateful workloads
+stayed Running).
 
 Cordon first only to stop *new* pods scheduling during the ~20s reconcile
 window; it has no effect on running pods.
@@ -30,7 +30,7 @@ window; it has no effect on running pods.
 - x86_64 (gVisor also publishes aarch64).
 - No nested virtualization required: runsc uses the **systrap** platform by
   default. For the higher-performance **kvm** platform you need `/dev/kvm`
-  (nested virt enabled on the the hypervisor VM).
+  (nested virt enabled on the hypervisor VM).
 - The shipped MicroK8s template must still contain the `kata` handler block
   (the script anchors on `BinaryName = "kata-runtime"`). If a future MicroK8s
   drops it, anchor on the `runc`/`nvidia` block instead or add the handler by
@@ -74,20 +74,12 @@ ssh ubuntu@<node> 'sudo GVISOR_RELEASE=release-20260727.0 bash -s' < install-gvi
 
 Record the resolved version (`runsc --version`) — currently `release-20260727.0`.
 
-## ⚠ CNPG primary caveat
+## ⚠ Stateful primary caveat
 
-If the node hosts a **CloudNativePG primary**, fail it over **before** activating
-so no primary is at risk during the restart:
-
-```bash
-kubectl cnpg promote <cluster> <replica-instance-on-another-node> -n <namespace>
-```
-
-This was done for `w1` (it held both `app-postgres-1` and
-`monitoring-postgres-7`): both primaries were switched over to `w2`/`w3` first,
-then `w1`'s containerd was restarted with zero disruption. For drain-style
-maintenance (full eviction) use the `nodeMaintenanceWindow` procedure — see the
-`cnpg-node-maintenance-drain` skill.
+If the node hosts a **stateful primary** (e.g. a database), fail it over **before**
+activating so no primary is at risk during the restart — follow that workload's
+operator docs (e.g. promote a replica). Replicas surviving a restart is fine; a
+primary bouncing mid-write is what you avoid.
 
 ## Manual probe (without the activate script)
 

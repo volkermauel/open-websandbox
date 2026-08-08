@@ -1,5 +1,9 @@
-# pi agent task state (ephemeral)
-.pi/todos/
+# pi agent state (ephemeral) — NEVER commit conversations/artifacts/todos
+.pi/
+.pi-subagents/
+# scratch planning files (not project deliverables)
+plan.md
+progress.md
 
 # build artifacts / archives
 *.tar

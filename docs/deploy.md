@@ -247,7 +247,7 @@ the chart): `MAX_TIMEOUT` (600), `DEFAULT_TIMEOUT` (120), `MAX_OUTPUT_BYTES`
 
 ## Production values presets (must-override keys)
 
-The chart's defaults reproduce the reference MicroK8s install — several values
+The chart's defaults target a typical kubeadm-style cluster — several values
 are **deliberately not safe for a different cluster**. Before any non-dev
 install, set at least these in your values file:
 
@@ -258,8 +258,8 @@ install, set at least these in your values file:
 | `imageTag` | `v0.1.0` | A pinned tag; **pin by digest** for production. |
 | `imagePullPolicy` | `Never` | `IfNotPresent` once images are pulled from a registry (not pre-loaded). |
 | `broker.sharedSecret` | `dev-shared-secret-change-me` | `openssl rand -hex 32` — **must override**. Becomes the broker's `BROKER_SHARED_SECRET`. |
-| `router.kubeApiServerCidr` | `10.96.0.1/32` (MicroK8s) | ClusterIP of the `kubernetes` Service. kubeadm: `10.96.0.1/32`; k3s: `10.43.0.1/32`. Wrong here and the router can't reach the API server. |
-| `router.kubeDnsCidr` | `10.96.0.10/32` (MicroK8s) | ClusterIP of kube-dns/CoreDNS. kubeadm: `10.96.0.10/32`; k3s: `10.43.0.10/32`. |
+| `router.kubeApiServerCidr` | `10.96.0.1/32` (kubeadm; default) | ClusterIP of the `kubernetes` Service. k3s: `10.43.0.1/32`; MicroK8s: `10.152.183.1/32`. Wrong here and the router can't reach the API server. |
+| `router.kubeDnsCidr` | `10.96.0.10/32` (kubeadm; default) | ClusterIP of kube-dns/CoreDNS. k3s: `10.43.0.10/32`; MicroK8s: `10.152.183.10/32`. |
 | `sharedPvc.storageClass` | `cephfs` | Your RWX StorageClass. Persistent sandboxes need RWX for park/resume. |
 | `networkPolicy.egress.exceptCIDRs` | RFC1918 + `169.254.0.0/16` | Confirm these cover your cluster's pod/service CIDRs so sandbox egress can't reach internal services. |
 
