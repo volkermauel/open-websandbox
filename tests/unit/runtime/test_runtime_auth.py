@@ -124,7 +124,7 @@ async def test_full_surface_auth_invariant(
     # only intentionally-open routes.
     monkeypatch.setenv("RUNTIME_API_KEY", "s3cret-key")
     kwargs = {"json": {}} if method != "GET" else {}
-    r = await getattr(client_noauth, method.lower())(path, **kwargs)
+    r = await client_noauth.request(method, path, **kwargs)
     assert r.status_code == expected, (
         f"{method} {path}: expected {expected}, got {r.status_code} [{r.text[:120]}]"
     )

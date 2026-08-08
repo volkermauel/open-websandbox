@@ -141,7 +141,6 @@ def _runtime_auth_headers() -> dict:
     RUNTIME_API_KEY defaults to SHARED_SECRET when unset (one shared secret), so this is
     populated whenever the broker is configured. The runtime's _auth_runtime validates it
     fail-closed (503 on unset, 401 on mismatch) — see runtime/server.py."""
-    print(f"[AUTH-DBG] broker sends key[:6]={RUNTIME_API_KEY[:6]!r}", flush=True)
     return {"Authorization": f"Bearer {RUNTIME_API_KEY}"}
 
 
@@ -780,14 +779,14 @@ async def proxy(path: str, request: Request, _=Security(_auth)):
     # random id and the terminal WS lands on a rogue sandbox that disagrees with the
     # file/tool API (and spawns a throwaway sandbox per terminal open).
     fwd["X-Session-Id"] = session
-    # Inject the runtime inter-component credential so the broker -> router -> runtime
-    # hop satisfies _auth_runtime on /execute, /files/* and the terminal management
-    # endpoints. The inbound Authorization was stripped above (HOP); RUNTIME_API_KEY is
-    # what the runtime expects (defaults to SHARED_SECRET when unset — see RUNTIME_API_KEY).
+    # Inject the runtime inter-component credential so the DIRECT broker -> runtime pod
+    # hop (the catch-all bypasses the sandbox-router, which drops Authorization) satisfies
+    # _auth_runtime on /execute, /files/* and the terminal management endpoints.
+    # RUNTIME_API_KEY is what the runtime expects (defaults to SHARED_SECRET when unset).
     fwd.update(_runtime_auth_headers())
     # No X-Workspace-Subdir: each chat's folder IS /workspace (per-chat subPath).
     body = await request.body()
-    upstream = httpx.Request(request.method, f"{ROUTER_URL}/{path}",
+    upstream = httpx.Request(request.method, f"http://{pod_ip}:8888/{path}",
                              headers=fwd, params=request.query_params, content=body)
     resp = await _client.send(upstream, stream=True)
     resp_body = await resp.aread()
