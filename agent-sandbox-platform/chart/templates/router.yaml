@@ -224,6 +224,14 @@ spec:
     - protocol: TCP
       port: 53
   - to:
+    - ipBlock:
+        cidr: {{ .Values.router.kubeDnsCidrIPv6 }}   # kube-dns IPv6 (coredns) — scoped to the cluster's kube-dns IPv6 ClusterIP (values.router.kubeDnsCidrIPv6); do NOT widen to ::/0
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  - to:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: {{ $runNs }}
