@@ -6,10 +6,10 @@ enable gVisor on all three workers (`gvisor-worker-1/2/3`) of the lab cluster
 Keep this playbook to extend the cluster (new nodes) or rebuild
 after a node replacement.
 
-This is the platform prerequisite for the AgentSandbox direction
-(`AgentSandbox.md`): it satisfies §6.2 (dedicated-node gVisor requirements) and
-§22 Phase 1 (runtime isolation). It maps to the future GitOps
-`scripts/install-gvisor-check.sh` + `verify-runtime.sh` from §21.
+This is the platform prerequisite for the [dedicated-node gVisor
+requirement](../../docs/architecture.md#isolation-layers) (gVisor is the strongest of
+the platform's isolation layers). The node-enable scripts —
+`install-gvisor-node.sh` and `activate-gvisor-node.sh` — are siblings of this file in [`infra/gvisor/`](./).
 
 ## Why this works (online-safety model)
 

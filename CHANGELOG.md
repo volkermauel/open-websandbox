@@ -26,7 +26,7 @@ controller, pinned at **v0.5.3** (manifest vendored and SHA256-recorded under
 - **gVisor-isolated per-user sandboxes.** One `runsc` sandbox per active chat:
   filtered-syscall userspace kernel, default-deny networking, admission policy,
   `/dev/kvm` not exposed. Four isolation layers (process / network / host /
-  node) per [`AgentSandbox.md`](AgentSandbox.md) §2.
+  node) per the [isolation-layers model](docs/architecture.md#isolation-layers).
 
 ### Added — control plane
 

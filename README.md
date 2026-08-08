@@ -67,33 +67,45 @@ A cluster-admin can bring up the whole stack — controller + CRDs, three images
 chart, warm pool, and a smoke test — in a few minutes. The copy-pasteable walk-through
 lives in **[`docs/quickstart.md`](./docs/quickstart.md)**.
 
-> **Pre-release — artifacts not published yet.** No GitHub Release has been cut, so the
-> `ghcr.io/volkermauel/open-sandbox-*:v0.1.0` images, the OCI chart, and the release
-> tarball referenced below don't exist yet — the `helm install` will hit
-> `ImagePullBackOff` until `v0.1.0` is tagged. Until then, build the three images and
-> install from a local checkout; see [**`docs/quickstart.md`**](./docs/quickstart.md).
+Since [#39](https://github.com/volkermauel/open-websandbox/pull/39), a single `helm install`
+brings up the **entire** platform — the vendored, SHA256-pinned upstream
+`agent-sandbox` controller + CRDs (`upstream.deploy: true` by default) **plus** the
+broker, sandbox-router, SandboxTemplate, SandboxWarmPool, NetworkPolicy, and quotas.
+The four `agents.x-k8s.io` / `extensions.agents.x-k8s.io` CRDs ship in `chart/crds/` and
+are applied before the chart's templates, so there is no separate manual
+`kubectl apply` step.
+
+> **Pre-release — the three platform images are not published yet.** No GitHub Release
+> has been cut, so `ghcr.io/volkermauel/open-sandbox-{broker,runtime,router}:v0.1.0` do
+> not exist yet; an install that pulls them hits `ImagePullBackOff` until the first
+> `v0.1.0` tag. Until then **build the three images locally and install from your
+> checkout** (the chart defaults to `imagePullPolicy: Never`, so it uses your
+> pre-loaded images — no registry pull). See [**`docs/quickstart.md`**](./docs/quickstart.md)
+> §Option A, and the post-release GHCR/OCI paths.
 
 ```bash
 # 1. Prereqs already in place: Kubernetes >= 1.28, gVisor RuntimeClass, RWX storage.
 # 2. Namespaces (the chart does not create them):
 kubectl create namespace agent-sandbox-system agent-sandbox-runtime
 
-# 3. Upstream agent-sandbox controller + CRDs (v0.5.3, SHA256-verified):
+# 3. (Optional) Verify the integrity of the vendored upstream manifest the chart
+#    renders from — the controller + CRDs are installed BY the chart itself:
 sha256sum -c agent-sandbox-platform/upstream/SHA256SUMS
-kubectl apply -f agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
-kubectl -n agent-sandbox-system wait deploy/agent-sandbox-controller \
-  --for=condition=Available --timeout=120s
 
-# 4. Install the chart (pulls ghcr.io/volkermauel/open-sandbox-*:v0.1.0 — published by release.yml on the first v0.1.0 tag):
-helm install open-websandbox agent-sandbox-platform/chart \
-  --set imageRegistry=ghcr.io --set imageOwner=volkermauel --set imageTag=v0.1.0 \
-  --set imagePullPolicy=IfNotPresent
+# 4. Build + load the 3 images (broker, runtime, router), then install from the local
+#    chart (default values = pre-loaded images, imagePullPolicy: Never, no GHCR pull).
+#    Build/load commands: docs/deploy.md §2.
+helm install open-websandbox agent-sandbox-platform/chart
 
 # 5. Wait for the control plane + warm pool:
-kubectl -n agent-sandbox-system wait deploy/owui-broker deploy/sandbox-router --for=condition=Available
+kubectl -n agent-sandbox-system wait deploy/owui-broker deploy/sandbox-router \
+  --for=condition=Available
 kubectl -n agent-sandbox-runtime wait sandboxwarmpool/code-standard-warmpool \
   --for=jsonpath='{.status.readyReplicas}'=2 --timeout=180s
 ```
+
+Already manage the upstream controller cluster-wide? Pass `--set upstream.deploy=false`
+(and `--skip-crds` if the CRDs are already present).
 
 Then point Open WebUI at `http://owui-broker.agent-sandbox-system.svc:8080` with the
 `Authorization` header set to the broker shared secret (auto-generated; retrieve it
