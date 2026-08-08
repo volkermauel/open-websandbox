@@ -138,14 +138,14 @@ stateDiagram-v2
 
     state Ephemeral {
         [*] --> EClaim: claim binds warm pool
-        EClaim: one claim per session\n/workspace = emptyDir (4Gi)\nfiles transient
+        EClaim: one claim per session, /workspace = emptyDir (4Gi), files transient
         EClaim --> [*]: idle > IDLE_TTL (120s) → reap
     }
     state Persistent {
-        [*] --> PClaim: per-user SandboxClaim\nBROKER_PERSISTENT_MODE = per-user-pvc | shared-subpath
+        [*] --> PClaim: per-user SandboxClaim, BROKER_PERSISTENT_MODE = per-user-pvc | shared-subpath
         PClaim: /workspace on RWX PVC (retained)
         PClaim --> Running
-        Running --> Parked: idle > PARK_IDLE (120s)\noperatingMode = Suspended\n(Pod deleted, PVC kept)
+        Running --> Parked: idle > PARK_IDLE (120s) → Suspended (Pod deleted, PVC kept)
         Parked --> Running: next request → cold-resume (1–6s)
         Running --> [*]: idle > REAP (7d) → delete claim + PVC
     }
@@ -166,8 +166,8 @@ stateDiagram-v2
 
 | `BROKER_PERSISTENT_MODE` | Claim scope | `SandboxClaim` naming | Storage |
 |--------------------------|-------------|------------------------|---------|
-| **`per-user-pvc`** (default) | one per user | `owui-p-<sha256(user)>` | `volumeClaimTemplates.workspace` PVC (RWX, default `10Gi`), mounted at `/workspace` |
-| **`shared-subpath`** | one per chat | `owui-c-<sha256(user\|session)>` | sub-path of the shared `workspace-shared` PVC (RWX, `cephfs`, `50Gi`) |
+| **`per-user-pvc`** (default) | one per user | `owui-p-<sha256(user)[:12]>` | `volumeClaimTemplates.workspace` PVC (RWX, default `10Gi`), mounted at `/workspace` |
+| **`shared-subpath`** | one per chat | `owui-c-<sha256(user\|session)[:12]>` | sub-path of the shared `workspace-shared` PVC (RWX, `cephfs`, `50Gi`) |
 
 Either way the runtime validates every path before touching it (`_safe_path` in
 [`runtime/server.py`](../agent-sandbox-platform/runtime/server.py)) so a claim can only

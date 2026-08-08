@@ -62,27 +62,61 @@ the `agents.x-k8s.io` / `extensions.agents.x-k8s.io` CRDs (`Sandbox`, `SandboxCl
 
 ## 3. Install the chart
 
-The chart's defaults load pre-built images from a registry. The published images live at
-`ghcr.io/volkermauel/open-sandbox-{broker,runtime,router}`; the tag **`v0.1.0`** is the
-current release. Pick **one** of the three install methods:
+!!! warning "Pre-release — artifacts are not published yet"
+
+    **No GitHub Release has been cut yet.** The pre-built images
+    (`ghcr.io/volkermauel/open-sandbox-{broker,runtime,router}:v0.1.0`), the OCI chart
+    (`oci://ghcr.io/volkermauel/charts/open-sandbox --version 0.1.0`), and the release
+    tarball (`…/releases/download/v0.1.0/open-sandbox-0.1.0.tgz`) are all produced by
+    the [`release.yml`](../.github/workflows/release.yml) workflow **on the first
+    `v0.1.0` git tag**. Until that tag exists those references `404`, and any install
+    that pulls them ends in `ImagePullBackOff`.
+
+    **Until the first release, use Option A (build from source) below** — it builds
+    the three images locally and installs from your checkout with no registry pull.
+    Options B and C (the OCI chart and the release tarball) are the intended
+    post-release install paths, kept here verbatim; they become valid the moment
+    `v0.1.0` is tagged.
+
+The chart ships three images — `open-sandbox-broker`, `open-sandbox-runtime`, and
+`open-sandbox-router` (the last is self-built from upstream `kubernetes-sigs/agent-sandbox`
+v0.5.3; see [`release.yml`](../.github/workflows/release.yml)). Match the install path
+to your situation:
+
+### Option A — build from source *(primary path until v0.1.0 is released)*
+
+Build the three images and load them into each gVisor worker, then install from your
+local checkout. The chart defaults to local/dev tags with `imagePullPolicy: Never`,
+so **no registry pull happens** — Kubernetes uses the images you loaded:
 
 ```bash
-# Values shared by all methods:
+# 1. Build + load the 3 images (broker, runtime, router). Exact `docker build` +
+#    `kind load` / `microk8s.ctr` commands are in the Deployment guide, §2:
+#       docs/deploy.md  →  "Build & load the images"
+# 2. Install from the local chart (default values = pre-loaded images, no GHCR pull):
+helm install open-websandbox agent-sandbox-platform/chart
+```
+
+See [Deployment guide §2 — Build & load the images](deploy.md#2-build-load-the-images)
+for the build/load commands, and [§3 Configuration](deploy.md#3-configuration-helm-values)
+to push to your own registry (`--set imageRegistry` / `imageOwner` + `IfNotPresent`)
+instead of pre-loading.
+
+The two **post-release** methods below pull the published images from GHCR. They share
+these values:
+
+```bash
+# Values shared by the post-release methods (B and C) — pull published images from GHCR:
 COMMON="--set imageRegistry=ghcr.io \
         --set imageOwner=volkermauel \
         --set imageTag=v0.1.0 \
         --set imagePullPolicy=IfNotPresent"
 ```
 
-### Option A — local chart directory *(for iterating on the repo)*
+### Option B — published chart tarball *(available once the v0.1.0 Release is published)*
 
-```bash
-helm install open-websandbox agent-sandbox-platform/chart $COMMON
-```
-
-### Option B — published chart tarball *(verified published on the v0.1.0 Release)*
-
-The `release.yml` workflow attaches `open-sandbox-0.1.0.tgz` to the GitHub Release:
+Once `release.yml` runs on the `v0.1.0` tag it attaches `open-sandbox-0.1.0.tgz` to the
+GitHub Release:
 
 ```bash
 helm install open-websandbox \
@@ -90,7 +124,9 @@ helm install open-websandbox \
   $COMMON
 ```
 
-### Option C — OCI registry *(canonical, what `release.yml` publishes)*
+### Option C — OCI registry *(canonical post-release path — what `release.yml` publishes)*
+
+Once released, the chart is also pushed to GHCR by `release.yml`:
 
 ```bash
 helm install open-websandbox \

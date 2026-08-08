@@ -67,6 +67,12 @@ A cluster-admin can bring up the whole stack — controller + CRDs, three images
 chart, warm pool, and a smoke test — in a few minutes. The copy-pasteable walk-through
 lives in **[`docs/quickstart.md`](./docs/quickstart.md)**.
 
+> **Pre-release — artifacts not published yet.** No GitHub Release has been cut, so the
+> `ghcr.io/volkermauel/open-sandbox-*:v0.1.0` images, the OCI chart, and the release
+> tarball referenced below don't exist yet — the `helm install` will hit
+> `ImagePullBackOff` until `v0.1.0` is tagged. Until then, build the three images and
+> install from a local checkout; see [**`docs/quickstart.md`**](./docs/quickstart.md).
+
 ```bash
 # 1. Prereqs already in place: Kubernetes >= 1.28, gVisor RuntimeClass, RWX storage.
 # 2. Namespaces (the chart does not create them):
@@ -78,7 +84,7 @@ kubectl apply -f agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.
 kubectl -n agent-sandbox-system wait deploy/agent-sandbox-controller \
   --for=condition=Available --timeout=120s
 
-# 4. Install the chart (images published to ghcr.io/volkermauel/open-sandbox-*:v0.1.0):
+# 4. Install the chart (pulls ghcr.io/volkermauel/open-sandbox-*:v0.1.0 — published by release.yml on the first v0.1.0 tag):
 helm install open-websandbox agent-sandbox-platform/chart \
   --set imageRegistry=ghcr.io --set imageOwner=volkermauel --set imageTag=v0.1.0 \
   --set imagePullPolicy=IfNotPresent
