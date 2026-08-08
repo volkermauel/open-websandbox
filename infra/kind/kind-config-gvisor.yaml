@@ -1,0 +1,23 @@
+# KIND cluster config for the gVisor e2e leg. runsc + its containerd shim + the
+# gvisor-bin sidecar dir are installed on the host (infra/kind/install-runsc.sh) and
+# bind-mounted into the single KIND control-plane node here; the node's containerd is
+# patched to register the "runsc" runtime. Plain kindest/node — no custom node image.
+#
+# Shared by CI (e2e.yml) and locally (scripts/setup-kind-gvisor.sh). containerd 1.x
+# plugin path because kindest/node:v1.31 ships containerd 1.7.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
+      runtime_type = "io.containerd.runsc.v1"
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: /usr/local/bin/runsc
+        containerPath: /usr/local/bin/runsc
+      - hostPath: /usr/local/bin/containerd-shim-runsc-v1
+        containerPath: /usr/local/bin/containerd-shim-runsc-v1
+      # gvisor-bin/ must sit next to runsc inside the node (post-2026-07 layout).
+      - hostPath: /usr/local/bin/gvisor-bin
+        containerPath: /usr/local/bin/gvisor-bin

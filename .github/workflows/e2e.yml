@@ -1,25 +1,35 @@
 name: e2e
 
-# Full gVisor end-to-end: build a runsc-enabled KIND node, deploy the platform via the
-# Helm chart, and run tests/e2e against the live broker. Runs on PRs + main.
+# Full end-to-end: deploy the platform via the Helm chart into a KIND cluster and run
+# tests/e2e against the live broker. Matrix covers both runtime backends:
+#   - runc:   plain KIND node. Weaker isolation (no syscall filter) but it fully exercises
+#             the broker→router→runtime path, the Helm chart, and the agent-sandbox
+#             controller — the bulk of the integration surface.
+#   - gvisor: runsc installed on the runner host (a full VM) and bind-mounted into the
+#             KIND node. The closest local analog to production gVisor isolation.
 #
-# gVisor cannot run on the host and be selected per-pod, so runsc + its containerd shim
-# are baked into the KIND node image by scripts/setup-kind-gvisor.sh (the same script used
-# locally). The router is self-built from upstream agent-sandbox@v0.5.3 (context = repo
-# root, since its Dockerfile COPYs internal/ api/ extensions/api/).
-
+# The router is self-built from upstream agent-sandbox@v0.5.3 (its Dockerfile COPYs
+# internal/ api/ extensions/api/, so the build context is the upstream checkout).
 on:
   pull_request:
   push:
-    branches: [main, master]
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
-  gvisor-kind:
+  e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [runc, gvisor]
+    env:
+      KIND_CLUSTER: open-sandbox-e2e
+      SYS_NS: agent-sandbox-system
+      RUNTIME_NS: agent-sandbox-runtime
     steps:
       - uses: actions/checkout@v4
 
@@ -27,30 +37,40 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: docker/setup-buildx-action@v3
+      # gVisor leg only: install runsc + shim + gvisor-bin sidecar dir on the host so the
+      # KIND node can bind-mount them. GHA ubuntu runners are full VMs → runsc runs.
+      - name: Install gVisor runsc on host
+        if: matrix.runtime == 'gvisor'
+        run: bash infra/kind/install-runsc.sh
 
-      # kind/kubectl/helm are not guaranteed on the runner; install pinned versions.
-      - name: Install kind, kubectl, helm
+      # helm/kind-action installs kind + creates the cluster. For gVisor it uses a config
+      # that mounts the host runsc into the node + registers it with containerd.
+      - name: Create KIND cluster (${{ matrix.runtime }})
+        uses: helm/kind-action@v1
+        with:
+          version: v0.27.0
+          cluster_name: ${{ env.KIND_CLUSTER }}
+          node_image: kindest/node:v1.31.0
+          config: ${{ matrix.runtime == 'gvisor' && 'infra/kind/kind-config-gvisor.yaml' || '' }}
+          wait: 60s
+
+      - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-helm@v4
+
+      - name: Register gVisor RuntimeClass
+        if: matrix.runtime == 'gvisor'
         run: |
-          set -eu
-          curl -sSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/v0.27.0/bin/linux/amd64/kind"
-          chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
-          curl -sSL -o /tmp/kubectl "https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl"
-          chmod +x /tmp/kubectl && sudo mv /tmp/kubectl /usr/local/bin/kubectl
-          curl -sSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar xz -C /tmp
-          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
+          kubectl apply -f infra/kind/runtimeclass-gvisor.yaml
+          docker exec "$KIND_CLUSTER-control-plane" /usr/local/bin/runsc --version
 
-      # Build a runsc-enabled kindest/node, create the cluster, smoke-test gVisor.
-      # (Includes the nofile wrapper; CI runners usually have a sane docker default so
-      # kube-proxy starts fine — the script fails loudly with a hint if not.)
-      - name: Create gVisor KIND cluster
-        run: bash scripts/setup-kind-gvisor.sh
-
-      - name: Build broker + runtime images
+      - name: Build platform images (broker + runtime)
         run: |
           docker build -t open-sandbox-broker:v0.1.0 agent-sandbox-platform/broker/
           docker build -t open-sandbox-runtime:v0.1.0 agent-sandbox-platform/runtime/
 
+      # Shallow-fetch upstream at the pinned tag into ./agent-sandbox so the router can be
+      # self-built (no prebuilt image is published). Context = agent-sandbox/ because
+      # sandbox-router/Dockerfile COPYs internal/ api/ extensions/api/.
       - name: Checkout upstream agent-sandbox@v0.5.3 (router self-build)
         uses: actions/checkout@v4
         with:
@@ -58,42 +78,51 @@ jobs:
           ref: v0.5.3
           path: agent-sandbox
 
-      # Context MUST be the repo root — the Dockerfile COPYs internal/, api/, extensions/api/.
-      - name: Build router image (self-build)
-        run: |
-          docker build -t open-sandbox-router:v0.1.0 \
-            -f agent-sandbox/sandbox-router/Dockerfile agent-sandbox/
+      - name: Self-build sandbox-router
+        run: docker build -t open-sandbox-router:v0.1.0 -f agent-sandbox/sandbox-router/Dockerfile agent-sandbox/
 
       - name: Load images into KIND
         run: |
           for img in open-sandbox-broker:v0.1.0 open-sandbox-runtime:v0.1.0 open-sandbox-router:v0.1.0; do
-            kind load docker-image "$img" --name open-sandbox-e2e
+            kind load docker-image "$img" --name "$KIND_CLUSTER"
           done
 
       - name: Apply agent-sandbox controller + CRDs
         run: kubectl apply -f agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
 
-      - name: Helm install (gVisor profile)
+      - name: Helm install (${{ matrix.runtime }} profile)
         run: |
-          kubectl create namespace agent-sandbox-system
-          kubectl create namespace agent-sandbox-runtime
+          kubectl create namespace "$SYS_NS" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace "$RUNTIME_NS" --dry-run=client -o yaml | kubectl apply -f -
           helm install open-sandbox agent-sandbox-platform/chart/ \
-            -f agent-sandbox-platform/chart/values-kind-gvisor.yaml \
-            -n agent-sandbox-system
-          kubectl -n agent-sandbox-system rollout status deploy/owui-broker --timeout=180s
-          kubectl -n agent-sandbox-runtime wait sandboxwarmpool code-standard-warmpool \
-            --for=condition=Ready --timeout=300s
+            -f "$VALUES_FILE" -n "$SYS_NS"
+          kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
+          # Wait for the warm pool: >=1 Sandbox in RUNTIME_NS reaches Ready=True.
+          # (WarmPool has only ReadyReplicas, no Ready *condition*, so wait on Sandboxes.)
+          echo "Waiting for warm pool (Ready Sandbox)…"
+          for i in $(seq 1 60); do
+            if kubectl -n "$RUNTIME_NS" get sandbox -o \
+                'go-template={{range .items}}{{range .status.conditions}}{{if eq .type "Ready"}}{{.status}}{{"\n"}}{{end}}{{end}}{{end}}' \
+                2>/dev/null | grep -q True; then break; fi
+            sleep 5
+          done
+        env:
+          # runc → values-kind.yaml; gvisor → values-kind-gvisor.yaml
+          VALUES_FILE: agent-sandbox-platform/chart/values-kind${{ matrix.runtime == 'gvisor' && '-gvisor' || '' }}.yaml
 
       - name: Install test deps
         run: pip install -r requirements-test.txt
 
       - name: Run e2e suite
         run: |
-          kubectl -n agent-sandbox-system port-forward svc/owui-broker 8889:8080 &
+          set -euo pipefail
+          kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 &
           PF=$!
-          # wait for the forward to accept connections
+          # Wait for the port-forward to accept connections.
           for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
-          BROKER_URL=http://localhost:8889 \
-          BROKER_SECRET=dev-shared-secret-change-me \
-          pytest tests/e2e -v
-          kill $PF || true
+          # Read the REAL broker shared secret (the chart auto-generates one via lookup;
+          # the old hardcoded placeholder was rejected by the broker's fail-closed check).
+          SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
+            -o jsonpath='{.data.shared-secret}' | base64 -d)"
+          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" pytest tests/e2e -v
+          kill "$PF"

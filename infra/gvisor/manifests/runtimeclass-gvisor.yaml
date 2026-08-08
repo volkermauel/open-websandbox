@@ -1,7 +1,7 @@
 # RuntimeClass for gVisor (cluster-scoped). Pods opt in with `runtimeClassName: gvisor`.
 #
 # Currently deployed on this cluster: Variant A (simple) — lands on any node that
-# has the runsc handler (today: w1, w2, w3).
+# has the runsc handler (today: the gVisor worker nodes).
 #
 # When you dedicate + taint sandbox worker nodes (AgentSandbox.md §6.3), switch to
 # Variant B by uncommenting the `scheduling:` block, after labelling/ainting nodes:
