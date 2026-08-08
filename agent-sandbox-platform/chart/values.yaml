@@ -67,6 +67,13 @@ sandboxTemplate:
   runtimeRepository: open-sandbox-runtime
   maxProcs: 256
   uid: 1000
+  # Inter-component API key the runtime enforces on its terminal surface (fail-closed:
+  # the runtime refuses to boot without it; mirrors broker.sharedSecret). Leave EMPTY
+  # ("") to derive it from the broker shared secret (owui-broker-secret) so the
+  # broker->runtime terminal hop authenticates with the same credential. Set it
+  # explicitly to decouple the runtime key from the broker secret. values.schema.json
+  # rejects the known placeholders; the runtime itself refuses to start on one.
+  runtimeApiKey: ""
   dns:
     policy: None
     # IPv4 public resolvers by default. IPv6 DNS *egress* IS allowed

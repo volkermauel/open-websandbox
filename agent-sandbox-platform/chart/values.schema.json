@@ -91,13 +91,14 @@
     "sandboxTemplate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "runtimeClassName", "runtimeRepository", "maxProcs", "uid", "dns", "storage"],
+      "required": ["name", "runtimeClassName", "runtimeRepository", "maxProcs", "uid", "dns", "storage", "runtimeApiKey"],
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "runtimeClassName": { "type": "string", "description": "gVisor runtime class; empty => field omitted (runc, for KIND e2e)." },
         "runtimeRepository": { "type": "string", "minLength": 1 },
         "maxProcs": { "type": "integer", "minimum": 1 },
         "uid": { "type": "integer", "minimum": 0, "description": "Non-root UID the sandbox runs as." },
+        "runtimeApiKey": { "type": "string", "description": "Runtime inter-component API key. Empty => derive from the broker shared secret (so the broker->runtime terminal hop shares one credential). Known placeholders are rejected; the runtime refuses to start on an unset/placeholder key.", "not": { "enum": ["dev-shared-secret-change-me", "change-me", "changeme", "placeholder"] } },
         "dns": {
           "type": "object",
           "additionalProperties": false,
