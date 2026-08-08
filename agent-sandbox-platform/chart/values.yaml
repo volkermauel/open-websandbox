@@ -12,6 +12,16 @@ imageTag: v0.1.0
 # non-empty (needed for private registries such as ghcr.io in prod). Omitted
 # entirely when empty.
 imagePullSecrets: []
+# ---------------------------------------------------------------------------
+# Vendored upstream agent-sandbox controller + CRDs (agents.x-k8s.io, v0.5.3).
+# deploy: true (default) => the chart installs the upstream controller Deployment, its
+# RBAC + Services, and the four agents.x-k8s.io CRDs (rendered from the verbatim,
+# SHA-pinned manifest under agent-sandbox-platform/upstream/), so a single `helm install`
+# brings up the whole platform. Set to false when the controller + CRDs are already
+# installed cluster-wide (e.g. shared across tenants) to avoid a double install.
+# See templates/upstream/upstream.yaml + files/upstream-agent-sandbox-v0.5.3.yaml.
+upstream:
+  deploy: true
 
 namespaces:
   system: agent-sandbox-system    # broker + router (control plane)

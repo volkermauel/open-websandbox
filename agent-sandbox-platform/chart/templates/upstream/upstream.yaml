@@ -1,0 +1,24 @@
+{{/*
+Vendored upstream agent-sandbox controller + CRDs (apiGroup agents.x-k8s.io), v0.5.3.
+
+Renders the discrete YAML documents in chart/files/upstream-agent-sandbox-v0.5.3.yaml —
+themselves split (Namespace resource intentionally omitted) from the verbatim, SHA-pinned
+upstream manifest at agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml.
+See the provenance header in that file for the source/SHA and the exact regeneration recipe.
+
+Gated by upstream.deploy (default true) so a single `helm install` brings up the whole
+platform. Set upstream.deploy=false when the controller + CRDs are already installed
+cluster-wide (e.g. shared across tenants) to avoid a double install.
+
+Helm installs templated CustomResourceDefinitions first and refreshes API discovery before
+applying the dependent SandboxTemplate / SandboxWarmPool instances rendered elsewhere in
+this chart, so bundling the CRDs here does not create a same-release CRD/CR ordering hazard.
+
+Caveat: the vendored controller runs in the hardcoded upstream namespace
+agent-sandbox-system. Keep values.namespaces.system == agent-sandbox-system while
+upstream.deploy=true (the chart default already does). Templatizing the controller
+namespace + image for air-gapped / private-registry installs is a tracked follow-up.
+*/}}
+{{- if .Values.upstream.deploy }}
+{{ .Files.Get "files/upstream-agent-sandbox-v0.5.3.yaml" }}
+{{- end }}

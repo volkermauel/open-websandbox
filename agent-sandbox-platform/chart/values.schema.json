@@ -4,6 +4,18 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Vendored upstream agent-sandbox controller + CRDs (agents.x-k8s.io). Bundled into the chart so a single `helm install` brings up the whole platform. The chart default (values.yaml) sets upstream.deploy=true; set it false when the controller + CRDs are already installed cluster-wide.",
+      "required": ["deploy"],
+      "properties": {
+        "deploy": {
+          "type": "boolean",
+          "description": "true (chart default) installs the upstream controller Deployment, RBAC, Services and the four agents.x-k8s.io CRDs as part of this chart. false skips them (use when the controller + CRDs are already installed cluster-wide)."
+        }
+      }
+    },
     "imageRegistry": {
       "type": "string",
       "description": "Registry prefix, e.g. ghcr.io (prod). Empty => bare image names (KIND/CI, loaded into the node)."
