@@ -114,6 +114,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # Version flow: the git tag is the single source of truth and drives BOTH
+      # chart fields via `helm package` flags (Chart.yaml is not edited at release):
+      #   chart `version`    = tag without the leading 'v'  (SemVer forbids the 'v')
+      #   chart `appVersion` = full tag incl. 'v'
+      # Both derive from the same tag, so appVersion and version stay in lockstep.
+
       - name: Resolve tag
         id: tag
         run: |
@@ -132,6 +138,17 @@ jobs:
           helm package agent-sandbox-platform/chart \
             --app-version "${{ steps.tag.outputs.tag }}" \
             --version "${{ steps.tag.outputs.version }}"
+      # Generate an SBOM (SPDX JSON) of the packaged chart and attach it to the
+      # GitHub Release alongside the .tgz. Scans the chart source that was just
+      # packaged (identical to the .tgz contents; syft dir: mode is deterministic).
+      - name: Generate chart SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: agent-sandbox-platform/chart
+          format: spdx-json
+          output-file: open-sandbox-chart-${{ steps.tag.outputs.version }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
       - name: Push chart to OCI registry
         run: |
           helm push open-sandbox-*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
@@ -139,4 +156,6 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
-          files: open-sandbox-*.tgz
+          files: |
+            open-sandbox-*.tgz
+            open-sandbox-chart-*.spdx.json
