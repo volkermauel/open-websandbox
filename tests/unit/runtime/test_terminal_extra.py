@@ -295,14 +295,15 @@ async def test_terminal_ws_background_job_heartbeat_death(live_base):
         await http.aclose()
 
 
-# --- WebSocket auth handshake (RUNTIME_API_KEY set) --------------------------
+# --- WebSocket inter-component auth (RUNTIME_API_KEY set) -------------------
 
 async def test_terminal_ws_auth_success(live_base, monkeypatch):
     monkeypatch.setenv("RUNTIME_API_KEY", "s3cret-key")
     ws_base, http_base = live_base
     http = httpx.AsyncClient(base_url=http_base)
     try:
-        await http.post("/api/terminals", headers={"X-Session-Id": "authok"})
+        await http.post("/api/terminals", headers={"X-Session-Id": "authok",
+                                                   "Authorization": "Bearer s3cret-key"})
         async with websockets.connect(f"{ws_base}/api/terminals/authok") as ws:
             await ws.send(json.dumps({"type": "auth", "token": "s3cret-key"}))
             await asyncio.sleep(0.2)
@@ -321,7 +322,8 @@ async def test_terminal_ws_auth_wrong_token(live_base, monkeypatch):
     ws_base, http_base = live_base
     http = httpx.AsyncClient(base_url=http_base)
     try:
-        await http.post("/api/terminals", headers={"X-Session-Id": "authbad"})
+        await http.post("/api/terminals", headers={"X-Session-Id": "authbad",
+                                                   "Authorization": "Bearer s3cret-key"})
         async with websockets.connect(f"{ws_base}/api/terminals/authbad") as ws:
             await ws.send(json.dumps({"type": "auth", "token": "wrong"}))
             with pytest.raises(websockets.ConnectionClosed) as ei:
@@ -332,18 +334,28 @@ async def test_terminal_ws_auth_wrong_token(live_base, monkeypatch):
         server._term_cleanup("authbad")
 
 
-async def test_terminal_ws_auth_bad_payload(live_base, monkeypatch):
+async def test_terminal_ws_non_auth_first_frame_tolerated(live_base, monkeypatch):
+    # Broker-compat: with RUNTIME_API_KEY set, a non-auth FIRST frame must NOT close the
+    # session. The broker consumes OWUI's auth frame upstream and forwards raw bytes, so
+    # the runtime may receive terminal input (or a malformed control frame) before any
+    # auth frame. Auth is enforced only for an actual {"type":"auth",...} frame (see
+    # test_terminal_ws_auth_wrong_token); a non-JSON frame is ignored, input still flows.
     monkeypatch.setenv("RUNTIME_API_KEY", "s3cret-key")
     ws_base, http_base = live_base
     http = httpx.AsyncClient(base_url=http_base)
     try:
-        await http.post("/api/terminals", headers={"X-Session-Id": "authjson"})
+        await http.post("/api/terminals", headers={"X-Session-Id": "authjson",
+                                                   "Authorization": "Bearer s3cret-key"})
         async with websockets.connect(f"{ws_base}/api/terminals/authjson") as ws:
-            # a non-JSON first frame → json.loads raises → except → close 4001
+            # a non-JSON text frame -> ignored (malformed control), session stays alive
             await ws.send("<<<not json>>>")
-            with pytest.raises(websockets.ConnectionClosed) as ei:
-                await ws.recv()
-            assert ei.value.code == 4001
+            await asyncio.sleep(0.2)
+            # terminal input still flows afterwards
+            await ws.send(b"echo afterbad\n")
+            echoed = await _recv_until(ws, b"afterbad")
+            assert b"afterbad" in echoed
+        assert await _wait_cleaned(http, "authjson")
+        assert "authjson" not in server._terminals
     finally:
         await http.aclose()
         server._term_cleanup("authjson")
