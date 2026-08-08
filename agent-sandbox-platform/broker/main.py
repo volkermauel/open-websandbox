@@ -48,6 +48,14 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
 
 # --- config -----------------------------------------------------------------
 SHARED_SECRET = os.environ.get("BROKER_SHARED_SECRET", "")
+# Outbound inter-component credential (broker -> runtime hop). Defaults to the inbound
+# broker secret when unset: the chart resolves both from one shared secret, so a
+# single-secret deploy keeps working; an explicit RUNTIME_API_KEY (the chart injects it
+# into the broker env too) wins so sandboxTemplate.runtimeApiKey overrides are honored.
+RUNTIME_API_KEY = os.environ.get("RUNTIME_API_KEY", "") or SHARED_SECRET
+# Known-unsafe placeholder values (mirror the runtime's _PLACEHOLDER_API_KEYS): both
+# the _validate_config() boot guard and the _auth request guard treat these as "unset".
+_PLACEHOLDER_SECRETS = frozenset({"", "dev-shared-secret-change-me", "change-me", "changeme", "placeholder"})
 WARMPOOL = os.environ.get("BROKER_WARMPOOL", "code-standard-warmpool")
 RUNTIME_NS = os.environ.get("BROKER_RUNTIME_NS", "agent-sandbox-runtime")
 ROUTER_URL = os.environ.get("BROKER_ROUTER_URL", "http://sandbox-router-svc.agent-sandbox-system:8080")
@@ -114,11 +122,26 @@ bearer = HTTPBearer(auto_error=False)
 
 
 def _auth(credentials: HTTPAuthorizationCredentials | None = Security(bearer)) -> None:
-    """Validate the shared Bearer secret (constant-time). Unset secret = disabled (dev)."""
-    if not SHARED_SECRET:
-        return
+    """Validate the shared Bearer secret (constant-time). Deny-on-unset (defense-in-depth).
+
+    An unset/placeholder BROKER_SHARED_SECRET is a misconfiguration, NOT a "disabled"
+    mode: we 503 here so the request path is fail-closed regardless of the startup boot
+    guard / lifespan (a process that skipped the startup event still cannot serve an
+    authenticated hop). _validate_config() makes the same check at boot. A presented
+    Bearer must match (constant-time), else 401."""
+    if SHARED_SECRET in _PLACEHOLDER_SECRETS:
+        raise HTTPException(status_code=503, detail="BROKER_SHARED_SECRET is not configured")
     if not credentials or not hmac.compare_digest(credentials.credentials.encode(), SHARED_SECRET.encode()):
         raise HTTPException(status_code=401, detail="invalid bearer token")
+
+
+def _runtime_auth_headers() -> dict:
+    """Authorization header for an outbound broker -> runtime hop (terminal/execute/files).
+
+    RUNTIME_API_KEY defaults to SHARED_SECRET when unset (one shared secret), so this is
+    populated whenever the broker is configured. The runtime's _auth_runtime validates it
+    fail-closed (503 on unset, 401 on mismatch) — see runtime/server.py."""
+    return {"Authorization": f"Bearer {RUNTIME_API_KEY}"}
 
 
 # --- session -> sandbox -----------------------------------------------------
@@ -433,6 +456,7 @@ async def _clear_workspace(pod_ip: str) -> None:
     with contextlib.suppress(Exception):
         await _client.post(
             f"http://{pod_ip}:8888/execute",
+            headers=_runtime_auth_headers(),
             json={"command": "find /workspace -mindepth 1 -delete"},
             timeout=60,
         )
@@ -462,14 +486,17 @@ async def _migrate_staging_to_chat(user_id: str, chat_pod_ip: str) -> None:
             moved = 0
             try:
                 lr = await _client.get(f"http://{sip}:8888/files/list",
+                                      headers=_runtime_auth_headers(),
                                       params={"directory": "/workspace"}, timeout=30)
                 names = [e["name"] for e in lr.json().get("entries", [])] if lr.status_code == 200 else []
                 if names:
                     ar = await _client.post(f"http://{sip}:8888/files/archive",
-                                           json={"paths": names}, timeout=120)
+                                            headers=_runtime_auth_headers(),
+                                            json={"paths": names}, timeout=120)
                     if ar.status_code == 200 and ar.content:
                         ur = await _client.post(
                             f"http://{chat_pod_ip}:8888/files/upload",
+                            headers=_runtime_auth_headers(),
                             files={"file": (_MIGRATE_ZIP, ar.content, "application/zip")},
                             data={"directory": "/workspace"}, timeout=120,
                         )
@@ -481,6 +508,7 @@ async def _migrate_staging_to_chat(user_id: str, chat_pod_ip: str) -> None:
                                 " os.remove('" + _MIGRATE_ZIP + "')\""
                             )
                             await _client.post(f"http://{chat_pod_ip}:8888/execute",
+                                               headers=_runtime_auth_headers(),
                                                json={"command": extract_cmd}, timeout=60)
                             moved = len(names)
                         else:
@@ -661,7 +689,7 @@ async def terminal_ws(client_ws: WebSocket, session_id: str):
     with contextlib.suppress(Exception):
         await _client.post(
             f"http://{pod_ip}:8888/api/terminals",
-            headers={"Authorization": f"Bearer {SHARED_SECRET}", "X-Session-Id": session_id},
+            headers={**_runtime_auth_headers(), "X-Session-Id": session_id},
         )
 
     # Plaintext WebSocket is correct here: in-cluster pod-to-pod traffic inside the
@@ -751,6 +779,11 @@ async def proxy(path: str, request: Request, _=Security(_auth)):
     # random id and the terminal WS lands on a rogue sandbox that disagrees with the
     # file/tool API (and spawns a throwaway sandbox per terminal open).
     fwd["X-Session-Id"] = session
+    # Inject the runtime inter-component credential so the broker -> router -> runtime
+    # hop satisfies _auth_runtime on /execute, /files/* and the terminal management
+    # endpoints. The inbound Authorization was stripped above (HOP); RUNTIME_API_KEY is
+    # what the runtime expects (defaults to SHARED_SECRET when unset — see RUNTIME_API_KEY).
+    fwd.update(_runtime_auth_headers())
     # No X-Workspace-Subdir: each chat's folder IS /workspace (per-chat subPath).
     body = await request.body()
     upstream = httpx.Request(request.method, f"{ROUTER_URL}/{path}",
@@ -942,7 +975,7 @@ def _validate_config() -> None:
 
     An unset/placeholder BROKER_SHARED_SECRET would silently disable auth (see _auth), so
     we refuse to start rather than run open. Tested directly; wired into startup."""
-    if SHARED_SECRET in {"", "dev-shared-secret-change-me", "change-me", "changeme", "placeholder"}:
+    if SHARED_SECRET in _PLACEHOLDER_SECRETS:
         raise RuntimeError(
             "BROKER_SHARED_SECRET is unset or a known placeholder — refusing to start. "
             "Set a strong secret (the Helm chart auto-generates one)."
