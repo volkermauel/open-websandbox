@@ -1,9 +1,8 @@
 """k8s CRUD helper tests — driven via the `api`/`core` MagicMock fixtures."""
 from __future__ import annotations
 
-import pytest
-
 import main  # type: ignore[import-not-found]
+import pytest
 from conftest import api_exc, make_claim, make_sandbox
 
 

@@ -4,10 +4,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import main  # type: ignore[import-not-found]
 import pytest
 from starlette.websockets import WebSocketDisconnect
-
-import main  # type: ignore[import-not-found]
 
 
 def test_terminal_missing_user_1008(client, monkeypatch):

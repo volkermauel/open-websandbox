@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import datetime
-
 from unittest.mock import MagicMock
 
 import main  # type: ignore[import-not-found]

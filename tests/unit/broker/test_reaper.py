@@ -5,9 +5,8 @@ import asyncio
 import time
 from unittest.mock import AsyncMock
 
-import pytest
-
 import main  # type: ignore[import-not-found]
+import pytest
 from conftest import make_claim, make_sandbox
 
 

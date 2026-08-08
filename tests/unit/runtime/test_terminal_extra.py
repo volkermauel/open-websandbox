@@ -27,10 +27,8 @@ import subprocess
 
 import httpx
 import pytest
-import websockets
-
 import server  # type: ignore[import-not-found]  # resolved via conftest sys.path insert
-
+import websockets
 
 # --- helpers ------------------------------------------------------------------
 

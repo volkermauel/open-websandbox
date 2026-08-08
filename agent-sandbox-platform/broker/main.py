@@ -595,7 +595,7 @@ async def ready():
     partial-outage where /healthz stays green while every resolve_sandbox throws."""
     try:
         api.list_namespaced_custom_object(
-            SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxclaims", limit=1, _request_timeout=3,
+            GROUP, VER, RUNTIME_NS, "sandboxclaims", limit=1, _request_timeout=3,
         )
     except Exception as exc:
         log.warning("readyz: apiserver unreachable: %s", exc)

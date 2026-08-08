@@ -39,8 +39,8 @@ os.environ.setdefault("BROKER_DEFAULT_PROFILE", "persistent")
 os.environ.setdefault("BROKER_PERSISTENT_MODE", "per-user-pvc")
 
 # (2) neutralise kubernetes import-time side effects --------------------------------
-import kubernetes.client as _kc          # noqa: E402
-import kubernetes.config as _kcfg        # noqa: E402
+import kubernetes.client as _kc  # noqa: E402
+import kubernetes.config as _kcfg  # noqa: E402
 
 _kcfg.load_incluster_config = lambda *a, **k: None
 _kcfg.load_kube_config = lambda *a, **k: None

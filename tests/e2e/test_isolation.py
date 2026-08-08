@@ -17,7 +17,6 @@ import re
 import uuid
 
 
-
 def test_cross_tenant_file_denial(require_broker, broker, second_broker):
     """Tenant B must NOT observe a file written by tenant A (same path, own session)."""
     name = f"secret-{uuid.uuid4().hex[:8]}.txt"

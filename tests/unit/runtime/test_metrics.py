@@ -6,9 +6,7 @@ active PTY sessions on SIGTERM.
 """
 from __future__ import annotations
 
-
 import pytest
-
 import server
 
 

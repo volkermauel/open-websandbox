@@ -13,10 +13,8 @@ import os
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
-
 import server  # type: ignore[import-not-found]  # resolved via conftest sys.path insert
-
+from fastapi import HTTPException
 
 # --- helpers ------------------------------------------------------------------
 

@@ -13,9 +13,7 @@ import io
 import os
 import zipfile
 
-
 import server  # type: ignore[import-not-found]  # resolved via conftest sys.path insert
-
 
 # --- /files/list branches ----------------------------------------------------
 

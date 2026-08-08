@@ -110,6 +110,24 @@ jobs:
           # runc → values-kind.yaml; gvisor → values-kind-gvisor.yaml
           VALUES_FILE: agent-sandbox-platform/chart/values-kind${{ matrix.runtime == 'gvisor' && '-gvisor' || '' }}.yaml
 
+
+      - name: Diagnostics (on failure)
+        if: failure()
+        run: |
+          echo "=== broker/router pods ==="
+          kubectl -n "$SYS_NS" get pods -o wide || true
+          echo "=== broker describe + logs ==="
+          kubectl -n "$SYS_NS" describe deploy/owui-broker --timeout=10s || true
+          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=100 || true
+          echo "=== /readyz + /healthz (probed via port-forward) ==="
+          kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 &
+          PF=$!; sleep 3
+          curl -sS http://localhost:8889/readyz; echo
+          curl -sS http://localhost:8889/healthz; echo
+          kill "$PF" 2>/dev/null || true
+          echo "=== runtime sandboxes + recent events ==="
+          kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
+          kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
       - name: Install test deps
         run: pip install -r requirements-test.txt
 

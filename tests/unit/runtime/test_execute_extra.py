@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import httpx
 import pytest
-
 import server  # type: ignore[import-not-found]  # resolved via conftest sys.path insert
 
 

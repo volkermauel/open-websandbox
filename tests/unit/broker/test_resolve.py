@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 import main  # type: ignore[import-not-found]
+import pytest
 from conftest import make_claim, make_sandbox
 
 

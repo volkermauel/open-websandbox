@@ -14,11 +14,10 @@ import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-from starlette.websockets import WebSocketDisconnect
-
 import main  # type: ignore[import-not-found]
+import pytest
 from conftest import make_claim, make_sandbox
+from starlette.websockets import WebSocketDisconnect
 
 _AUTH = {"Authorization": "Bearer test-secret"}
 
@@ -249,6 +248,9 @@ def test_validate_config_accepts_strong_secret(monkeypatch):
 def test_readyz_ok_when_apiserver_reachable(client, api):
     api.list_namespaced_custom_object.return_value = {"items": []}
     assert client.get("/readyz").status_code == 200
+    # /readyz lists sandboxclaims in the EXTENSIONS group, not the sandboxes group — a
+    # wrong group 404s and leaves the broker NotReady forever (caught by the KIND e2e).
+    assert api.list_namespaced_custom_object.call_args.args[0] == "extensions.agents.x-k8s.io"
 
 
 def test_readyz_503_when_apiserver_down(client, api):
@@ -292,8 +294,8 @@ def test_stop_reaper_swallows_aclose_error(monkeypatch):
 
 def test_metrics_middleware_counts_500(monkeypatch):
     """An unhandled handler exception must still increment the 500 label before re-raising."""
-    from prometheus_client import REGISTRY
     from fastapi.testclient import TestClient
+    from prometheus_client import REGISTRY
 
     def _boom(*_a, **_k):
         raise RuntimeError("boom")
