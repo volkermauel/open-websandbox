@@ -39,6 +39,12 @@ import pytest
 # keeps working. This must run before the first `import server` anywhere.
 _os_env_max_procs = str(_resource.getrlimit(_resource.RLIMIT_NPROC)[1])
 os.environ.setdefault("MAX_PROCS", _os_env_max_procs)
+# Fail-closed RUNTIME_API_KEY: the runtime now DENIES ON UNSET (503), so the suite runs
+# with a strong key by default. Tests that exercise the deny-on-unset path monkeypatch/
+# delenv it; the request-guard tests use `client_noauth` to control the Bearer explicitly.
+RUNTIME_KEY = "test-runtime-key"
+os.environ.setdefault("RUNTIME_API_KEY", RUNTIME_KEY)
+RT_AUTH = {"Authorization": f"Bearer {RUNTIME_KEY}"}
 
 # --- make the runtime package importable as top-level `server` -----------------
 _RUNTIME_DIR = Path(__file__).resolve().parents[3] / "agent-sandbox-platform" / "runtime"
@@ -64,10 +70,31 @@ def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
 
 @pytest.fixture
 async def client(workdir: str) -> AsyncIterator[httpx.AsyncClient]:
-    """In-process async client over the FastAPI ASGI app (for HTTP endpoints)."""
+    """In-process async client over the FastAPI ASGI app.
+
+    Sends the inter-component Bearer (RT_AUTH) by default so every happy-path test clears
+    _auth_runtime without per-call boilerplate. Tests that must control the Authorization
+    header (the deny/auth matrix) use ``client_noauth`` instead."""
+    transport = httpx.ASGITransport(app=server.app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test", follow_redirects=True, headers=RT_AUTH
+    ) as c:
+        yield c
+
+
+@pytest.fixture
+async def client_noauth(workdir: str) -> AsyncIterator[httpx.AsyncClient]:
+    """ASGI client WITHOUT the default Bearer — for _auth_runtime guard tests that send
+    (or omit) the Authorization header explicitly (missing/wrong/match/deny-on-unset)."""
     transport = httpx.ASGITransport(app=server.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as c:
         yield c
+
+
+@pytest.fixture
+def rt_auth() -> dict:
+    """The default inter-component Bearer (matches RUNTIME_KEY) for live uvicorn tests."""
+    return dict(RT_AUTH)
 
 
 @pytest.fixture

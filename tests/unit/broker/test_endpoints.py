@@ -48,9 +48,17 @@ def test_api_config_valid(client):
     assert r.json()["features"]["terminal"]
 
 
-def test_api_config_no_secret_branch(client, monkeypatch):
+def test_api_config_503_when_secret_unset(client, monkeypatch):
+    # Deny-on-unset (defense-in-depth): _auth 503s when BROKER_SHARED_SECRET is unset —
+    # fail-closed at the request path, independent of the startup boot guard.
     monkeypatch.setattr(main, "SHARED_SECRET", "")
-    assert client.get("/api/config").status_code == 200
+    assert client.get("/api/config").status_code == 503
+
+
+def test_api_config_503_when_secret_placeholder(client, monkeypatch):
+    # Known placeholders are treated as unset (mirror _validate_config / _PLACEHOLDER_SECRETS).
+    monkeypatch.setattr(main, "SHARED_SECRET", "placeholder")
+    assert client.get("/api/config").status_code == 503
 
 
 def test_api_status_valid(client):
@@ -78,3 +86,14 @@ def test_proxy_redirect_location_rewrite(client, httpx_client, monkeypatch):
     r = client.get("/files/list/", headers={**_AUTH, "X-User-Id": "u1"}, follow_redirects=False)
     assert r.status_code == 307
     assert r.headers["location"] == "/files/list/"
+
+
+def test_proxy_injects_runtime_credential(client, httpx_client, monkeypatch):
+    # The catch-all proxy strips the inbound Authorization (HOP) and injects the runtime
+    # inter-component Bearer so the broker -> router -> runtime hop clears _auth_runtime
+    # on /execute, /files/* and the terminal management endpoints.
+    monkeypatch.setattr(main, "resolve_sandbox", AsyncMock(return_value=("sbx-1", "10.0.0.1")))
+    httpx_client.send.return_value = _resp(200, b"{}")
+    client.post("/execute", headers={**_AUTH, "X-User-Id": "u1"}, json={"command": "echo hi"})
+    sent = httpx_client.send.call_args.args[0]  # the forwarded httpx.Request
+    assert sent.headers["authorization"] == f"Bearer {main.RUNTIME_API_KEY}"
