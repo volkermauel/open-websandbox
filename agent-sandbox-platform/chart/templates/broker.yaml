@@ -3,6 +3,13 @@
 # SandboxClaims and read Sandboxes.
 {{- $sysNs := include "open-sandbox.systemNamespace" . -}}
 {{- $runNs := include "open-sandbox.runtimeNamespace" . -}}
+{{- $shared := include "open-sandbox.brokerSharedSecret" . -}}
+{{/* Resolve the runtime inter-component key ONCE here. Default it to the broker shared
+     secret so the broker's Bearer on POST /api/terminals matches RUNTIME_API_KEY;
+     sandboxTemplate.runtimeApiKey overrides (then keep it equal to broker.sharedSecret).
+     One resolution, not two — resolving in separate template documents would mint two
+     randAlphaNum keys on a first install and break the broker->runtime hop. */}}
+{{- $runtimeKey := .Values.sandboxTemplate.runtimeApiKey | default $shared -}}
 ---
 apiVersion: v1
 kind: Secret
@@ -16,7 +23,22 @@ stringData:
   # Resolved via the open-sandbox.brokerSharedSecret helper: explicit value, else the
   # existing Secret is preserved across upgrades (lookup), else a random 48-char secret
   # is generated on first install. Never the dev placeholder.
-  shared-secret: {{ include "open-sandbox.brokerSharedSecret" . | quote }}
+  shared-secret: {{ $shared | quote }}
+---
+# Runtime inter-component API key (runtime namespace). The runtime pod reads
+# RUNTIME_API_KEY from here; the value defaults to the SAME secret resolved above so
+# the broker's Bearer on POST /api/terminals matches. sandboxTemplate.runtimeApiKey
+# overrides it (then keep it equal to broker.sharedSecret). Resolved once, not per-doc.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: owui-runtime-secret
+  namespace: {{ $runNs }}
+  labels:
+    {{- include "open-sandbox.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  runtime-api-key: {{ $runtimeKey | quote }}
 ---
 apiVersion: v1
 kind: ServiceAccount
