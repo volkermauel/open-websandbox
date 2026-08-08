@@ -42,9 +42,9 @@ async def _recv_until(ws, marker: bytes, timeout: float = 4.0) -> bytes:
     return buf
 
 
-async def test_terminal_echo_resize_and_cleanup(workdir, live_base):
+async def test_terminal_echo_resize_and_cleanup(workdir, live_base, rt_auth):
     ws_base, http_base = live_base
-    http = httpx.AsyncClient(base_url=http_base)
+    http = httpx.AsyncClient(base_url=http_base, headers=rt_auth)
 
     try:
         # 1. create the terminal in the workspace
@@ -103,9 +103,9 @@ async def test_terminal_unknown_session_rejected(live_base):
         await http_aclose(http)
 
 
-async def test_terminal_create_and_delete_via_http(live_base):
+async def test_terminal_create_and_delete_via_http(live_base, rt_auth):
     _, http_base = live_base
-    http = httpx.AsyncClient(base_url=http_base)
+    http = httpx.AsyncClient(base_url=http_base, headers=rt_auth)
     try:
         r = await http.post("/api/terminals", headers={"X-Session-Id": "http-only"})
         assert r.status_code == 200

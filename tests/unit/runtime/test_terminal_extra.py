@@ -61,12 +61,21 @@ async def _recv_until(ws, marker: bytes, timeout: float = 5.0) -> bytes:
     return buf
 
 
+def _rt_headers() -> dict:
+    """Inter-component Bearer for cleanup/readiness polls that must clear _auth_runtime.
+
+    Read from os.environ at CALL time so the WS auth tests (which monkeypatch
+    RUNTIME_API_KEY='s3cret-key') poll with the live key, not the conftest default.
+    """
+    return {"Authorization": f"Bearer {os.environ.get('RUNTIME_API_KEY', '')}"}
+
+
 async def _wait_cleaned(http: httpx.AsyncClient, sid: str, timeout: float = 5.0) -> bool:
     """Poll GET /api/terminals/{sid} until it 404s (async disconnect cleanup)."""
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout
     while loop.time() < deadline:
-        if (await http.get(f"/api/terminals/{sid}")).status_code == 404:
+        if (await http.get(f"/api/terminals/{sid}", headers=_rt_headers())).status_code == 404:
             return True
         await asyncio.sleep(0.1)
     return False
@@ -165,9 +174,9 @@ def test_term_write_oserror_is_swallowed():
 
 # --- WebSocket edge cases ----------------------------------------------------
 
-async def test_terminal_ws_dead_session_is_cleaned(live_base):
+async def test_terminal_ws_dead_session_is_cleaned(live_base, rt_auth):
     ws_base, http_base = live_base
-    http = httpx.AsyncClient(base_url=http_base)
+    http = httpx.AsyncClient(base_url=http_base, headers=rt_auth)
     try:
         await http.post("/api/terminals", headers={"X-Session-Id": "wsdead"})
         _kill_terminal_proc("wsdead")  # entry present but dead
@@ -182,9 +191,9 @@ async def test_terminal_ws_dead_session_is_cleaned(live_base):
         server._term_cleanup("wsdead")
 
 
-async def test_terminal_ws_malformed_control_frame_ignored(live_base):
+async def test_terminal_ws_malformed_control_frame_ignored(live_base, rt_auth):
     ws_base, http_base = live_base
-    http = httpx.AsyncClient(base_url=http_base)
+    http = httpx.AsyncClient(base_url=http_base, headers=rt_auth)
     try:
         await http.post("/api/terminals", headers={"X-Session-Id": "mal"})
         async with websockets.connect(f"{ws_base}/api/terminals/mal") as ws:
@@ -202,9 +211,9 @@ async def test_terminal_ws_malformed_control_frame_ignored(live_base):
         server._term_cleanup("mal")
 
 
-async def test_terminal_ws_control_frames_then_bytes(live_base):
+async def test_terminal_ws_control_frames_then_bytes(live_base, rt_auth):
     ws_base, http_base = live_base
-    http = httpx.AsyncClient(base_url=http_base)
+    http = httpx.AsyncClient(base_url=http_base, headers=rt_auth)
     try:
         await http.post("/api/terminals", headers={"X-Session-Id": "ctrl"})
         async with websockets.connect(f"{ws_base}/api/terminals/ctrl") as ws:
@@ -222,9 +231,9 @@ async def test_terminal_ws_control_frames_then_bytes(live_base):
         server._term_cleanup("ctrl")
 
 
-async def test_terminal_ws_exit_drains_and_cleans(live_base):
+async def test_terminal_ws_exit_drains_and_cleans(live_base, rt_auth):
     ws_base, http_base = live_base
-    http = httpx.AsyncClient(base_url=http_base)
+    http = httpx.AsyncClient(base_url=http_base, headers=rt_auth)
     try:
         await http.post("/api/terminals", headers={"X-Session-Id": "ex"})
         async with websockets.connect(f"{ws_base}/api/terminals/ex") as ws:
@@ -236,7 +245,7 @@ async def test_terminal_ws_exit_drains_and_cleans(live_base):
                     await asyncio.wait_for(ws.recv(), timeout=0.2)
                 except (websockets.ConnectionClosed, asyncio.TimeoutError):
                     pass
-                if (await http.get("/api/terminals/ex")).status_code == 404:
+                if (await http.get("/api/terminals/ex", headers=_rt_headers())).status_code == 404:
                     break
         assert "ex" not in server._terminals
     finally:
@@ -244,15 +253,15 @@ async def test_terminal_ws_exit_drains_and_cleans(live_base):
         server._term_cleanup("ex")
 
 
-async def test_terminal_ws_idle_heartbeat_keeps_alive(live_base):
+async def test_terminal_ws_idle_heartbeat_keeps_alive(live_base, rt_auth):
     ws_base, http_base = live_base
-    http = httpx.AsyncClient(base_url=http_base)
+    http = httpx.AsyncClient(base_url=http_base, headers=rt_auth)
     try:
         await http.post("/api/terminals", headers={"X-Session-Id": "idle"})
         async with websockets.connect(f"{ws_base}/api/terminals/idle") as ws:
             # >1s of silence with a LIVE shell → heartbeat "continue" path fires.
             await asyncio.sleep(2.0)
-            assert (await http.get("/api/terminals/idle")).status_code == 200
+            assert (await http.get("/api/terminals/idle", headers=_rt_headers())).status_code == 200
             # and the session is still fully functional afterwards
             await ws.send(b"echo idletext\n")
             echoed = await _recv_until(ws, b"idletext")
@@ -264,12 +273,12 @@ async def test_terminal_ws_idle_heartbeat_keeps_alive(live_base):
         server._term_cleanup("idle")
 
 
-async def test_terminal_ws_background_job_heartbeat_death(live_base):
+async def test_terminal_ws_background_job_heartbeat_death(live_base, rt_auth):
     """The documented edge case: shell exits but a backgrounded job keeps the
     PTY slave open, so no EIO/EOF arrives on the master fd. The reader's 1s
     heartbeat must then notice the dead proc and tear the session down."""
     ws_base, http_base = live_base
-    http = httpx.AsyncClient(base_url=http_base)
+    http = httpx.AsyncClient(base_url=http_base, headers=rt_auth)
     try:
         await http.post("/api/terminals", headers={"X-Session-Id": "bg"})
         async with websockets.connect(f"{ws_base}/api/terminals/bg") as ws:
@@ -280,7 +289,7 @@ async def test_terminal_ws_background_job_heartbeat_death(live_base):
             # poll for the heartbeat-driven teardown (≤ ~3s after last output)
             cleaned = False
             for _ in range(60):
-                if (await http.get("/api/terminals/bg")).status_code == 404:
+                if (await http.get("/api/terminals/bg", headers=_rt_headers())).status_code == 404:
                     cleaned = True
                     break
                 await asyncio.sleep(0.1)
@@ -392,13 +401,13 @@ async def test_create_terminal_popen_failure_closes_fds_503(workdir, client, mon
 
 # --- _receiver inbound message-type branches (lines 799-812) --------------------
 
-async def test_terminal_ws_receiver_message_branches(live_base):
+async def test_terminal_ws_receiver_message_branches(live_base, rt_auth):
     # Drive every inbound branch of the per-terminal _receiver loop: a bytes
     # frame (if-bytes True), a resize control (elif-text True + type==resize
     # True), a non-resize control (type!=resize -> inner-if False) and an empty
     # text frame (bytes falsy AND text "" falsy -> elif False).
     ws_base, http_base = live_base
-    http = httpx.AsyncClient(base_url=http_base)
+    http = httpx.AsyncClient(base_url=http_base, headers=rt_auth)
     try:
         await http.post("/api/terminals", headers={"X-Session-Id": "rmsg"})
         async with websockets.connect(f"{ws_base}/api/terminals/rmsg") as ws:
@@ -438,9 +447,9 @@ async def test_terminal_ws_receiver_message_branches(live_base):
 # the slave open (master read just returns EAGAIN forever), so the ONLY death
 # signal is the reader's per-second `proc.poll()` heartbeat -> break@782.
 
-async def test_terminal_ws_heartbeat_death_with_hup_immune_job(live_base):
+async def test_terminal_ws_heartbeat_death_with_hup_immune_job(live_base, rt_auth):
     ws_base, http_base = live_base
-    http = httpx.AsyncClient(base_url=http_base)
+    http = httpx.AsyncClient(base_url=http_base, headers=rt_auth)
     try:
         await http.post("/api/terminals", headers={"X-Session-Id": "hb"})
         async with websockets.connect(f"{ws_base}/api/terminals/hb") as ws:
@@ -461,12 +470,12 @@ async def test_terminal_ws_heartbeat_death_with_hup_immune_job(live_base):
 
 # --- _pty_reader send failure (lines 788-789) -----------------------------------
 
-async def test_terminal_ws_reader_send_failure(live_base):
+async def test_terminal_ws_reader_send_failure(live_base, rt_auth):
     # Flood PTY output so the reader is constantly relaying, then abruptly drop
     # the client TCP transport. With the client gone the reader's next
     # `await ws.send_bytes(data)` raises on the dead connection -> except -> break.
     ws_base, http_base = live_base
-    http = httpx.AsyncClient(base_url=http_base)
+    http = httpx.AsyncClient(base_url=http_base, headers=rt_auth)
     try:
         await http.post("/api/terminals", headers={"X-Session-Id": "sfail"})
         ws = await websockets.connect(f"{ws_base}/api/terminals/sfail")

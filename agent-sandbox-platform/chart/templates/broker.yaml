@@ -24,6 +24,10 @@ stringData:
   # existing Secret is preserved across upgrades (lookup), else a random 48-char secret
   # is generated on first install. Never the dev placeholder.
   shared-secret: {{ $shared | quote }}
+  # Same RUNTIME_API_KEY value duplicated into the broker namespace: the broker pod runs
+  # in agent-sandbox-system and CANNOT cross-reference owui-runtime-secret (runtime
+  # namespace), so it reads the key from its own Secret to attach the Bearer on runtime hops.
+  runtime-api-key: {{ $runtimeKey | quote }}
 ---
 # Runtime inter-component API key (runtime namespace). The runtime pod reads
 # RUNTIME_API_KEY from here; the value defaults to the SAME secret resolved above so
@@ -155,6 +159,11 @@ spec:
             secretKeyRef:
               name: owui-broker-secret
               key: shared-secret
+        - name: RUNTIME_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: owui-broker-secret
+              key: runtime-api-key
         - name: BROKER_WARMPOOL
           value: {{ .Values.broker.warmPool | quote }}
         - name: BROKER_RUNTIME_NS

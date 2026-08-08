@@ -176,12 +176,74 @@ def _request_base(subdir: str | None) -> str:
     return base
 
 
+# --- fail-closed inter-component auth (RUNTIME_API_KEY) -----------------------
+# Defined here, ABOVE the first endpoint, because the gated routes reference
+# _auth_runtime in their decorator dependencies — FastAPI resolves Security(...) at
+# decorator-application time (import), so the guard must already exist.
+#
+# Mirrors the broker's BROKER_SHARED_SECRET story (main._auth + main._validate_config):
+# the runtime gates its whole request surface on RUNTIME_API_KEY.
+# _validate_runtime_config() refuses to boot on an unset/placeholder key (fail-closed
+# startup guard); _auth_runtime DENIES ON UNSET/PLACEHOLDER too (503) so the request
+# path is fail-closed independently of the lifespan/boot guard — a process that skipped
+# the startup event still cannot serve a gated hop unauthenticated. A presented Bearer
+# must match (constant-time), else 401.
+#
+# Gated surface: POST /execute, the entire /files/* FS surface
+# (read/write/delete/archive/mkdir/move/replace/grep/glob/upload/view/cwd), and the
+# terminal management endpoints (POST/GET/DELETE /api/terminals[/{id}]). The broker
+# attaches Authorization: Bearer <RUNTIME_API_KEY> on every runtime hop (terminal +
+# execute + files); without it these 401. The interactive WS (/api/terminals/{id}) is
+# frame-authed inline AND gated by the POST that creates its session. Health (/) and
+# /metrics stay open for kubelet / Prometheus scraping (no credential available).
+_PLACEHOLDER_API_KEYS = frozenset({
+    "", "dev-shared-secret-change-me", "change-me", "changeme", "placeholder",
+})
+
+
+def _runtime_api_key() -> str:
+    """RUNTIME_API_KEY read at call time so env/test overrides take effect (cf. broker)."""
+    return os.environ.get("RUNTIME_API_KEY", "")
+
+
+def _validate_runtime_config() -> None:
+    """Fail-closed startup guard: refuse to run with an unset/placeholder RUNTIME_API_KEY.
+
+    An unset/placeholder key would leave the request surface unauthenticated, so we
+    refuse to start rather than run open. Mirrors the broker's _validate_config(); wired
+    into the startup event. Tested directly."""
+    if _runtime_api_key() in _PLACEHOLDER_API_KEYS:
+        raise RuntimeError(
+            "RUNTIME_API_KEY is unset or a known placeholder — refusing to start. "
+            "Set a strong key (the Helm chart derives one from the broker shared secret)."
+        )
+
+
+_runtime_bearer = HTTPBearer(auto_error=False)
+
+
+def _auth_runtime(
+    credentials: HTTPAuthorizationCredentials | None = Security(_runtime_bearer),
+) -> None:
+    """Validate the runtime API key (constant-time). Deny-on-unset (defense-in-depth).
+
+    An unset/placeholder RUNTIME_API_KEY is a misconfiguration, NOT a "disabled" mode:
+    we 503 here so the request path is fail-closed regardless of the startup boot guard
+    / lifespan (a process that skipped the startup event still cannot serve a gated hop
+    unauthenticated). _validate_runtime_config() makes the same check at boot. A
+    presented Bearer must match the configured key (constant-time), else 401."""
+    key = _runtime_api_key()
+    if key in _PLACEHOLDER_API_KEYS:
+        raise HTTPException(status_code=503, detail="RUNTIME_API_KEY is not configured")
+    if not credentials or not hmac.compare_digest(credentials.credentials.encode(), key.encode()):
+        raise HTTPException(status_code=401, detail="invalid runtime api key")
+
 @app.get("/")
 async def health():
     return {"status": "ok", "runtime": "code-standard"}
 
 
-@app.post("/execute", response_model=ExecuteResponse)
+@app.post("/execute", response_model=ExecuteResponse, dependencies=[Security(_auth_runtime)])
 async def execute(req: ExecuteRequest, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     base = _request_base(subdir)
     timeout = min(req.timeout or DEFAULT_TIMEOUT, MAX_TIMEOUT)
@@ -267,20 +329,20 @@ class ArchiveRequest(BaseModel):
     paths: list[str]
 
 
-@app.get("/ports")
+@app.get("/ports", dependencies=[Security(_auth_runtime)])
 async def list_ports():
     # Restricted runtime: no host-port introspection. Surface an empty list so the
     # UI ports panel renders cleanly (matches open-terminal's restricted fallback).
     return {"ports": []}
 
 
-@app.get("/files/cwd")
+@app.get("/files/cwd", dependencies=[Security(_auth_runtime)])
 async def get_cwd(subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     base = _request_base(subdir)
     return {"cwd": base, "home": base}
 
 
-@app.post("/files/cwd")
+@app.post("/files/cwd", dependencies=[Security(_auth_runtime)])
 async def set_cwd(req: CwdRequest, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     resolved = _safe_path(req.path, _request_base(subdir))
     if not os.path.isdir(resolved):
@@ -301,7 +363,7 @@ def _entry(p: str) -> dict | None:
         return None  # file vanished between listdir and stat (TOCTOU race)
 
 
-@app.get("/files/list")
+@app.get("/files/list", dependencies=[Security(_auth_runtime)])
 async def list_dir(directory: str = ".", subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     if str(directory).strip().lower() in ("", "null"):
         directory = "."
@@ -315,7 +377,7 @@ async def list_dir(directory: str = ".", subdir: str | None = Header(default=Non
     return {"dir": resolved, "entries": entries}
 
 
-@app.get("/files/read")
+@app.get("/files/read", dependencies=[Security(_auth_runtime)])
 async def read_file(path: str, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     return await asyncio.to_thread(_read_file_impl, path, subdir)
 
@@ -339,7 +401,7 @@ def _read_file_impl(path: str, subdir: str | None):
     return {"path": full, "total_lines": len(content.splitlines()), "content": content}
 
 
-@app.post("/files/write")
+@app.post("/files/write", dependencies=[Security(_auth_runtime)])
 async def write_file(req: WriteRequest, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     base = _request_base(subdir)
     full = _safe_path(req.path, base)
@@ -353,7 +415,7 @@ async def write_file(req: WriteRequest, subdir: str | None = Header(default=None
     return {"path": full, "size": len(data)}
 
 
-@app.post("/files/mkdir")
+@app.post("/files/mkdir", dependencies=[Security(_auth_runtime)])
 async def mkdir(req: PathRequest, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     full = _safe_path(req.path, _request_base(subdir))
     try:
@@ -363,7 +425,7 @@ async def mkdir(req: PathRequest, subdir: str | None = Header(default=None, alia
     return {"path": full}
 
 
-@app.post("/files/move")
+@app.post("/files/move", dependencies=[Security(_auth_runtime)])
 async def move(req: MoveRequest, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     base = _request_base(subdir)
     src = _safe_path(req.source, base)
@@ -379,7 +441,7 @@ async def move(req: MoveRequest, subdir: str | None = Header(default=None, alias
     return {"source": src, "destination": dst}
 
 
-@app.delete("/files/delete")
+@app.delete("/files/delete", dependencies=[Security(_auth_runtime)])
 async def delete_entry(path: str, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     full = _safe_path(path, _request_base(subdir))
     if not os.path.exists(full):
@@ -392,7 +454,7 @@ async def delete_entry(path: str, subdir: str | None = Header(default=None, alia
     return {"path": full, "type": "directory" if is_dir else "file"}
 
 
-@app.post("/files/replace")
+@app.post("/files/replace", dependencies=[Security(_auth_runtime)])
 async def replace(req: ReplaceRequest, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     full = _safe_path(req.path, _request_base(subdir))
     if not os.path.isfile(full):
@@ -453,7 +515,7 @@ def _walk_files(root: str, include: list[str] | None = None) -> list[str]:
     return out
 
 
-@app.get("/files/grep")
+@app.get("/files/grep", dependencies=[Security(_auth_runtime)])
 async def grep(
     query: str,
     path: str = ".",
@@ -491,7 +553,7 @@ def _grep_impl(query, path, regex, case_insensitive, include, max_results, subdi
     return {"query": query, "path": resolved, "matches": matches, "truncated": False}
 
 
-@app.get("/files/glob")
+@app.get("/files/glob", dependencies=[Security(_auth_runtime)])
 async def glob_search(
     pattern: str,
     path: str = ".",
@@ -530,7 +592,7 @@ def _glob_impl(pattern, path, type, max_results, subdir) -> dict:
     return {"pattern": pattern, "path": resolved, "matches": matches, "truncated": False}
 
 
-@app.post("/files/upload")
+@app.post("/files/upload", dependencies=[Security(_auth_runtime)])
 async def upload(
     file: UploadFile = File(...),
     directory: str = "",
@@ -556,7 +618,7 @@ async def upload(
     return {"path": full, "size": os.path.getsize(full)}
 
 
-@app.post("/files/archive")
+@app.post("/files/archive", dependencies=[Security(_auth_runtime)])
 async def archive(req: ArchiveRequest, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     return await asyncio.to_thread(_archive_impl, req, subdir)
 
@@ -596,7 +658,7 @@ def _archive_impl(req: ArchiveRequest, subdir: str | None) -> Response:
 # coexist with the open-terminal /files/* surface above (used by the terminal UI).
 
 
-@app.post("/upload")
+@app.post("/upload", dependencies=[Security(_auth_runtime)])
 async def tool_upload(file: UploadFile = File(...), subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     base = _request_base(subdir)
     filename = os.path.basename(file.filename or "upload")
@@ -614,7 +676,7 @@ async def tool_upload(file: UploadFile = File(...), subdir: str | None = Header(
     return {"saved": full, "bytes": n}
 
 
-@app.get("/download/{file_path:path}")
+@app.get("/download/{file_path:path}", dependencies=[Security(_auth_runtime)])
 async def tool_download(file_path: str, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     full = _safe_path(file_path, _request_base(subdir))
     if not os.path.isfile(full):
@@ -623,7 +685,7 @@ async def tool_download(file_path: str, subdir: str | None = Header(default=None
     return FileResponse(full, media_type=mime or "application/octet-stream", filename=os.path.basename(full))
 
 
-@app.get("/list/{file_path:path}")
+@app.get("/list/{file_path:path}", dependencies=[Security(_auth_runtime)])
 async def tool_list(file_path: str, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     fp = file_path.strip() or "."
     resolved = _safe_path(fp, _request_base(subdir))
@@ -643,13 +705,13 @@ async def tool_list(file_path: str, subdir: str | None = Header(default=None, al
     return {"path": resolved, "entries": entries}
 
 
-@app.get("/exists/{file_path:path}")
+@app.get("/exists/{file_path:path}", dependencies=[Security(_auth_runtime)])
 async def tool_exists(file_path: str, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     full = _safe_path(file_path.strip() or ".", _request_base(subdir))
     return {"exists": os.path.exists(full), "is_file": os.path.isfile(full), "is_dir": os.path.isdir(full)}
 
 
-@app.get("/files/view")
+@app.get("/files/view", dependencies=[Security(_auth_runtime)])
 async def files_view(path: str, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     """Raw file bytes for download/display (OWUI downloadFileBlob -> res.blob())."""
     full = _safe_path(path, _request_base(subdir))
@@ -657,58 +719,6 @@ async def files_view(path: str, subdir: str | None = Header(default=None, alias=
         raise HTTPException(status_code=404, detail="File not found")
     mime, _ = mimetypes.guess_type(full)
     return FileResponse(full, media_type=mime or "application/octet-stream", filename=os.path.basename(full))
-
-# --- fail-closed inter-component auth (RUNTIME_API_KEY) -----------------------
-# Mirrors the broker's BROKER_SHARED_SECRET story (main._auth + main._validate_config):
-# the runtime gates its terminal surface on RUNTIME_API_KEY. _validate_runtime_config()
-# refuses to boot on an unset/placeholder key (fail-closed); at request time an UNSET key
-# disables the guard (local dev/tests only — the boot guard ensures a real deploy always
-# has one) and a presented Bearer must match (constant-time). The HTTP hops the broker
-# reaches WITHOUT a credential today (POST /execute, /files/*) are intentionally NOT
-# gated here — the broker does not yet attach the credential on those hops (tracked
-# separately in #19); gating them now would 401 the broker's own proxied traffic. The
-# NetworkPolicy (router namespace -> :8888 only) remains the ingress boundary until the
-# per-session-key epic lands.
-_PLACEHOLDER_API_KEYS = frozenset({
-    "", "dev-shared-secret-change-me", "change-me", "changeme", "placeholder",
-})
-
-
-def _runtime_api_key() -> str:
-    """RUNTIME_API_KEY read at call time so env/test overrides take effect (cf. broker)."""
-    return os.environ.get("RUNTIME_API_KEY", "")
-
-
-def _validate_runtime_config() -> None:
-    """Fail-closed startup guard: refuse to run with an unset/placeholder RUNTIME_API_KEY.
-
-    An unset/placeholder key would leave the terminal surface unauthenticated, so we
-    refuse to start rather than run open. Mirrors the broker's _validate_config(); wired
-    into the startup event. Tested directly."""
-    if _runtime_api_key() in _PLACEHOLDER_API_KEYS:
-        raise RuntimeError(
-            "RUNTIME_API_KEY is unset or a known placeholder — refusing to start. "
-            "Set a strong key (the Helm chart derives one from the broker shared secret)."
-        )
-
-
-_runtime_bearer = HTTPBearer(auto_error=False)
-
-
-def _auth_runtime(
-    credentials: HTTPAuthorizationCredentials | None = Security(_runtime_bearer),
-) -> None:
-    """Validate the runtime API key (constant-time). Unset key = disabled (dev/test).
-
-    Mirrors the broker's _auth(): when RUNTIME_API_KEY is unset the guard is a no-op
-    (local dev/tests). _validate_runtime_config() refuses to boot with an
-    unset/placeholder key, so in any real deploy this branch always runs and a
-    missing/mismatched Bearer is rejected with 401."""
-    key = _runtime_api_key()
-    if not key:
-        return
-    if not credentials or not hmac.compare_digest(credentials.credentials.encode(), key.encode()):
-        raise HTTPException(status_code=401, detail="invalid runtime api key")
 
 
 # --- interactive terminal (PTY) -------------------------------------------------
@@ -794,7 +804,7 @@ async def create_terminal(
     return {"id": sid, "created_at": created, "pid": proc.pid}
 
 
-@app.get("/api/terminals")
+@app.get("/api/terminals", dependencies=[Security(_auth_runtime)])
 async def list_terminals():
     out, dead = [], []
     for sid, s in _terminals.items():
@@ -807,7 +817,7 @@ async def list_terminals():
     return out
 
 
-@app.get("/api/terminals/{session_id}")
+@app.get("/api/terminals/{session_id}", dependencies=[Security(_auth_runtime)])
 async def get_terminal(session_id: str):
     s = _terminals.get(session_id)
     if not s or not _term_alive(s):
@@ -817,7 +827,7 @@ async def get_terminal(session_id: str):
     return {"id": session_id, "created_at": s["created_at"], "pid": s["proc"].pid}
 
 
-@app.delete("/api/terminals/{session_id}")
+@app.delete("/api/terminals/{session_id}", dependencies=[Security(_auth_runtime)])
 async def kill_terminal(session_id: str):
     _term_cleanup(session_id)
     return {"status": "deleted"}

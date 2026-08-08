@@ -11,6 +11,8 @@ Covers the branches the happy-path suite in ``test_execute.py`` misses:
 
 from __future__ import annotations
 
+import os
+
 import httpx
 import pytest
 import server  # type: ignore[import-not-found]  # resolved via conftest sys.path insert
@@ -41,7 +43,7 @@ async def test_execute_runtime_oserror(tmp_path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(server, "WORKDIR", str(not_a_dir))
 
     transport = httpx.ASGITransport(app=server.app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", headers={"Authorization": f"Bearer {os.environ['RUNTIME_API_KEY']}"}) as c:
         r = await c.post("/execute", json={"command": "true"})
     assert r.status_code == 200
     body = r.json()

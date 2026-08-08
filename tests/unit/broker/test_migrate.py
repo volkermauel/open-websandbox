@@ -45,6 +45,11 @@ async def test_migrate_success(monkeypatch, fresh_migrate_locks, httpx_client):
     httpx_client.post.side_effect = [_resp(200, content=b"ZIP"), _resp(200), _resp(200), _resp(200)]
     await main._migrate_staging_to_chat("u1", "chatip")
     assert httpx_client.post.call_count == 4  # archive, upload, extract, clear
+    # Every runtime hop carries the inter-component Bearer so the fail-closed
+    # _auth_runtime admits it (acceptance: broker attaches the credential on /files/* + /execute).
+    expected = f"Bearer {main.RUNTIME_API_KEY}"
+    for call in list(httpx_client.post.call_args_list) + list(httpx_client.get.call_args_list):
+        assert call.kwargs.get("headers", {}).get("Authorization") == expected
 
 
 async def test_migrate_list_empty(monkeypatch, fresh_migrate_locks, httpx_client):
