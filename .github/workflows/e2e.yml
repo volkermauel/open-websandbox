@@ -137,9 +137,9 @@ jobs:
             kind load docker-image "$img" --name "$KIND_CLUSTER"
           done
 
-      - name: Apply agent-sandbox controller + CRDs
-        run: kubectl apply -f agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
-
+      # The agent-sandbox controller + CRDs (agents.x-k8s.io) are now installed by the
+      # chart itself (chart/templates/upstream/, values.upstream.deploy=true default),
+      # so the separate `kubectl apply -f .../upstream/*.yaml` step is no longer needed.
       - name: Helm install (${{ matrix.runtime }} profile)
         run: |
           kubectl create namespace "$SYS_NS" --dry-run=client -o yaml | kubectl apply -f -
