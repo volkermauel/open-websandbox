@@ -13,13 +13,16 @@ imageTag: v0.1.0
 # entirely when empty.
 imagePullSecrets: []
 # ---------------------------------------------------------------------------
-# Vendored upstream agent-sandbox controller + CRDs (agents.x-k8s.io, v0.5.3).
-# deploy: true (default) => the chart installs the upstream controller Deployment, its
-# RBAC + Services, and the four agents.x-k8s.io CRDs (rendered from the verbatim,
-# SHA-pinned manifest under agent-sandbox-platform/upstream/), so a single `helm install`
-# brings up the whole platform. Set to false when the controller + CRDs are already
-# installed cluster-wide (e.g. shared across tenants) to avoid a double install.
-# See templates/upstream/upstream.yaml + files/upstream-agent-sandbox-v0.5.3.yaml.
+# Vendored upstream agent-sandbox controller (apiGroup agents.x-k8s.io, v0.5.3).
+# deploy: true (default) => the chart installs the upstream controller Deployment and its
+# RBAC + Services (rendered from the verbatim, SHA-pinned manifest under
+# agent-sandbox-platform/upstream/), so a single `helm install` brings up the whole
+# platform. The four agents.x-k8s.io CRDs live in chart/crds/ and are ALWAYS applied by
+# `helm install` (they are NOT gated by this flag), so they exist before the chart's own
+# SandboxTemplate / SandboxWarmPool instances are validated. Set deploy=false when the
+# controller is already installed cluster-wide; then also pass `helm install --skip-crds`
+# if the CRDs are already present.
+# See templates/upstream/upstream.yaml + crds/ + files/upstream-agent-sandbox-v0.5.3.yaml.
 upstream:
   deploy: true
 
