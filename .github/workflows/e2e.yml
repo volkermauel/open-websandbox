@@ -31,9 +31,9 @@ jobs:
       SYS_NS: agent-sandbox-system
       RUNTIME_NS: agent-sandbox-runtime
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -54,8 +54,8 @@ jobs:
           config: ${{ matrix.runtime == 'gvisor' && 'infra/kind/kind-config-gvisor.yaml' || '' }}
           wait: 60s
 
-      - uses: azure/setup-kubectl@v4
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-kubectl@v5
+      - uses: azure/setup-helm@v5
 
       - name: Register gVisor RuntimeClass
         if: matrix.runtime == 'gvisor'
@@ -72,7 +72,7 @@ jobs:
       # self-built (no prebuilt image is published). Context = agent-sandbox/ because
       # sandbox-router/Dockerfile COPYs internal/ api/ extensions/api/.
       - name: Checkout upstream agent-sandbox@v0.5.3 (router self-build)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: kubernetes-sigs/agent-sandbox
           ref: v0.5.3
