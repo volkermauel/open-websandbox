@@ -4,19 +4,27 @@ Covers:
   * ``_validate_runtime_config()`` startup guard: unset + each known placeholder must
     raise ``RuntimeError``; a strong key must pass (mirrors broker
     ``test_validate_config_*`` in tests/unit/broker/test_coverage_gaps.py).
-  * ``_auth_runtime()`` request guard on the gated runtime surface (POST /execute,
-    /files/* and the terminal management endpoints POST/GET/DELETE /api/terminals[/{id}]):
-    with a key set, a missing or wrong Bearer is rejected (401) and a matching Bearer is
-    accepted; with the key UNSET the guard DENIES (503) — fail-closed at the request path,
-    independent of the startup boot guard / lifespan. The WS auth-frame path is covered in
-    test_terminal_extra.py; the gated /files/* + /execute surface is exercised across the
-    suite via the default-Bearer ``client`` fixture (see conftest.RT_AUTH).
+  * ``_auth_runtime()`` request guard on the gated runtime surface. EVERY app-defined
+    route except the two health/info endpoints (``GET /`` and ``GET /metrics``) is
+    gated — ``POST /execute``, the full ``/files/*`` + ``/ports`` surface, the terminal
+    management endpoints ``POST/GET/DELETE /api/terminals[/{id}]``, and the broker-backed
+    LLM-tool surface ``/upload`` / ``/download`` / ``/list`` / ``/exists``. This invariant
+    is enforced by ``test_full_surface_auth_invariant`` below: a route-table-driven
+    regression guard that iterates ``app.routes`` and asserts each ``APIRoute`` 401s
+    without a Bearer (except ``/`` + ``/metrics``, which stay 200) — so any newly-added
+    ungated route fails CI. With a key set, a missing/wrong Bearer is 401 and a match is
+    accepted; with the key UNSET the guard DENIES (503) — fail-closed, independent of the
+    startup boot guard / lifespan. The WS auth-frame path is covered in
+    test_terminal_extra.py; happy paths run via the default-Bearer ``client`` fixture.
 """
 
 from __future__ import annotations
 
+import re
+
 import pytest
 import server  # type: ignore[import-not-found]  # resolved via conftest sys.path insert
+from fastapi.routing import APIRoute
 
 _PLACEHOLDERS = ["", "dev-shared-secret-change-me", "change-me", "changeme", "placeholder"]
 
@@ -76,17 +84,47 @@ async def test_create_terminal_503_when_key_unset(workdir, client, monkeypatch):
     assert "dev" not in server._terminals
 
 
-# --- the rest of the gated surface 401s without the Bearer --------------------
+# --- route-table-driven auth invariant (regression guard) ---------------------
+# Instead of a hand-picked 4-route list, iterate `app.routes` and assert the FULL API
+# surface: every app-defined route except the two health/info endpoints (GET / and
+# GET /metrics) 401s without a Bearer. FastAPI's framework-generated /docs, /redoc,
+# /openapi.json are plain `starlette.routing.Route` (not APIRoute) and the WS terminal
+# route is an APIWebSocketRoute, so filtering to APIRoute covers exactly the app's own
+# endpoints. Any newly-added ungated route fails this test on purpose.
 
-@pytest.mark.parametrize("method,path,kwargs", [
-    ("POST", "/execute", {"json": {"command": "true"}}),
-    ("GET", "/files/list", {"params": {"directory": "/workspace"}}),
-    ("GET", "/files/cwd", {}),
-    ("GET", "/api/terminals", {}),
-])
-async def test_gated_surface_rejects_missing_bearer(workdir, client_noauth, monkeypatch, method, path, kwargs):
-    # With a key set, EVERY gated endpoint rejects a missing Bearer with 401 — proves the
-    # whole surface (not just POST /api/terminals) is wired to _auth_runtime.
+_OPEN = {"/", "/metrics"}
+
+
+def _surface_cases() -> list:
+    """Build (method, path, expected_status) cases from the live route table.
+
+    Path params are filled with a placeholder (``{file_path:path}`` -> ``x``) so the
+    request matches the route; the auth dependency fires during dependency resolution,
+    before any path/query/body validation, so a 401 short-circuits regardless of the
+    placeholder values. Non-GET requests carry an empty JSON body for the same reason.
+    """
+    cases = []
+    for route in server.app.routes:
+        if not isinstance(route, APIRoute):
+            continue  # skip WebSocket + framework doc/schema routes
+        method = next(iter(sorted(route.methods - {"HEAD"})))
+        path = re.sub(r"\{[^}]+\}", "x", route.path)
+        expected = 200 if route.path in _OPEN else 401
+        cases.append(pytest.param(method, path, expected, id=f"{method} {route.path}"))
+    return cases
+
+
+@pytest.mark.parametrize("method,path,expected", _surface_cases())
+async def test_full_surface_auth_invariant(
+    workdir, client_noauth, monkeypatch, method, path, expected
+):
+    # With a key set, EVERY gated endpoint rejects a missing Bearer with 401; the two
+    # health/info endpoints (/, /metrics) stay 200 — proving the whole surface (not just
+    # a hand-picked subset) is wired to _auth_runtime, and that / + /metrics are the
+    # only intentionally-open routes.
     monkeypatch.setenv("RUNTIME_API_KEY", "s3cret-key")
+    kwargs = {"json": {}} if method != "GET" else {}
     r = await getattr(client_noauth, method.lower())(path, **kwargs)
-    assert r.status_code == 401
+    assert r.status_code == expected, (
+        f"{method} {path}: expected {expected}, got {r.status_code} [{r.text[:120]}]"
+    )

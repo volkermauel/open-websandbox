@@ -329,7 +329,7 @@ class ArchiveRequest(BaseModel):
     paths: list[str]
 
 
-@app.get("/ports")
+@app.get("/ports", dependencies=[Security(_auth_runtime)])
 async def list_ports():
     # Restricted runtime: no host-port introspection. Surface an empty list so the
     # UI ports panel renders cleanly (matches open-terminal's restricted fallback).
@@ -658,7 +658,7 @@ def _archive_impl(req: ArchiveRequest, subdir: str | None) -> Response:
 # coexist with the open-terminal /files/* surface above (used by the terminal UI).
 
 
-@app.post("/upload")
+@app.post("/upload", dependencies=[Security(_auth_runtime)])
 async def tool_upload(file: UploadFile = File(...), subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     base = _request_base(subdir)
     filename = os.path.basename(file.filename or "upload")
@@ -676,7 +676,7 @@ async def tool_upload(file: UploadFile = File(...), subdir: str | None = Header(
     return {"saved": full, "bytes": n}
 
 
-@app.get("/download/{file_path:path}")
+@app.get("/download/{file_path:path}", dependencies=[Security(_auth_runtime)])
 async def tool_download(file_path: str, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     full = _safe_path(file_path, _request_base(subdir))
     if not os.path.isfile(full):
@@ -685,7 +685,7 @@ async def tool_download(file_path: str, subdir: str | None = Header(default=None
     return FileResponse(full, media_type=mime or "application/octet-stream", filename=os.path.basename(full))
 
 
-@app.get("/list/{file_path:path}")
+@app.get("/list/{file_path:path}", dependencies=[Security(_auth_runtime)])
 async def tool_list(file_path: str, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     fp = file_path.strip() or "."
     resolved = _safe_path(fp, _request_base(subdir))
@@ -705,7 +705,7 @@ async def tool_list(file_path: str, subdir: str | None = Header(default=None, al
     return {"path": resolved, "entries": entries}
 
 
-@app.get("/exists/{file_path:path}")
+@app.get("/exists/{file_path:path}", dependencies=[Security(_auth_runtime)])
 async def tool_exists(file_path: str, subdir: str | None = Header(default=None, alias="X-Workspace-Subdir")):
     full = _safe_path(file_path.strip() or ".", _request_base(subdir))
     return {"exists": os.path.exists(full), "is_file": os.path.isfile(full), "is_dir": os.path.isdir(full)}
