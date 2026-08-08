@@ -26,4 +26,4 @@ jobs:
       - name: Lint (ruff)
         run: ruff check agent-sandbox-platform
       - name: Unit tests + coverage (≥95% across broker + runtime)
-        run: pytest tests/unit --cov=server --cov=main --cov-branch --cov-report=term-missing
+        run: pytest tests/unit --cov=agent-sandbox-platform/broker --cov=agent-sandbox-platform/runtime --cov-branch --cov-report=term-missing --cov-fail-under=95
