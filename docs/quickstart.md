@@ -39,26 +39,27 @@ control):
 kubectl create namespace agent-sandbox-system agent-sandbox-runtime
 ```
 
-## 2. Install the upstream controller + CRDs
+## 2. (Optional) Verify the vendored upstream manifest
 
-The upstream `kubernetes-sigs/agent-sandbox` manifest is vendored and SHA256-recorded
-in the repo — apply the local copy, not a remote URL:
+Since [#39](https://github.com/volkermauel/open-websandbox/pull/39), the chart installs
+the upstream `agent-sandbox` controller + CRDs for you (`upstream.deploy: true` by
+default; the four `agents.x-k8s.io` / `extensions.agents.x-k8s.io` CRDs ship in
+`chart/crds/` and are applied before the chart's templates). There is **no separate
+manual `kubectl apply` step** — `helm install` in the next section brings up the
+whole platform, including the controller (image
+`registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.3`).
+
+The manifest the chart renders from is vendored and SHA256-recorded in the repo.
+You can verify its integrity before installing (run from the repo root):
 
 ```bash
-# Verify integrity (run from the repo root)
 sha256sum -c agent-sandbox-platform/upstream/SHA256SUMS
-
-# Apply CRDs FIRST (forward-compatible), then controller
-kubectl apply -f agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
-
-# Wait for the controller
-kubectl -n agent-sandbox-system wait deploy/agent-sandbox-controller \
-  --for=condition=Available --timeout=120s
 ```
 
-This installs image `registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.3` and
-the `agents.x-k8s.io` / `extensions.agents.x-k8s.io` CRDs (`Sandbox`, `SandboxClaim`,
-`SandboxTemplate`, `SandboxWarmPool`).
+> **Managing the controller yourself?** If the upstream controller already runs
+> cluster-wide, install with `--set upstream.deploy=false` (and add `--skip-crds` if
+> the CRDs are already present). In that case apply the vendored manifest yourself:
+> `kubectl apply -f agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml`.
 
 ## 3. Install the chart
 
@@ -140,7 +141,7 @@ helm install open-websandbox \
 
 The chart's post-install notes print the broker URL and how to retrieve the shared secret.
 
-## 4. Wait for the control plane + warm pool
+## 4. Wait for the control plane + warm pool, then verify
 
 ```bash
 # Broker + router
@@ -155,6 +156,31 @@ kubectl -n agent-sandbox-runtime wait sandboxwarmpool/code-standard-warmpool \
 If the warm pool is stuck at `0`, the usual cause is no schedulable gVisor node — re-run
 `infra/gvisor/activate-gvisor-node.sh` and check `kubectl get nodes -o wide
 -l sandbox-runtime=gvisor`. See [Operations > Troubleshooting](operations.md).
+
+### Verify the install
+
+Confirm every component the chart brought up is healthy — the upstream
+controller + CRDs, the broker, the router, and the warm pool of runtime pods:
+
+```bash
+# Upstream agent-sandbox controller (installed by the chart, upstream.deploy=true)
+kubectl -n agent-sandbox-system get deploy/agent-sandbox-controller
+
+# The four agents.x-k8s.io / extensions.agents.x-k8s.io CRDs (from chart/crds/)
+kubectl get crd | grep -E 'agents.x-k8s.io|extensions.agents.x-k8s.io'
+
+# Control plane pods (broker + router) — all Running/Ready
+kubectl -n agent-sandbox-system get pods -l app.kubernetes.io/part-of=open-sandbox
+
+# Warm pool — 2 pre-warmed runtime pods under gVisor (runsc)
+kubectl -n agent-sandbox-runtime get pods
+kubectl -n agent-sandbox-runtime get sandboxwarmpool
+```
+
+Expected: the controller, broker, and router Deployments are `Available`; the four
+CRDs are listed; and `code-standard-warmpool` shows `2` ready replicas. If anything is
+missing, re-check `helm status open-websandbox` and the [Operations > Troubleshooting](operations.md)
+guide.
 
 ## 5. Wire up Open WebUI
 
@@ -228,7 +254,9 @@ kubectl -n agent-sandbox-system logs -f deploy/owui-broker | \
 
 ```bash
 helm uninstall open-websandbox
-kubectl delete -f agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
+# Only if you applied the upstream manifest yourself (--set upstream.deploy=false);
+# otherwise 'helm uninstall' already removes the controller + CRDs it installed:
+# kubectl delete -f agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
 kubectl delete namespace agent-sandbox-runtime agent-sandbox-system
 ```
 

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > The published-image registry owner is not yet finalized; images are referenced
 > as `ghcr.io/$OWNER/open-sandbox-{broker,runtime,router}` (see
-> [Quickstart](README.md#quickstart)). Version comparison links will be added
+> [Quickstart](docs/quickstart.md)). Version comparison links will be added
 > once the canonical repository URL is fixed.
 
 ## [Unreleased]
@@ -26,7 +26,7 @@ controller, pinned at **v0.5.3** (manifest vendored and SHA256-recorded under
 - **gVisor-isolated per-user sandboxes.** One `runsc` sandbox per active chat:
   filtered-syscall userspace kernel, default-deny networking, admission policy,
   `/dev/kvm` not exposed. Four isolation layers (process / network / host /
-  node) per [`AgentSandbox.md`](AgentSandbox.md) §2.
+  node) per the [isolation-layers model](docs/architecture.md#isolation-layers).
 
 ### Added — control plane
 
