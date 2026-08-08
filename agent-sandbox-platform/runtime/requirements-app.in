@@ -1,0 +1,12 @@
+# Runtime server direct dependencies (editable source of truth).
+#
+# Lists only the runtime API server's direct dependencies, pinned to exact
+# versions. The fully-resolved lock (all transitives + hashes), which is what
+# actually gets installed, is generated into requirements-app.txt.
+#
+# Regenerate the lock after editing this file:
+#   uv pip compile --generate-hashes requirements-app.in -o requirements-app.txt
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+python-multipart==0.0.32
+prometheus_client==0.26.0

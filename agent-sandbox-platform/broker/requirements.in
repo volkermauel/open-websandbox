@@ -1,0 +1,14 @@
+# Broker dependencies — direct requirements (editable source of truth).
+#
+# This file lists only the broker's direct dependencies, pinned to exact
+# versions. The fully-resolved lock (all transitives + hashes), which is what
+# actually gets installed, is generated into requirements.txt.
+#
+# Regenerate the lock after editing this file:
+#   uv pip compile --generate-hashes requirements.in -o requirements.txt
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+httpx==0.28.1
+kubernetes==36.0.3
+websockets==17.0.1
+prometheus_client==0.26.0
