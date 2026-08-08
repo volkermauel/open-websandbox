@@ -51,3 +51,9 @@ CI runs `ruff` + unit tests on every push, and the KIND e2e suite on PRs.
   except for the parameterized knobs (images, env, runtimeClassName, sizes, …).
 - Don't change running behavior without a note in the PR description + (if user-facing) a
   `CHANGELOG.md` entry.
+
+## License
+
+open-websandbox is licensed under the **GNU Affero General Public License v3.0 only**
+(`AGPL-3.0-only`); see [`LICENSE`](LICENSE). By contributing, you agree that your
+contributions are licensed under the same terms.

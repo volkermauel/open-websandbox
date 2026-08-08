@@ -34,3 +34,9 @@ per-chat sandbox separation — and prevents accidental cross-session leakage. A
 kernel is an accepted residual risk**; resisting a dedicated, hostile tenant is explicitly
 **out of scope** for v0.1.0. See `openspec/changes/adopt-agent-sandbox/design.md` for the
 full model and `docs/security.md` for the layer-by-layer breakdown.
+
+## License
+
+open-websandbox is licensed under the **GNU Affero General Public License v3.0 only**
+(`AGPL-3.0-only`); see [`LICENSE`](LICENSE). This policy covers the open-websandbox
+control plane only — code run *inside* a sandbox is the user's responsibility.

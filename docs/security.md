@@ -16,7 +16,7 @@ scope for v0.1.0). See `openspec/changes/adopt-agent-sandbox/design.md` for the 
 
 1. **gVisor (`runsc`)** — each sandbox pod runs under the `gvisor` RuntimeClass: a userspace
    kernel intercepts the guest's syscalls, so the sandbox never sees the host kernel
-   directly. Node setup: [`../../infra/gvisor/`](../../infra/gvisor/).
+   directly. Node setup: [`../infra/gvisor/`](../infra/gvisor/).
 2. **Per-chat sandbox** — one sandbox per chat, keyed `sha256(user_id/session_id)[:12]`.
    Distinct chats get distinct pods, filesystems, and process trees. Nothing is shared
    across chats; only `/workspace` persists (per-user, on a RWX PVC).
