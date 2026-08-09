@@ -197,6 +197,29 @@ async def test_offload_failure_raises(fake_s3, monkeypatch, httpx_client):
     assert fake_s3.objects == {}                      # nothing written
 
 
+async def test_offload_keeps_old_object_when_upload_fails(fake_s3, monkeypatch, httpx_client):
+    """Offload uploads the NEW object before deleting the OLD one, so a mid-offload failure
+    (broker crash / upload error) never empties the prefix — the previous snapshot stays
+    restorable. Guards the upload-new-then-delete-old ordering (D7, #56)."""
+    monkeypatch.setattr(main, "PROXY_TIMEOUT", 30)
+    ts = iter([1700000000, 1700000005])
+    monkeypatch.setattr(main, "_now_ts", lambda: next(ts))
+    httpx_client.get.return_value = _snapshot_resp(b"ws-v1")
+    old_key = await main._offload_to_s3("owui-c-1", "10.0.0.1", "alice", "sess-1", final=True)
+    assert old_key in fake_s3.objects                       # prior snapshot seeded
+
+    # second offload whose S3 upload blows up after the snapshot GET succeeds
+    async def _boom(*a, **kw):
+        raise RuntimeError("upload exploded")
+    monkeypatch.setattr(main, "_s3_multipart_stream", _boom)
+    httpx_client.get.return_value = _snapshot_resp(b"ws-v2")
+    with pytest.raises(RuntimeError):
+        await main._offload_to_s3("owui-c-1", "10.0.0.1", "alice", "sess-1", final=True)
+
+    assert old_key in fake_s3.objects                       # OLD survived: delete ran AFTER upload
+    assert list(fake_s3.objects) == [old_key]               # prefix not empty -> restore still finds it
+
+
 async def test_offload_uses_multipart_for_large_snapshot(fake_s3, monkeypatch, httpx_client):
     """A snapshot larger than the part size is split into multiple S3 parts (D3)."""
     monkeypatch.setattr(main, "PROXY_TIMEOUT", 30)
