@@ -1308,6 +1308,7 @@ _LEADER_RENEW_SECONDS = _env_int("BROKER_LEADER_RENEW_SECONDS", 5)
 _is_leader = False
 _reaper_task: asyncio.Task | None = None
 _leader_task: asyncio.Task | None = None
+_periodic_task: asyncio.Task | None = None  # S3 periodic-sync (R1), leader-gated
 _coord_api: client.CoordinationV1Api | None = None
 
 
@@ -1370,9 +1371,53 @@ def _acquire_or_renew_lease() -> bool:
     return True
 
 
+# --- S3 periodic sync (R1) ---------------------------------------------------
+# A leader-gated background task snapshots every RUNNING s3-tiered sandbox to S3 every
+# BROKER_S3_PERIODIC_SYNC_SECONDS, so a node loss mid-session loses at most one interval.
+# The on-reap offload remains the final authoritative snapshot.
+async def _periodic_sync_once() -> int:
+    """Snapshot every Running s3-tiered sandbox to S3. Returns the count offloaded."""
+    if not S3_ENABLED or not S3_TIERED:
+        return 0
+    res = cast(dict, api.list_namespaced_custom_object(
+        SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes",
+        label_selector="app.kubernetes.io/managed-by=owui-broker"))
+    count = 0
+    for s in res.get("items", []):
+        labels = s.get("metadata", {}).get("labels", {}) or {}
+        if labels.get(PROFILE) != PERSISTENT or labels.get(PERSISTENT_MODE_LABEL) != S3_TIERED_MODE:
+            continue
+        sname = s.get("metadata", {}).get("name", "")
+        if _sandbox_operating_mode(sname) != "Running":
+            continue
+        pod_ip = _sandbox_pod_ip(s)
+        if not pod_ip:
+            continue
+        annots = s.get("metadata", {}).get("annotations", {}) or {}
+        try:
+            # periodic (not final): best-effort, no keep-alive — log + move on
+            await _offload_to_s3(sname, pod_ip, annots.get("broker-user", ""),
+                                 annots.get("broker-session", ""), final=False)
+            count += 1
+        except Exception as exc:  # noqa: BLE001 - one sandbox must not abort the sweep
+            log.warning("periodic s3 sync %s failed: %s", sname, exc)
+    return count
+
+
+async def _periodic_sync_loop() -> None:
+    """Leader-only loop: snapshot running s3-tiered sandboxes every interval (R1)."""
+    await asyncio.sleep(S3_PERIODIC_SYNC_SECONDS)  # let sandboxes warm up before the first sweep
+    while True:
+        try:
+            await _periodic_sync_once()
+        except Exception as exc:  # noqa: BLE001 - keep the loop alive across sweeps
+            log.warning("periodic s3 sync sweep failed: %s", exc)
+        await asyncio.sleep(S3_PERIODIC_SYNC_SECONDS)
+
+
 async def _apply_leadership(leader: bool) -> None:
-    """Start the reaper when leading, stop it when not. Testable core of _leader_loop."""
-    global _reaper_task
+    """Start the reaper (+ S3 periodic-sync when s3 is enabled) when leading; stop when not."""
+    global _reaper_task, _periodic_task
     if leader and (_reaper_task is None or _reaper_task.done()):
         _reaper_task = asyncio.create_task(_reaper_loop())
     elif not leader and _reaper_task is not None and not _reaper_task.done():
@@ -1380,6 +1425,14 @@ async def _apply_leadership(leader: bool) -> None:
         with contextlib.suppress(BaseException):
             await _reaper_task
         _reaper_task = None
+    # S3 periodic sync (R1): only the leader runs it, and only when S3 is enabled.
+    if leader and S3_ENABLED and (_periodic_task is None or _periodic_task.done()):
+        _periodic_task = asyncio.create_task(_periodic_sync_loop())
+    elif (not leader or not S3_ENABLED) and _periodic_task is not None and not _periodic_task.done():
+        _periodic_task.cancel()
+        with contextlib.suppress(BaseException):
+            await _periodic_task
+        _periodic_task = None
 
 
 async def _leader_loop() -> None:
@@ -1430,14 +1483,15 @@ async def _start_reaper():
 async def _stop_reaper():
     """Graceful shutdown: cancel the leader loop + reaper + close the upstream httpx pool
     so SIGTERM doesn't leave either task looping or in-flight proxy requests hanging."""
-    global _leader_task, _reaper_task
-    for task in (_leader_task, _reaper_task):
+    global _leader_task, _reaper_task, _periodic_task
+    for task in (_leader_task, _reaper_task, _periodic_task):
         if task is not None and not task.done():
             task.cancel()
             with contextlib.suppress(BaseException):
                 await task
     _leader_task = None
     _reaper_task = None
+    _periodic_task = None
     try:
         await _client.aclose()
     except Exception:
