@@ -125,13 +125,17 @@ def test_s3_cross_session_isolation(require_s3):
     marker_a, marker_b, marker_c = f"A-{uuid.uuid4().hex[:6]}", f"B-{uuid.uuid4().hex[:6]}", f"C-{uuid.uuid4().hex[:6]}"
 
     with httpx.Client(base_url=BROKER_URL, timeout=CLAIM_TIMEOUT) as probe:
+        # Phase 1 — offload each session ONE AT A TIME so the kind node never runs
+        # more than one sandbox pod (a constrained KIND node cannot hold 3 concurrent
+        # warm+s3 pods; the default e2e proves the node holds ~2).
         for (u, s), fn, mk in [(a, "a.txt", marker_a), (b, "b.txt", marker_b), (c_sess, "c.txt", marker_c)]:
             _claim_ready_session(probe, u, s)
             _write(probe, u, s, f"/workspace/{fn}", mk)
+            _wait_offloaded()
+            _wait_reaped(u, s)           # pod gone before creating the next
 
-        _wait_offloaded()
-        for u, s in (a, b, c_sess):
-            _wait_reaped(u, s)           # all three pods gone before any resume
+        # Phase 2 — resume each session ONE AT A TIME and assert it sees ONLY its own
+        # data (reaping between resumes to keep one restored pod on the node at a time).
 
         # resume A -> only a.txt; b.txt + c.txt must be ABSENT (no cross-session leak)
         _claim_ready_session(probe, *a)
@@ -141,9 +145,6 @@ def test_s3_cross_session_isolation(require_s3):
         assert ec_a == 0 and marker_a in out_a
         assert ec_b != 0, "session A can see session B's data (leak!)"
         assert ec_c != 0, "session A can see session C's data (same-user cross-chat leak!)"
-
-        # reap A before resuming B: keeps the kind node from running 2+ restored pods at
-        # once (each resume cold-starts a sandbox pod + restores from MinIO).
         _wait_offloaded()
         _wait_reaped(*a)
 
@@ -153,7 +154,6 @@ def test_s3_cross_session_isolation(require_s3):
         ec_a2, _ = _read(probe, *b, "/workspace/a.txt")
         assert ec_b2 == 0 and marker_b in out_b2
         assert ec_a2 != 0, "session B can see session A's data (leak!)"
-
         _wait_offloaded()
         _wait_reaped(*b)
 
