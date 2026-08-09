@@ -165,8 +165,6 @@ spec:
             secretKeyRef:
               name: owui-broker-secret
               key: shared-secret
-        - name: BROKER_WARMPOOL
-          value: {{ .Values.broker.warmPool | quote }}
         - name: BROKER_RUNTIME_NS
           value: {{ .Values.broker.runtimeNs | quote }}
         - name: BROKER_ROUTER_URL

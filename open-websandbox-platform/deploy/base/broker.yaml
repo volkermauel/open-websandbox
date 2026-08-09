@@ -87,7 +87,6 @@ spec:
         ports: [{name: http, containerPort: 8080}]
         env:
         - {name: BROKER_SHARED_SECRET, valueFrom: {secretKeyRef: {name: owui-broker-secret, key: shared-secret}}}
-        - {name: BROKER_WARMPOOL, value: "code-standard-warmpool"}
         - {name: BROKER_RUNTIME_NS, value: "agent-sandbox-runtime"}
         - {name: BROKER_ROUTER_URL, value: "http://sandbox-router-svc.agent-sandbox-system:8080"}
         - {name: BROKER_IDLE_TTL_SECONDS, value: "120"}          # ephemeral reap (return to warm pool)
