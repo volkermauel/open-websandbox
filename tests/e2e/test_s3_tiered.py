@@ -142,12 +142,20 @@ def test_s3_cross_session_isolation(require_s3):
         assert ec_b != 0, "session A can see session B's data (leak!)"
         assert ec_c != 0, "session A can see session C's data (same-user cross-chat leak!)"
 
+        # reap A before resuming B: keeps the kind node from running 2+ restored pods at
+        # once (each resume cold-starts a sandbox pod + restores from MinIO).
+        _wait_offloaded()
+        _wait_reaped(*a)
+
         # resume B -> only b.txt
         _claim_ready_session(probe, *b)
         ec_b2, out_b2 = _read(probe, *b, "/workspace/b.txt")
         ec_a2, _ = _read(probe, *b, "/workspace/a.txt")
         assert ec_b2 == 0 and marker_b in out_b2
         assert ec_a2 != 0, "session B can see session A's data (leak!)"
+
+        _wait_offloaded()
+        _wait_reaped(*b)
 
         # resume C -> only c.txt (same user as A, but different chat -> isolated)
         _claim_ready_session(probe, *c_sess)
