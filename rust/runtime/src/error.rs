@@ -27,6 +27,9 @@ pub enum ApiError {
     /// 409 — move destination already exists.
     #[error("{0}")]
     Conflict(String),
+    /// 413 — snapshot/restore stream exceeds `MAX_WORKSPACE_BYTES`.
+    #[error("{0}")]
+    PayloadTooLarge(String),
     /// 500 — internal filesystem/list failure.
     #[error("{0}")]
     Internal(String),
@@ -42,6 +45,7 @@ impl ApiError {
             ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
             ApiError::Conflict(_) => StatusCode::CONFLICT,
+            ApiError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             ApiError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
         }

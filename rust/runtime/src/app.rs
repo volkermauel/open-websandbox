@@ -3,13 +3,14 @@
 
 #![forbid(unsafe_code)]
 
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::Router;
 
 use crate::execute::execute;
 use crate::files::{
     delete_entry, get_cwd, list_dir, mkdir, move_entry, read_file, set_cwd, write_file,
 };
+use crate::snapshot::{restore, snapshot};
 use crate::state::AppState;
 
 /// Health/info payload returned by `GET /`. Field order matches the Python
@@ -49,7 +50,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/files/write", post(write_file))
         .route("/files/mkdir", post(mkdir))
         .route("/files/move", post(move_entry))
-        .route("/files/delete", delete(delete_entry));
+        .route("/files/delete", delete(delete_entry))
+        // S3-tiered workspace offload/restore (#52): stream native tar+zstd.
+        .route("/snapshot", get(snapshot))
+        .route("/restore", put(restore));
 
     open.merge(gated.with_state(state))
 }

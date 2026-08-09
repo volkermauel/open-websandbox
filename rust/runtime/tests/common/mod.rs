@@ -35,6 +35,15 @@ impl Env {
 
     /// Env with a custom output cap (for the truncation boundary tests).
     pub fn with_max_output(max_output_bytes: usize) -> Self {
+        Self::build(max_output_bytes, 2 * 1024 * 1024 * 1024)
+    }
+
+    /// Env with a custom snapshot/restore size cap (for the fail-on-exceed tests).
+    pub fn with_max_workspace_bytes(max_workspace_bytes: u64) -> Self {
+        Self::build(1_048_576, max_workspace_bytes)
+    }
+
+    fn build(max_output_bytes: usize, max_workspace_bytes: u64) -> Self {
         let tmp = TempDir::new().expect("tmp dir");
         let workdir = tmp.path().join("workspace");
         std::fs::create_dir_all(&workdir).expect("mkdir workdir");
@@ -43,6 +52,7 @@ impl Env {
         let config = RuntimeConfig {
             workdir: workdir.clone(),
             max_output_bytes,
+            max_workspace_bytes,
             runtime_key_file: key_path.clone(),
             shell: "/bin/sh".to_string(),
             ..RuntimeConfig::default()
@@ -113,6 +123,32 @@ impl Env {
                 .unwrap(),
             None => builder.body(Body::empty()).unwrap(),
         };
+        self.router.clone().oneshot(req).await.expect("oneshot")
+    }
+
+    /// Send a request with a raw (non-JSON) byte body and no subdir, used for
+    /// `/restore` which streams a zstd tarball as the request body.
+    pub async fn send_bytes(
+        &self,
+        method: Method,
+        uri: &str,
+        bearer: Bearer<'_>,
+        body: Vec<u8>,
+    ) -> Response<Body> {
+        let mut builder = Request::builder().method(method).uri(uri);
+        match bearer {
+            Bearer::Default => {
+                builder = builder.header("authorization", format!("Bearer {}", self.bearer));
+            }
+            Bearer::Explicit(v) => {
+                builder = builder.header("authorization", format!("Bearer {v}"));
+            }
+            Bearer::None => {}
+        }
+        let req = builder
+            .header("content-type", "application/zstd")
+            .body(Body::from(body))
+            .unwrap();
         self.router.clone().oneshot(req).await.expect("oneshot")
     }
 }
