@@ -835,12 +835,16 @@ def _workspace_size_bytes(base: str) -> int:
 
 
 async def _snapshot_chunks(base: str):
-    """Stream a zstd-compressed tar of `base` (arcroot '.') in ~1 MiB chunks.
+    """Stream a zstd-compressed tar of `base`'s CONTENTS (no leading '.' entry) in chunks.
 
-    Streams `tar -cf - -C <base> . | zstd -` so PUT /restore extracts straight back into
-    `base`. Honors SNAPSHOT_MAX_BYTES only via the pre-check (the pipeline itself is
-    unbounded; a truncated stream on disk error is logged, not re-statused)."""
-    cmd = f"tar -cf - -C {shlex.quote(base)} . | zstd -3 -q"
+    Uses `cd <base> && find . -mindepth 1 | tar --no-recursion` so the archive never
+    contains a '.' entry. That matters because PUT /restore runs as a non-root uid
+    against a root-owned emptyDir mount point: restoring a '.' entry would make tar try
+    to set the mount point's mode/mtime, which only the owner (root) may do, failing
+    the restore with exit 2. Streaming the contents (each entry listed by find) avoids
+    touching the mount point at all. Honors SNAPSHOT_MAX_BYTES only via the pre-check."""
+    cmd = (f"cd {shlex.quote(base)} && find . -mindepth 1 -print0 "
+           f"| tar --null --no-recursion -cf - -T - | zstd -3 -q")
     proc = await asyncio.create_subprocess_exec(
         "sh", "-c", cmd,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -920,6 +924,7 @@ async def restore(request: Request):
         rc = await proc.wait()
         if rc != 0:
             err = await proc.stderr.read() if proc.stderr else b""
+            log.error("restore pipeline failed rc=%s base=%s stderr=%s", rc, base, err[:300].decode('utf-8', 'replace'))
             raise HTTPException(
                 status_code=500,
                 detail=f"restore pipeline failed rc={rc}: {err[:200].decode('utf-8', 'replace')}",

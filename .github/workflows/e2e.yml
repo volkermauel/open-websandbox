@@ -303,9 +303,14 @@ jobs:
           echo "=== broker/minio pods ==="
           kubectl -n "$SYS_NS" get pods -o wide || true
           echo "=== broker logs ==="
-          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=120 || true
+          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=200 || true
           echo "=== runtime sandboxes ==="
           kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
+          echo "=== runtime pod logs (last 6 by age) ==="
+          for p in $(kubectl -n "$RUNTIME_NS" get pods --sort-by=.metadata.creationTimestamp -o name | tail -6); do
+            echo "--- $p ---"
+            kubectl -n "$RUNTIME_NS" logs "$p" --tail=80 || true
+          done
           kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
 
       - name: Install test deps

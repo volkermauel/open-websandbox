@@ -429,7 +429,7 @@ async def _restore_from_s3(sandbox_name: str, pod_ip: str, user_id: str, session
             content=_gen(), timeout=PROXY_TIMEOUT,
         )
     if r.status_code != 200:
-        raise RuntimeError(f"restore {sandbox_name} <- {latest} -> HTTP {r.status_code}")
+        raise RuntimeError(f"restore {sandbox_name} <- {latest} -> HTTP {r.status_code}: {r.text[:200]}")
     S3_RESTORE_TOTAL.inc()
     log.info("s3 restore %s <- %s", sandbox_name, latest)
     return latest
