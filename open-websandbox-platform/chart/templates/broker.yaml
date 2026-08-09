@@ -62,10 +62,24 @@ rules:
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # Per-session runtime API keys (issue #4): the broker mints one per sandbox, persists
 # it to Secret owui-runtime-key-<sandbox> in the runtime namespace, reads it per hop
-# (stateless), rotates it on resume, and deletes it on reap.
+# (stateless), rotates it (patch) on resume, deletes it on reap, and — issue #51 —
+# sweeps orphan keys (list).
+#
+# NOTE on resourceNames (defense-in-depth limitation): k8s RBAC `resourceNames` is an
+# EXACT-match list with no prefix/wildcard support, AND a Role that carries it cannot
+# be used to create Secrets of an arbitrary name. Per-session keys are minted DYNAMICALLY
+# at runtime (name = owui-runtime-key-<sandbox>), so their names cannot be enumerated in
+# `resourceNames` at install time. The pragmatic defense here is therefore scope, not
+# name-restriction: this Role is (a) namespaced to agent-sandbox-runtime, (b) limited to
+# the single `secrets` resource, and (c) pruned to the minimal verb set actually used
+# by the broker — get/list (read per hop + orphan sweep), create/patch (mint +
+# rotate-on-resume), delete (reap + orphan sweep). `update` (full replace) is
+# intentionally absent: rotation is patch-only, never a full replace. Enforcing a
+# name PREFIX at admission time would require a ValidatingAdmissionPolicy / OPA gate
+# (out of scope here; tracked as a follow-up).
 - apiGroups: [""]
   resources: ["secrets"]
-  verbs: ["get", "create", "update", "patch", "delete"]
+  verbs: ["get", "list", "create", "patch", "delete"]
 # Leader election (HA): the broker holds a coordination.k8s.io/Lease so only the elected
 # replica runs the reaper. At replicas=1 (default) the sole broker always wins — a no-op.
 - apiGroups: ["coordination.k8s.io"]
