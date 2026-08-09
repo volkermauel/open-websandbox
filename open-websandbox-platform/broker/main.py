@@ -418,8 +418,10 @@ async def _offload_to_s3(sandbox_name: str, pod_ip: str, user_id: str, session_i
                         final: bool = True) -> str:
     """GET /snapshot (stream) -> multipart PutObject under the session prefix (D1/D3).
 
-    Deletes prior objects under the prefix (keep-latest) + tags object-expiry metadata
-    (R2/D5). Raises on any failure so the caller can retry/keep-alive (D7)."""
+    Uploads the new object, then deletes prior objects under the prefix (keep-latest; the
+    prefix is never empty mid-offload, so a failure leaves the previous snapshot restorable,
+    D7/#56). Tags object-expiry metadata (R2/D5). Raises on any failure so the caller can
+    retry/keep-alive (D7)."""
     if not S3_ENABLED:
         return ""
     headers = _runtime_auth_headers(sandbox_name)
@@ -433,8 +435,11 @@ async def _offload_to_s3(sandbox_name: str, pod_ip: str, user_id: str, session_i
     if resp.status_code != 200:
         raise RuntimeError(f"snapshot {sandbox_name} -> HTTP {resp.status_code}")
     async with _get_s3_client() as s3:
-        await _s3_delete_prefix(s3, _s3_prefix(user_id, session_id), skip=key)
+        # Upload NEW first, then delete OLD (skip=key now actually skips the just-uploaded
+        # object): the prefix is never empty mid-offload, so a crash/failure leaves the
+        # previous snapshot restorable (D7, #56).
         await _s3_multipart_stream(s3, key, resp.aiter_bytes(S3_PART_SIZE), expires=expires)
+        await _s3_delete_prefix(s3, _s3_prefix(user_id, session_id), skip=key)
     S3_OFFLOAD_TOTAL.labels(kind=("final" if final else "periodic")).inc()
     log.info("s3 offload %s -> %s (final=%s)", sandbox_name, key, final)
     return key

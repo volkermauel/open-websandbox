@@ -10,4 +10,8 @@ mkdir -p "${PIP_CACHE_DIR:-$HOME/.cache/pip}" \
          "$HOME/.npm" \
          "${MAMBA_ROOT_PREFIX:-/packages}" \
          /workspace /tmp 2>/dev/null || true
-exec uvicorn server:app --host 0.0.0.0 --port 8888 --app-dir /app "$@"
+# Pin --loop asyncio: uvloop (auto-selected when installed) hits a host-dependent
+# SIGSEGV on Python 3.14 in uv_getaddrinfo/libuv (reproduced locally, not in CI). The
+# runtime is a low-QPS sandbox API, so uvloop's throughput edge is marginal; the stdlib
+# loop is cheap crash insurance. (#56) -- loop is the stdlib asyncio event loop.
+exec uvicorn server:app --host 0.0.0.0 --port 8888 --loop asyncio --app-dir /app "$@"
