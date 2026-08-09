@@ -1,0 +1,35 @@
+# Root Cargo workspace manifest for the Rust control plane (broker + runtime).
+# See `openspec/changes/rust-rewrite/` for the D1–D16 decisions.
+#
+# This is a *virtual* workspace (no `[package]` here); the real crates live in
+# `shared`, `broker`, and `runtime`. Cross-crate dependencies are pinned once in
+# `[workspace.dependencies]` below and consumed as `{ workspace = true }` so the
+# whole dependency tree stays single-version and auditable (D8).
+[workspace]
+resolver = "2"
+members = ["shared", "broker", "runtime"]
+
+[workspace.package]
+edition = "2021"
+license = "AGPL-3.0-only"
+authors = ["the open-websandbox contributors"]
+repository = "https://github.com/volkermauel/open-websandbox"
+homepage = "https://github.com/volkermauel/open-websandbox"
+
+# Pinned once via `cargo add`; member crates reference these with
+# `dep.workspace = true`. Versions resolved against the installed stable
+# toolchain (rustc/cargo 1.97.1).
+[workspace.dependencies]
+anyhow = "1.0.104"
+# k8s-openapi requires exactly one version feature to be enabled. `shared` owns
+# the CRD type derives and therefore owns this feature selection for now; when
+# `broker`/`runtime` gain binaries in PR-B/PR-C, the pinned k8s version feature
+# should move to the binary that talks to the API server (D3).
+k8s-openapi = { version = "0.28.0", features = ["latest"] }
+kube = { version = "4.2.0", features = ["derive"] }
+schemars = "1.2.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+subtle = "2.6.1"
+thiserror = "2.0.20"
+utoipa = "5.5.0"

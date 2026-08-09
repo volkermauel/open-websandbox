@@ -37,3 +37,7 @@ site/
 .coverage
 htmlcov/
 *,cover
+
+# rust / cargo build artifacts
+target/
+/rust/target/
