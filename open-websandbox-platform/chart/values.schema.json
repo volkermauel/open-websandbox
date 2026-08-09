@@ -102,7 +102,7 @@
           "type": "object",
           "additionalProperties": false,
           "description": "S3-tiered cold tier (issue #52). Set broker.persistentMode=s3-tiered + enabled=true to eliminate PVCs (hot tier=emptyDir, cold tier=S3). Off by default; default install unchanged.",
-          "required": ["enabled", "endpoint", "bucket", "prefix", "region", "credentialsSecret", "retentionDays", "compression", "periodicSyncInterval", "sizeLimit", "tmpfs"],
+          "required": ["enabled", "endpoint", "bucket", "prefix", "region", "credentialsSecret", "retentionDays", "compression", "sse", "periodicSyncInterval", "sizeLimit", "tmpfs"],
           "properties": {
             "enabled": { "type": "boolean", "description": "Gate the whole feature (and the broker boot guard that rejects s3-tiered without it)." },
             "endpoint": { "type": "string", "description": "Bring-your-own S3-compatible URL (https://...). Empty allowed when enabled=false." },
@@ -112,6 +112,7 @@
             "credentialsSecret": { "type": "string", "description": "Secret (system ns) with access-key-id + secret-access-key. Bring-your-own (chart references, does not create)." },
             "retentionDays": { "type": "integer", "minimum": 1, "description": "Per-session lifetime (R2): object Expires = now + retentionDays." },
             "compression": { "type": "string", "enum": ["zstd"], "description": "Compression codec (zstd only, D9)." },
+            "sse": { "type": "string", "pattern": "^(AES256|aws:kms|)$", "description": "Server-side encryption at rest (D9). AES256=SSE-S3 (default, AWS S3); empty disables SSE for stores without a KMS/SSE backend (dev MinIO)." },
             "periodicSyncInterval": { "type": "integer", "minimum": 30, "description": "R1: snapshot running sessions every N seconds." },
             "sizeLimit": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$", "description": "Hot-tier emptyDir sizeLimit + runtime MAX_WORKSPACE_BYTES (default 2Gi, D2/D9)." },
             "tmpfs": { "type": "boolean", "description": "true => /workspace is tmpfs (Memory) instead of disk-backed emptyDir." },

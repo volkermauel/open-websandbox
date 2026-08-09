@@ -87,6 +87,7 @@ broker:
     credentialsSecret: ""      # a Secret (in the system ns) w/ access-key-id + secret-access-key
     retentionDays: 30           # per-session lifetime (R2): object Expires = now + retentionDays
     compression: zstd           # zstd only (D9)
+    sse: "AES256"              # SSE-S3 at rest (D9); set "" for stores without a KMS/SSE backend (dev MinIO)
     periodicSyncInterval: 300   # R1: snapshot running sessions every N seconds
     sizeLimit: "2Gi"            # hot-tier emptyDir sizeLimit + runtime MAX_WORKSPACE_BYTES (D2/D9)
     tmpfs: false                # true => /workspace is tmpfs (Memory) instead of disk-backed emptyDir

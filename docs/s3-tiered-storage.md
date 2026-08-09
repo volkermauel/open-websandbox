@@ -59,8 +59,10 @@ kubectl -n agent-sandbox-system create secret generic owui-s3-creds \
 ```
 
 Transport is TLS (`https://` endpoint); objects are written with **SSE-S3** (`AES256`) at
-rest (D9). The broker reads the credentials from the projected files (no S3 secret lands in
-pod env, consistent with #48).
+rest by default (D9), controlled by `broker.s3.sse` (`AES256` | `aws:kms` | `""`). Set it to
+`""` for S3-compatible stores without a KMS/SSE backend (e.g. dev MinIO, which rejects
+SSE requests unless configured with a KMS). The broker reads the credentials from the
+projected files (no S3 secret lands in pod env, consistent with #48).
 
 ## Retention (per-session lifetime)
 

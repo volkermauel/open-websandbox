@@ -142,6 +142,10 @@ S3_RETENTION_DAYS = _env_int("BROKER_S3_RETENTION_DAYS", 30)        # per-sessio
 S3_PERIODIC_SYNC_SECONDS = _env_int("BROKER_S3_PERIODIC_SYNC_SECONDS", 300)  # R1
 S3_SIZE_LIMIT = os.environ.get("BROKER_S3_SIZE_LIMIT", "2Gi")       # hot-tier emptyDir sizeLimit (D2/D9)
 S3_TMPFS = os.environ.get("BROKER_S3_TMPFS", "").lower() in ("1", "true", "yes", "on")
+# SSE at rest (D9): "AES256" = SSE-S3 (default; works on AWS S3). Set "" to disable
+# for S3-compatible stores without a KMS/SSE backend (e.g. dev MinIO, which rejects
+# SSE requests unless configured with a KMS).
+S3_SSE = os.environ.get("BROKER_S3_SSE", "AES256").strip()
 S3_OFFLOAD_MAX_ATTEMPTS = _env_int("BROKER_S3_OFFLOAD_MAX_ATTEMPTS", 5)        # D7 retry ceiling
 S3_OFFLOAD_BACKOFF_SECONDS = _env_int("BROKER_S3_OFFLOAD_BACKOFF_SECONDS", 10)  # D7 backoff base
 S3_PART_SIZE = _env_int("BROKER_S3_PART_SIZE_BYTES", 8 * 1024 ** 2)   # multipart streaming chunk
@@ -344,7 +348,7 @@ async def _s3_multipart_stream(s3, key: str, chunks, *, expires) -> str:
 
     SSE-S3 at rest (D9) + Expires/metadata (R2/D5). Aborts the upload on any failure."""
     mu = await s3.create_multipart_upload(
-        Bucket=S3_BUCKET, Key=key, ServerSideEncryption="AES256",  # SSE-S3 (D9)
+        Bucket=S3_BUCKET, Key=key, **({"ServerSideEncryption": S3_SSE} if S3_SSE else {}),  # SSE-S3 (D9) when configured
         ContentType="application/zstd", Expires=expires,
         Metadata={"session-snapshot": "1", "retention-days": str(S3_RETENTION_DAYS)},
     )

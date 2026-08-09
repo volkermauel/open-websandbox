@@ -24,6 +24,7 @@ broker:
     credentialsSecret: "owui-s3-creds"   # created by tests/e2e/fixtures/minio.yaml
     retentionDays: 1
     compression: zstd
+    sse: ""                      # dev MinIO has no KMS/SSE backend; disable SSE (the broker omits the header)
     periodicSyncInterval: 600     # keep the periodic sweep out of the way (reap is authoritative)
     sizeLimit: "2Gi"
     tmpfs: false

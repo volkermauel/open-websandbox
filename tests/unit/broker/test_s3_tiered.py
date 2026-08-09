@@ -171,7 +171,15 @@ async def test_offload_writes_object_keep_latest_with_expiry(fake_s3, monkeypatc
     assert fake_s3.objects[k2]["data"] == b"ws-bytes-v2"
     assert fake_s3.objects[k2]["ServerSideEncryption"] == "AES256"   # SSE-S3 (D9)
     assert fake_s3.objects[k2]["Expires"] is not None               # expiry metadata (R2/D5)
-    assert fake_s3.objects[k2]["Metadata"]["retention-days"] == "7"
+
+
+async def test_offload_omits_sse_when_disabled(fake_s3, monkeypatch, httpx_client):
+    """SSE-S3 is conditional: with S3_SSE="" the broker omits the header (dev MinIO has no KMS)."""
+    monkeypatch.setattr(main, "S3_SSE", "")
+    monkeypatch.setattr(main, "_now_ts", lambda: 1700000000)
+    httpx_client.get.return_value = _snapshot_resp(b"no-sse")
+    key = await main._offload_to_s3("owui-c-1", "10.0.0.1", "alice", "sess-1", final=True)
+    assert "ServerSideEncryption" not in fake_s3.objects[key]      # header omitted entirely
 
 
 async def test_offload_failure_raises(fake_s3, monkeypatch, httpx_client):

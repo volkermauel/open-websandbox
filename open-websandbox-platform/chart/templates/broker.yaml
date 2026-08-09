@@ -183,6 +183,8 @@ spec:
           value: {{ .Values.broker.s3.region | default "us-east-1" | quote }}
         - name: BROKER_S3_RETENTION_DAYS
           value: {{ .Values.broker.s3.retentionDays | quote }}
+        - name: BROKER_S3_SSE
+          value: {{ .Values.broker.s3.sse | quote }}
         - name: BROKER_S3_PERIODIC_SYNC_SECONDS
           value: {{ .Values.broker.s3.periodicSyncInterval | quote }}
         - name: BROKER_S3_SIZE_LIMIT
