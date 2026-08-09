@@ -66,9 +66,15 @@ class FakeS3:
         return {"Contents": cs} if cs else {}
 
     async def delete_objects(self, *, Bucket, Delete):
-        for o in Delete["Objects"]:
-            self.objects.pop(o["Key"], None)
-        return {"Deleted": Delete["Objects"]}
+        # Batch DeleteObjects must NOT be used: MinIO requires Content-MD5 on it
+        # (botocore omits it). Retention uses per-object delete_object instead.
+        # Raising here guards against re-introducing the batch call (regression).
+        raise AssertionError("batch delete_objects must not be used; use delete_object")
+
+    async def delete_object(self, *, Bucket, Key):
+        # Single-object delete (portable: MinIO rejects batch DeleteObjects without
+        # Content-MD5). Mirrors real S3-compatible stores.
+        self.objects.pop(Key, None)
 
     async def get_object(self, *, Bucket, Key):
         return {"Body": _FakeBody(self.objects[Key]["data"])}

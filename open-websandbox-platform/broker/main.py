@@ -333,7 +333,13 @@ async def _s3_delete_prefix(s3, prefix: str, *, skip: str | None = None) -> None
     objs = listed.get("Contents") or []
     to_delete = [{"Key": o["Key"]} for o in objs if o["Key"] != skip]
     if to_delete:
-        await s3.delete_objects(Bucket=S3_BUCKET, Delete={"Objects": to_delete, "Quiet": True})
+        # Per-object delete (not batch DeleteObjects): MinIO and some S3-compatible
+        # stores require a Content-MD5 header on the batch DeleteObjects API which
+        # botocore does not emit, so the whole offload would fail on keep-latest.
+        # Single-object delete carries no such requirement and works everywhere.
+        await asyncio.gather(*(
+            s3.delete_object(Bucket=S3_BUCKET, Key=o["Key"]) for o in to_delete
+        ))
 
 
 async def _s3_latest_key(s3, prefix: str) -> str | None:
