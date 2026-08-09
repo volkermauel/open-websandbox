@@ -3,9 +3,9 @@ apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool
 metadata:
   name: {{ .Values.broker.warmPool }}
-  namespace: {{ include "open-sandbox.runtimeNamespace" . }}
+  namespace: {{ include "open-websandbox.runtimeNamespace" . }}
   labels:
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.warmPool.replicas }}
   sandboxTemplateRef:

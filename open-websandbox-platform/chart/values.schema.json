@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "open-sandbox chart values",
+  "title": "open-websandbox chart values",
   "type": "object",
   "additionalProperties": false,
   "properties": {

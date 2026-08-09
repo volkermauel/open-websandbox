@@ -1,9 +1,9 @@
 # Open WebUI broker: auth + session->sandbox + reverse-proxy to the router.
 # Lives in agent-sandbox-system; needs RBAC in agent-sandbox-runtime to manage
 # SandboxClaims and read Sandboxes.
-{{- $sysNs := include "open-sandbox.systemNamespace" . -}}
-{{- $runNs := include "open-sandbox.runtimeNamespace" . -}}
-{{- $shared := include "open-sandbox.brokerSharedSecret" . -}}
+{{- $sysNs := include "open-websandbox.systemNamespace" . -}}
+{{- $runNs := include "open-websandbox.runtimeNamespace" . -}}
+{{- $shared := include "open-websandbox.brokerSharedSecret" . -}}
 {{/* Resolve the runtime inter-component key ONCE here. Default it to the broker shared
      secret so the broker's Bearer on POST /api/terminals matches RUNTIME_API_KEY;
      sandboxTemplate.runtimeApiKey overrides (then keep it equal to broker.sharedSecret).
@@ -17,10 +17,10 @@ metadata:
   name: owui-broker-secret
   namespace: {{ $sysNs }}
   labels:
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 type: Opaque
 stringData:
-  # Resolved via the open-sandbox.brokerSharedSecret helper: explicit value, else the
+  # Resolved via the open-websandbox.brokerSharedSecret helper: explicit value, else the
   # existing Secret is preserved across upgrades (lookup), else a random 48-char secret
   # is generated on first install. Never the dev placeholder.
   shared-secret: {{ $shared | quote }}
@@ -39,7 +39,7 @@ metadata:
   name: owui-runtime-secret
   namespace: {{ $runNs }}
   labels:
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 type: Opaque
 stringData:
   runtime-api-key: {{ $runtimeKey | quote }}
@@ -50,7 +50,7 @@ metadata:
   name: owui-broker
   namespace: {{ $sysNs }}
   labels:
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -58,7 +58,7 @@ metadata:
   name: owui-broker
   namespace: {{ $runNs }}
   labels:
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 rules:
 # claims (per-user-pvc) + templates (read base for shared-subpath)
 - apiGroups: ["extensions.agents.x-k8s.io"]
@@ -86,7 +86,7 @@ metadata:
   name: owui-broker
   namespace: {{ $runNs }}
   labels:
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 subjects:
 - kind: ServiceAccount
   name: owui-broker
@@ -102,7 +102,7 @@ metadata:
   name: owui-broker
   namespace: {{ $sysNs }}
   labels:
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.broker.replicas | default 1 }}
   selector:
@@ -148,7 +148,7 @@ spec:
           type: RuntimeDefault
       containers:
       - name: broker
-        image: {{ include "open-sandbox.image" (dict "Values" .Values "repo" "open-sandbox-broker") }}
+        image: {{ include "open-websandbox.image" (dict "Values" .Values "repo" "open-websandbox-broker") }}
         imagePullPolicy: {{ .Values.imagePullPolicy }}
         ports:
         - name: http
@@ -228,7 +228,7 @@ metadata:
   name: owui-broker
   namespace: {{ $sysNs }}
   labels:
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 spec:
   selector:
     app.kubernetes.io/name: owui-broker

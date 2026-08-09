@@ -1,35 +1,35 @@
 {{/*
 Expand the chart name.
 */}}
-{{- define "open-sandbox.name" -}}
+{{- define "open-websandbox.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{/*
-Standard labels applied to every open-sandbox resource. Workload selectors and
+Standard labels applied to every open-websandbox resource. Workload selectors and
 pod-template labels keep the source manifests' own distinguishing labels
 (e.g. app.kubernetes.io/name: owui-broker / sandbox-router) so selectors remain
 stable and chart-managed labels never collide with them.
 */}}
-{{- define "open-sandbox.labels" -}}
-app.kubernetes.io/name: open-sandbox
+{{- define "open-websandbox.labels" -}}
+app.kubernetes.io/name: open-websandbox
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/part-of: open-sandbox
+app.kubernetes.io/part-of: open-websandbox
 {{- end -}}
 
 {{/*
 System (control-plane) namespace — broker + router.
 */}}
-{{- define "open-sandbox.systemNamespace" -}}
+{{- define "open-websandbox.systemNamespace" -}}
 {{- .Values.namespaces.system -}}
 {{- end -}}
 
 {{/*
 Runtime (sandbox pods) namespace — SandboxTemplate/WarmPool, quota, NP, PVC.
 */}}
-{{- define "open-sandbox.runtimeNamespace" -}}
+{{- define "open-websandbox.runtimeNamespace" -}}
 {{- .Values.namespaces.runtime -}}
 {{- end -}}
 
@@ -38,9 +38,9 @@ Container image: <registry>/<owner>/<repo>:<tag>, or bare <repo>:<tag> when the
 registry is empty (dev / hand-loaded images).
 
 Usage:
-  {{ include "open-sandbox.image" (dict "Values" .Values "repo" "open-sandbox-broker") }}
+  {{ include "open-websandbox.image" (dict "Values" .Values "repo" "open-websandbox-broker") }}
 */}}
-{{- define "open-sandbox.image" -}}
+{{- define "open-websandbox.image" -}}
 {{- if .Values.imageRegistry -}}
 {{- printf "%s/%s/%s:%s" .Values.imageRegistry .Values.imageOwner .repo .Values.imageTag -}}
 {{- else -}}
@@ -58,12 +58,12 @@ Broker shared secret resolution.
 Never returns the legacy dev placeholder. Pair with values.schema.json, which also
 forbids the placeholder.
 */}}
-{{- define "open-sandbox.brokerSharedSecret" -}}
+{{- define "open-websandbox.brokerSharedSecret" -}}
 {{- $provided := .Values.broker.sharedSecret -}}
 {{- if $provided -}}
 {{- $provided -}}
 {{- else -}}
-{{- $existing := lookup "v1" "Secret" (include "open-sandbox.systemNamespace" .) "owui-broker-secret" -}}
+{{- $existing := lookup "v1" "Secret" (include "open-websandbox.systemNamespace" .) "owui-broker-secret" -}}
 {{- if and $existing (hasKey $existing.data "shared-secret") -}}
 {{- index $existing.data "shared-secret" | b64dec -}}
 {{- else -}}

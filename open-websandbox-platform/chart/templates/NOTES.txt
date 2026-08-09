@@ -1,4 +1,4 @@
-open-sandbox ({{ .Chart.Name }}) has been installed.
+open-websandbox ({{ .Chart.Name }}) has been installed.
 
 Release : {{ .Release.Name }}
 Chart   : {{ .Chart.Name }}-{{ .Chart.Version }}
