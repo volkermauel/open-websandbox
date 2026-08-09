@@ -145,9 +145,11 @@ def minio_list_objects(prefix: str = "users/") -> list[str]:
     """List object keys under `prefix` in the e2e MinIO bucket (via the broker's boto3)."""
     script = f"""
 import boto3, os, json
+from botocore.config import Config
 c = boto3.client('s3', endpoint_url=os.environ['BROKER_S3_ENDPOINT'],
    aws_access_key_id=open('/etc/s3-creds/access-key-id').read().strip(),
-   aws_secret_access_key=open('/etc/s3-creds/secret-access-key').read().strip())
+   aws_secret_access_key=open('/etc/s3-creds/secret-access-key').read().strip(),
+   config=Config(s3={'addressing_style':'path'}))
 r = c.list_objects_v2(Bucket=os.environ['BROKER_S3_BUCKET'], Prefix={prefix!r})
 print(json.dumps([o['Key'] for o in r.get('Contents', [])]))
 """
@@ -162,10 +164,12 @@ def require_s3() -> None:
         pytest.skip("S3-tiered e2e is opt-in (set E2E_S3=1)")
     _kubectl_exec_broker("""
 import boto3, os
+from botocore.config import Config
 from botocore.exceptions import ClientError
 c = boto3.client('s3', endpoint_url=os.environ['BROKER_S3_ENDPOINT'],
    aws_access_key_id=open('/etc/s3-creds/access-key-id').read().strip(),
-   aws_secret_access_key=open('/etc/s3-creds/secret-access-key').read().strip())
+   aws_secret_access_key=open('/etc/s3-creds/secret-access-key').read().strip(),
+   config=Config(s3={'addressing_style':'path'}))
 try:
     c.create_bucket(Bucket=os.environ['BROKER_S3_BUCKET']); print('bucket created')
 except ClientError as e:
