@@ -1,0 +1,24 @@
+[package]
+name = "shared"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Cross-component contract: Kubernetes CRD types, auth helpers, and config for the open-websandbox Rust control plane."
+
+[lib]
+path = "src/lib.rs"
+
+# All dependency versions are pinned once in the root `[workspace.dependencies]`
+# (../Cargo.toml) so the whole tree stays single-version and auditable (D8).
+[dependencies]
+anyhow.workspace = true
+k8s-openapi.workspace = true
+kube.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+utoipa.workspace = true

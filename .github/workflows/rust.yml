@@ -1,0 +1,64 @@
+name: rust
+
+# Runs only when the Rust control plane changes. Touching Python / chart /
+# vendored files does not trigger this workflow, so the existing `ci.yml` and
+# `e2e.yml` pipelines stay unaffected. See `openspec/changes/rust-rewrite/`.
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "rust/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/rust.yml"
+  pull_request:
+    paths:
+      - "rust/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/rust.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  fmt-clippy-test:
+    name: fmt + clippy + test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+      - name: cargo clippy (-D warnings)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test --all
+
+  deny:
+    name: cargo deny (advisories / licenses / bans)
+    runs-on: ubuntu-latest
+    # Non-blocking: a cargo-deny infra hiccup (registry or advisory-DB outage)
+    # or a newly-flagged advisory surfaces visibly without failing the gate.
+    # Findings are triaged from this job's red/green status; the hard gates are
+    # fmt + clippy + test above.
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny
+      - name: cargo deny check
+        run: cargo deny check
