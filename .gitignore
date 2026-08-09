@@ -8,6 +8,9 @@ progress.md
 # build artifacts / archives
 *.tar
 *.tgz
+# ...except vendored Helm subchart dependencies (so a plain `helm install` of the
+# chart works without `helm dependency build` — e.g. the optional otel-collector).
+!open-websandbox-platform/chart/charts/*.tgz
 *.tar.gz
 *.zip
 

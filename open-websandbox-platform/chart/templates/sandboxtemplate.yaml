@@ -3,6 +3,13 @@
 # controller merges a claim's `workspace` VCT into the pod, replacing the
 # template's same-named emptyDir — so the SAME template serves ephemeral
 # (emptyDir, warm pool) and persistent (cephfs PVC, cold) profiles.
+{{/* OTLP endpoint for the runtime (broker+runtime traces share the same endpoint;
+     see broker.yaml). Explicit monitoring.otlp.endpoint wins; else the bundled
+     collector. Empty => runtime tracing disabled. */}}
+{{- $otlp := .Values.monitoring.otlp.endpoint -}}
+{{- if and (not $otlp) .Values.otelCollector.enabled -}}
+{{- $otlp = printf "http://%s-otelCollector.%s.svc.cluster.local:4318" .Release.Name .Release.Namespace -}}
+{{- end -}}
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate
 metadata:
@@ -72,6 +79,10 @@ spec:
           value: ""
         - name: KUBERNETES_PORT_443_TCP_PROTO
           value: ""
+        {{- if $otlp }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: {{ $otlp | quote }}
+        {{- end }}
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true

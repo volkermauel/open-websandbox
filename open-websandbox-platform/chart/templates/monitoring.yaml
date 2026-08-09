@@ -1,0 +1,55 @@
+{{/* Monitoring objects for the optional Prometheus scrape layer.
+
+     Gated behind monitoring.prometheus.enabled so clusters WITHOUT the
+     prometheus-operator (monitoring.coreos.com) CRDs install cleanly. Enable only
+     on clusters running kube-prometheus-stack / the prometheus-operator.
+
+     - ServiceMonitor: scrapes the broker via the owui-broker Service (:http/metrics).
+     - PodMonitor:      scrapes the runtime pods (app: code-standard, :8888/metrics).
+       The runtime namespace is default-deny (NetworkPolicy); allow ingress from your
+       Prometheus namespace so the scraper can reach the pods on 8888.
+*/}}
+{{- if .Values.monitoring.prometheus.enabled -}}
+{{- $sysNs := include "open-websandbox.systemNamespace" . -}}
+{{- $runNs := include "open-websandbox.runtimeNamespace" . -}}
+{{- $interval := .Values.monitoring.prometheus.interval | default "60s" -}}
+{{- /* scrapeTimeout must be < interval so Prometheus does not flap on slow scrapes. */ -}}
+{{- $timeout := .Values.monitoring.prometheus.scrapeTimeout | default "30s" -}}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: owui-broker
+  namespace: {{ $sysNs }}
+  labels:
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: owui-broker
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ $interval }}
+      scrapeTimeout: {{ $timeout }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: owui-runtime
+  namespace: {{ $runNs }}
+  labels:
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ $runNs }}
+  selector:
+    matchLabels:
+      app: code-standard
+  podMetricsEndpoints:
+    - targetPort: 8888
+      path: /metrics
+      interval: {{ $interval }}
+      scrapeTimeout: {{ $timeout }}
+{{- end -}}

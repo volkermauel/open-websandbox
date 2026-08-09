@@ -199,6 +199,39 @@
         "kubeDnsCidr": { "type": "string", "minLength": 1 },
         "kubeDnsCidrIPv6": { "type": "string", "minLength": 1 }
       }
+    },
+    "monitoring": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Observability: Prometheus scrape (ServiceMonitor/PodMonitor) + OpenTelemetry traces (bring-your-own collector). All off by default.",
+      "properties": {
+        "prometheus": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "monitoring.coreos.com ServiceMonitor + PodMonitor (requires the prometheus-operator CRDs).",
+          "properties": {
+            "enabled": { "type": "boolean", "description": "Render ServiceMonitor (broker) + PodMonitor (runtime). Off by default so CRD-less clusters install cleanly." },
+            "interval": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$", "description": "Scrape interval (Prometheus duration). Default 60s." },
+            "scrapeTimeout": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$", "description": "Scrape timeout (Prometheus duration). Must be < interval to avoid flapping. Default 30s." }
+          }
+        },
+        "otlp": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "OTLP endpoint for broker + runtime traces (OTEL_EXPORTER_OTLP_ENDPOINT). Empty => tracing disabled (soft no-op).",
+          "properties": {
+            "endpoint": { "type": "string", "description": "OTLP/HTTP base endpoint, e.g. http://collector:4318. Empty disables tracing." }
+          }
+        }
+      }
+    },
+    "otelCollector": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Optional bundled opentelemetry-collector subchart (off by default). Values pass through to the upstream chart; 'enabled' gates its deployment.",
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Deploy the bundled opentelemetry-collector subchart and default monitoring.otlp.endpoint to it." }
+      }
     }
   },
   "definitions": {
