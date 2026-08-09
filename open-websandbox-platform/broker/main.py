@@ -110,14 +110,40 @@ if DEFAULT_PROFILE not in (EPHEMERAL, PERSISTENT):
 MANAGED_BY = {"app.kubernetes.io/managed-by": "owui-broker"}
 BASE_TEMPLATE = os.environ.get("BROKER_BASE_TEMPLATE", "code-standard-v1")
 # Persistent backing, deploy-selectable: per-user-pvc (claim + per-user PVC) or
-# shared-subpath (direct per-user Sandbox + subPath slice of one shared RWX PVC).
+# shared-subpath (direct per-user Sandbox + subPath slice of one shared RWX PVC), or
+# s3-tiered (issue #52: emptyDir hot tier + S3 cold tier, broker-orchestrated offload).
+PVC_MODES = ("per-user-pvc", "shared-subpath")
+S3_TIERED_MODE = "s3-tiered"
 PERSISTENT_MODE = os.environ.get("BROKER_PERSISTENT_MODE", "per-user-pvc").lower()
-if PERSISTENT_MODE not in ("per-user-pvc", "shared-subpath"):
+if PERSISTENT_MODE not in ("per-user-pvc", "shared-subpath", S3_TIERED_MODE):
     PERSISTENT_MODE = "per-user-pvc"  # pragma: no cover - defensive fallback for malformed BROKER_PERSISTENT_MODE
+S3_TIERED = PERSISTENT_MODE == S3_TIERED_MODE
 SHARED_PVC = os.environ.get("BROKER_SHARED_PVC", "workspace-shared")
 SHARED_PREFIX = os.environ.get("BROKER_SHARED_PREFIX", "owui-s-")
 CHAT_PREFIX = os.environ.get("BROKER_CHAT_PREFIX", "owui-c-")
 PER_USER_PVC_PREFIX = os.environ.get("BROKER_PER_USER_PVC_PREFIX", "workspace-p-")
+# --- S3-tiered cold tier (issue #52) -------------------------------------------
+# A third persistent backing mode: the hot tier is a size-limited emptyDir /workspace;
+# the cold tier is a bring-your-own S3-compatible bucket (D6). The broker is the SOLE
+# S3 client (the runtime pod stays network-isolated, #50): it offloads /workspace -> S3
+# on reap and restores S3 -> a fresh pod on resume. Fully behind BROKER_S3_ENABLED
+# (default off); aioboto3 is soft-imported so the broker boots without it installed.
+# Object format: <S3_PREFIX>/<uid-hash>/chats/<sid-hash>/workspace-<ts>.tar.zst (D3).
+S3_ENABLED = os.environ.get("BROKER_S3_ENABLED", "").lower() in ("1", "true", "yes", "on")
+S3_ENDPOINT = os.environ.get("BROKER_S3_ENDPOINT", "")
+S3_BUCKET = os.environ.get("BROKER_S3_BUCKET", "")
+S3_PREFIX = os.environ.get("BROKER_S3_PREFIX", "users").strip("/")
+S3_REGION = os.environ.get("BROKER_S3_REGION", "us-east-1")
+S3_CREDS_DIR = os.environ.get("BROKER_S3_CREDS_DIR", "/etc/s3-creds")
+S3_ACCESS_KEY_ID_FILE = os.path.join(S3_CREDS_DIR, "access-key-id")
+S3_SECRET_ACCESS_KEY_FILE = os.path.join(S3_CREDS_DIR, "secret-access-key")
+S3_RETENTION_DAYS = _env_int("BROKER_S3_RETENTION_DAYS", 30)        # per-session lifetime (R2/D5)
+S3_PERIODIC_SYNC_SECONDS = _env_int("BROKER_S3_PERIODIC_SYNC_SECONDS", 300)  # R1
+S3_SIZE_LIMIT = os.environ.get("BROKER_S3_SIZE_LIMIT", "2Gi")       # hot-tier emptyDir sizeLimit (D2/D9)
+S3_TMPFS = os.environ.get("BROKER_S3_TMPFS", "").lower() in ("1", "true", "yes", "on")
+S3_OFFLOAD_MAX_ATTEMPTS = _env_int("BROKER_S3_OFFLOAD_MAX_ATTEMPTS", 5)        # D7 retry ceiling
+S3_OFFLOAD_BACKOFF_SECONDS = _env_int("BROKER_S3_OFFLOAD_BACKOFF_SECONDS", 10)  # D7 backoff base
+S3_PART_SIZE = _env_int("BROKER_S3_PART_SIZE_BYTES", 8 * 1024 ** 2)   # multipart streaming chunk
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("broker")
@@ -129,6 +155,14 @@ except Exception:                      # pragma: no cover - local dev fallback
     config.load_kube_config()
 api = client.CustomObjectsApi()
 core = client.CoreV1Api()  # per-user-pvc mode: manage per-user PVCs
+
+# aioboto3 is only needed when BROKER_S3_ENABLED (soft import, like OTel). With s3
+# disabled (default), the broker boots + imports without it installed.
+try:  # pragma: no cover - optional dep, exercised live in the image
+    import aioboto3  # type: ignore[import-not-found]  # noqa: F401
+except Exception:  # pragma: no cover
+    aioboto3 = None  # type: ignore[assignment]
+
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -234,6 +268,176 @@ def _runtime_auth_headers(sandbox_name: str) -> dict:
     key = _runtime_key_for(sandbox_name)
     return {"Authorization": f"Bearer {key}"} if key else {}
 
+
+# --- S3-tiered cold tier (issue #52) ------------------------------------------
+# The broker is the sole S3 client (#50 preserved). It streams the runtime /workspace
+# off (GET /snapshot -> multipart PutObject) and back on (GetObject -> PUT /restore).
+PERSISTENT_MODE_LABEL = "broker-persistent-mode"  # labels s3-tiered sandboxes for the reaper
+
+
+def _s3_uid(user_id: str) -> str:
+    """Content-hash of the user id for the S3 key (avoids raw PII in object keys)."""
+    return hashlib.sha256(user_id.encode()).hexdigest()[:16]
+
+
+def _s3_sid(session_id: str) -> str:
+    """Content-hash of the session id for the S3 key."""
+    return hashlib.sha256(session_id.encode()).hexdigest()[:16]
+
+
+def _s3_prefix(user_id: str, session_id: str) -> str:
+    """Object-key prefix for one session: <S3_PREFIX>/<uid>/chats/<sid>/ (D3)."""
+    return f"{S3_PREFIX}/{_s3_uid(user_id)}/chats/{_s3_sid(session_id)}/"
+
+
+def _s3_object_key(user_id: str, session_id: str, ts: int) -> str:
+    """Versioned snapshot key; zero-padded ts so lexical order == chronological (D3)."""
+    return f"{_s3_prefix(user_id, session_id)}workspace-{ts:010d}.tar.zst"
+
+
+@contextlib.asynccontextmanager
+async def _get_s3_client():
+    """Yield an aioboto3 S3 client. **The test seam**: monkeypatch `main._get_s3_client`
+    to inject a fake. Reads creds from the projected Secret files (no secret in env, #48)."""
+    if aioboto3 is None:  # pragma: no cover
+        raise RuntimeError("aioboto3 not installed (BROKER_S3_ENABLED requires it)")
+    try:
+        with open(S3_ACCESS_KEY_ID_FILE) as f:
+            access_key = f.read().strip()
+        with open(S3_SECRET_ACCESS_KEY_FILE) as f:
+            secret_key = f.read().strip()
+    except OSError as exc:  # pragma: no cover
+        raise RuntimeError(f"S3 credentials unreadable at {S3_CREDS_DIR}: {exc}") from exc
+    session = aioboto3.Session()
+    async with session.client(
+        "s3", endpoint_url=(S3_ENDPOINT or None), region_name=S3_REGION,
+        aws_access_key_id=access_key, aws_secret_access_key=secret_key,
+    ) as s3:
+        yield s3
+
+
+async def _s3_delete_prefix(s3, prefix: str, *, skip: str | None = None) -> None:
+    """Delete every object under `prefix` except `skip` (keep-latest, R2)."""
+    listed = await s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
+    objs = listed.get("Contents") or []
+    to_delete = [{"Key": o["Key"]} for o in objs if o["Key"] != skip]
+    if to_delete:
+        await s3.delete_objects(Bucket=S3_BUCKET, Delete={"Objects": to_delete, "Quiet": True})
+
+
+async def _s3_latest_key(s3, prefix: str) -> str | None:
+    """Newest object under prefix (lexical max == chronological); None when empty."""
+    listed = await s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
+    keys = [o["Key"] for o in (listed.get("Contents") or [])]
+    return max(keys) if keys else None
+
+
+async def _s3_multipart_stream(s3, key: str, chunks, *, expires) -> str:
+    """Stream an async byte iterator into S3 as a multipart upload (bounded memory).
+
+    SSE-S3 at rest (D9) + Expires/metadata (R2/D5). Aborts the upload on any failure."""
+    mu = await s3.create_multipart_upload(
+        Bucket=S3_BUCKET, Key=key, ServerSideEncryption="AES256",  # SSE-S3 (D9)
+        ContentType="application/zstd", Expires=expires,
+        Metadata={"session-snapshot": "1", "retention-days": str(S3_RETENTION_DAYS)},
+    )
+    upload_id = mu["UploadId"]
+    parts: list[dict] = []
+    part_num = 1
+    buf = bytearray()
+    try:
+        async for chunk in chunks:
+            buf.extend(chunk)
+            while len(buf) >= S3_PART_SIZE:
+                data = bytes(buf[:S3_PART_SIZE])
+                del buf[:S3_PART_SIZE]
+                up = await s3.upload_part(Bucket=S3_BUCKET, Key=key, PartNumber=part_num,
+                                          UploadId=upload_id, Body=data)
+                parts.append({"PartNumber": part_num, "ETag": up["ETag"]})
+                part_num += 1
+        if buf:
+            up = await s3.upload_part(Bucket=S3_BUCKET, Key=key, PartNumber=part_num,
+                                      UploadId=upload_id, Body=bytes(buf))
+            parts.append({"PartNumber": part_num, "ETag": up["ETag"]})
+        await s3.complete_multipart_upload(
+            Bucket=S3_BUCKET, Key=key, UploadId=upload_id,
+            MultipartUpload={"Parts": parts},
+        )
+    except Exception:
+        with contextlib.suppress(Exception):
+            await s3.abort_multipart_upload(Bucket=S3_BUCKET, Key=key, UploadId=upload_id)
+        raise
+    return key
+
+
+async def _offload_to_s3(sandbox_name: str, pod_ip: str, user_id: str, session_id: str, *,
+                        final: bool = True) -> str:
+    """GET /snapshot (stream) -> multipart PutObject under the session prefix (D1/D3).
+
+    Deletes prior objects under the prefix (keep-latest) + tags object-expiry metadata
+    (R2/D5). Raises on any failure so the caller can retry/keep-alive (D7)."""
+    if not S3_ENABLED:
+        return ""
+    headers = _runtime_auth_headers(sandbox_name)
+    ts = _now_ts()
+    key = _s3_object_key(user_id, session_id, ts)
+    expires = (datetime.datetime.now(datetime.timezone.utc)
+               + datetime.timedelta(days=S3_RETENTION_DAYS))
+    resp = await _client.get(
+        f"http://{pod_ip}:8888/snapshot", headers=headers, timeout=PROXY_TIMEOUT,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"snapshot {sandbox_name} -> HTTP {resp.status_code}")
+    async with _get_s3_client() as s3:
+        await _s3_delete_prefix(s3, _s3_prefix(user_id, session_id), skip=key)
+        await _s3_multipart_stream(s3, key, resp.aiter_bytes(S3_PART_SIZE), expires=expires)
+    S3_OFFLOAD_TOTAL.labels(kind=("final" if final else "periodic")).inc()
+    log.info("s3 offload %s -> %s (final=%s)", sandbox_name, key, final)
+    return key
+
+
+async def _restore_from_s3(sandbox_name: str, pod_ip: str, user_id: str, session_id: str) -> str | None:
+    """List prefix -> latest object -> PUT /restore (stream). No-op when no object exists
+    (first creation). Raises on restore failure (D7: fail the resume, do NOT start empty)."""
+    if not S3_ENABLED:
+        return None
+    async with _get_s3_client() as s3:
+        latest = await _s3_latest_key(s3, _s3_prefix(user_id, session_id))
+        if latest is None:
+            return None  # nothing to restore (first creation)
+        obj = await s3.get_object(Bucket=S3_BUCKET, Key=latest)
+        body = obj["Body"]
+
+        async def _gen():
+            async for chunk in body.iter_chunks():
+                if chunk:
+                    yield chunk
+
+        r = await _client.put(
+            f"http://{pod_ip}:8888/restore", headers=_runtime_auth_headers(sandbox_name),
+            content=_gen(), timeout=PROXY_TIMEOUT,
+        )
+    if r.status_code != 200:
+        raise RuntimeError(f"restore {sandbox_name} <- {latest} -> HTTP {r.status_code}")
+    S3_RESTORE_TOTAL.inc()
+    log.info("s3 restore %s <- %s", sandbox_name, latest)
+    return latest
+
+
+async def _offload_to_s3_with_retry(sandbox_name: str, pod_ip: str, user_id: str,
+                                   session_id: str, *, final: bool = True) -> bool:
+    """Offload with backoff retry (D7). Returns True on success, False on exhaustion so
+    the caller keeps the pod+CR alive for the next reaper tick (no silent data loss)."""
+    for attempt in range(1, S3_OFFLOAD_MAX_ATTEMPTS + 1):
+        try:
+            await _offload_to_s3(sandbox_name, pod_ip, user_id, session_id, final=final)
+            return True
+        except Exception as exc:  # noqa: BLE001 - surface + retry any failure
+            log.warning("s3 offload %s attempt %d/%d failed: %s",
+                        sandbox_name, attempt, S3_OFFLOAD_MAX_ATTEMPTS, exc)
+            if attempt < S3_OFFLOAD_MAX_ATTEMPTS:
+                await asyncio.sleep(S3_OFFLOAD_BACKOFF_SECONDS * attempt)
+    return False
 
 # --- session -> sandbox -----------------------------------------------------
 def _ephemeral_sandbox_name(user_id: str, session_id: str) -> str:
@@ -357,17 +561,30 @@ def _create_sandbox(name: str, user_id: str, session_id: str, profile: str) -> d
     pod_spec = pod_tmpl.setdefault("spec", {})
     pod_tmpl.setdefault("metadata", {}).setdefault("labels", {})["profile"] = profile
     if profile == PERSISTENT:
-        pvc_name, prefix = _persistent_volume(user_id)
-        sub_path = f"{prefix}{_subdir_for(session_id)}/"
-        for v in pod_spec.get("volumes", []):
-            if v.get("name") == "workspace":
-                v.clear()
-                v["name"] = "workspace"
-                v["persistentVolumeClaim"] = {"claimName": pvc_name}
-        for c in pod_spec.get("containers", []):
-            for vm in c.get("volumeMounts", []):
-                if vm.get("name") == "workspace":
-                    vm["subPath"] = sub_path
+        if S3_TIERED:
+            # s3-tiered (issue #52): keep the template's emptyDir /workspace but enforce the
+            # hot-tier size limit (default 2Gi) + optional tmpfs (D2/D9). No PVC — the cold
+            # tier is S3; /workspace is the whole ephemeral hot tier (no subPath).
+            for v in pod_spec.get("volumes", []):
+                if v.get("name") == "workspace":
+                    v.clear()
+                    v["name"] = "workspace"
+                    ed = {"sizeLimit": S3_SIZE_LIMIT}
+                    if S3_TMPFS:
+                        ed["medium"] = "Memory"
+                    v["emptyDir"] = ed
+        else:
+            pvc_name, prefix = _persistent_volume(user_id)
+            sub_path = f"{prefix}{_subdir_for(session_id)}/"
+            for v in pod_spec.get("volumes", []):
+                if v.get("name") == "workspace":
+                    v.clear()
+                    v["name"] = "workspace"
+                    v["persistentVolumeClaim"] = {"claimName": pvc_name}
+            for c in pod_spec.get("containers", []):
+                for vm in c.get("volumeMounts", []):
+                    if vm.get("name") == "workspace":
+                        vm["subPath"] = sub_path
     # ephemeral: leave the template's emptyDir workspace as-is
     _inject_runtime_key_volume(pod_tmpl, name)
     labels = {**MANAGED_BY, PROFILE: profile}
@@ -594,6 +811,16 @@ async def resolve_sandbox(user_id: str, session_id: str, profile: str) -> tuple[
              user_id[:32], profile, name, pod_ip)
     if just_created and profile == PERSISTENT and session_id != user_id:
         await _migrate_staging_to_chat(user_id, name, pod_ip)
+    if S3_TIERED and profile == PERSISTENT:
+        # D4 synchronous restore: block readiness until S3 -> /workspace is present.
+        # No-op on first creation (no object); on restore failure we FAIL the resume
+        # (502) so the user never gets an empty workspace (D7).
+        try:
+            await _restore_from_s3(name, pod_ip, user_id, session_id)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"s3 restore failed: {exc}") from exc
     return name, pod_ip
 
 # --- reverse proxy ----------------------------------------------------------
@@ -637,6 +864,16 @@ SANDBOXES_DELETED = Counter(
 RUNTIME_HOP_ERRORS = Counter(
     "open_websandbox_broker_runtime_hop_errors_total",
     "Broker -> runtime hop failures (transport error / timeout)",
+)
+# S3-tiered offload/restore counters (issue #52); additive (no existing test asserts these).
+S3_OFFLOAD_TOTAL = Counter(
+    "open_websandbox_broker_s3_offload_total",
+    "S3 cold-tier offloads (snapshot -> S3), by trigger",
+    ["kind"],  # final | periodic
+)
+S3_RESTORE_TOTAL = Counter(
+    "open_websandbox_broker_s3_restore_total",
+    "S3 cold-tier restores (S3 -> restore)"
 )
 
 
@@ -998,11 +1235,29 @@ async def _reaper_loop():
                 sname = s["metadata"]["name"]
                 labels = s.get("metadata", {}).get("labels", {}) or {}
                 profile = labels.get(PROFILE, EPHEMERAL)
-                lu = int((s.get("metadata", {}).get("annotations", {}) or {}).get(LAST_USED, "0") or 0)
+                annots = s.get("metadata", {}).get("annotations", {}) or {}
+                lu = int(annots.get(LAST_USED, "0") or 0)
                 if not lu:
                     continue
                 idle = now - lu
-                if profile == PERSISTENT:
+                is_s3_tiered = labels.get(PERSISTENT_MODE_LABEL) == S3_TIERED_MODE
+                if profile == PERSISTENT and is_s3_tiered:
+                    # s3-tiered (issue #52): the cold tier is S3, so reap at IDLE_TTL like
+                    # ephemeral — but OFFLOAD /workspace -> S3 first (D7: retry+backoff, keep
+                    # pod+CR alive on failure so no snapshot is silently lost).
+                    if idle > IDLE_TTL:
+                        pod_ip = _sandbox_pod_ip(s)
+                        if not pod_ip:
+                            continue  # headless/parked: can't offload, leave for next tick
+                        ok = await _offload_to_s3_with_retry(
+                            sname, pod_ip, annots.get("broker-user", ""),
+                            annots.get("broker-session", ""), final=True)
+                        if ok:
+                            log.info("reaping s3-tiered sandbox %s (idle %ds)", sname, int(idle))
+                            _delete_sandbox(sname)
+                            SANDBOXES_DELETED.labels(profile=PERSISTENT).inc()
+                        # else: keep alive (D7) — retried next reaper tick
+                elif profile == PERSISTENT:
                     if idle > REAP_TTL:
                         log.info("reaping persistent sandbox %s (idle %ds)", sname, int(idle))
                         _delete_sandbox(sname)
@@ -1149,6 +1404,18 @@ def _validate_config() -> None:
         raise RuntimeError(
             "BROKER_SHARED_SECRET is unset or a known placeholder — refusing to start. "
             "Set a strong secret (the Helm chart auto-generates one)."
+        )
+    # S3-tiered mode (issue #52) requires S3 to be enabled + configured. Selecting the
+    # mode without enabling S3 is a misconfiguration that would silently lose data on
+    # reap (offload is a no-op when S3_ENABLED is false) — fail closed instead.
+    if S3_TIERED and not S3_ENABLED:
+        raise RuntimeError(
+            "BROKER_PERSISTENT_MODE=s3-tiered requires broker.s3.enabled=true "
+            "(BROKER_S3_ENABLED) — refusing to start to avoid silent data loss on reap."
+        )
+    if S3_ENABLED and (not S3_BUCKET or not S3_ENDPOINT):
+        raise RuntimeError(
+            "broker.s3.enabled=true requires BROKER_S3_ENDPOINT + BROKER_S3_BUCKET."
         )
 
 
