@@ -57,4 +57,6 @@
   shared-secret; s3-on renders creds + variant) + `ruff check` + `python3 -m pytest tests/unit -q`
   green.
 - [x] Vendored controller/CRDs/upstream byte-for-byte unchanged; PVC modes untouched.
-- [ ] Open PR; CI default e2e green (s3 off by default). MinIO-in-cluster e2e = scoped follow-up.
+- [x] Open PR; CI default e2e green (s3 off by default). **S3 e2e included**: a new
+      `e2e-s3` CI job deploys an in-cluster MinIO and runs the 3 mandatory scenarios
+      (offload-on-reap, restore-on-resume, cross-session isolation) behind E2E_S3=1.
