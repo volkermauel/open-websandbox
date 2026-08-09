@@ -9,7 +9,7 @@ FROM python:3.14-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential python3-dev \
       nodejs npm \
-      git curl jq zip unzip ca-certificates openssh-client bzip2 \
+      git curl jq zip unzip ca-certificates openssh-client bzip2 zstd \
       && rm -rf /var/lib/apt/lists/*
 
 # Runtime server deps, then curated "agent-common" libs (warm-ready on claim).

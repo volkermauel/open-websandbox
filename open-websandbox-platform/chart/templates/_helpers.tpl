@@ -71,3 +71,18 @@ forbids the placeholder.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Kubernetes storage quantity -> whole bytes, for the runtime MAX_WORKSPACE_BYTES
+env (broker.s3.sizeLimit, default 2Gi). Handles binary suffixes Ki/Mi/Gi/Ti and plain
+integers; decimal suffixes (K/M/G/T) round up. Used only when s3-tiered is enabled.
+*/}}
+{{- define "open-websandbox.sizeBytes" -}}
+{{- $s := (toString .) -}}
+{{- $n := int (regexFind "[0-9]+" $s) -}}
+{{- if hasSuffix "Ki" $s }}{{ mul $n 1024 }}
+{{- else if hasSuffix "Mi" $s }}{{ mul $n 1048576 }}
+{{- else if hasSuffix "Gi" $s }}{{ mul $n 1073741824 }}
+{{- else if hasSuffix "Ti" $s }}{{ mul $n 1099511627776 }}
+{{- else }}{{ $n }}{{- end -}}
+{{- end -}}

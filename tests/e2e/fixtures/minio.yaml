@@ -1,0 +1,73 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Lightweight in-cluster MinIO for the S3-tiered e2e (issue #52). Applied to the KIND
+# cluster BEFORE the helm install so the broker can reach http://minio:9000 and offload
+# / restore against a REAL S3 API. The owui-s3-creds Secret here is the same one
+# broker.s3.credentialsSecret references (bring-your-own, but for e2e we provision it).
+# The bucket itself is created by the test harness (tests/e2e/conftest.py) via the
+# broker's own boto3 + projected creds, so this manifest only stands up the server.
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: owui-s3-creds
+  namespace: agent-sandbox-system
+type: Opaque
+stringData:
+  access-key-id: owsb-e2e
+  secret-access-key: owsb-e2e-secret
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  namespace: agent-sandbox-system
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: agent-sandbox-system
+  labels: {app: minio}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: minio}}
+  template:
+    metadata: {labels: {app: minio}}
+    spec:
+      containers:
+      - name: minio
+        image: minio/minio:RELEASE.2024-08-29T01-40-52Z
+        args: [server, /data, --console-address, ":9001"]
+        env:
+        - {name: MINIO_ROOT_USER, value: owsb-e2e}
+        - {name: MINIO_ROOT_PASSWORD, value: owsb-e2e-secret}
+        ports:
+        - {name: s3, containerPort: 9000}
+        - {name: console, containerPort: 9001}
+        readinessProbe:
+          tcpSocket: {port: 9000}
+          periodSeconds: 3
+        volumeMounts:
+        - {name: data, mountPath: /data}
+      volumes:
+      - name: data
+        persistentVolumeClaim: {claimName: minio-data}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: agent-sandbox-system
+spec:
+  selector: {app: minio}
+  ports:
+  - {name: s3, port: 9000, targetPort: 9000}
+  - {name: console, port: 9001, targetPort: 9001}

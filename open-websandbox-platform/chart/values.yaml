@@ -73,6 +73,26 @@ broker:
     enabled: true
     port: 8080
     path: /metrics
+  # S3-tiered cold tier (issue #52). A third persistent backing mode
+  # (broker.persistentMode: s3-tiered): the hot tier is a size-limited emptyDir
+  # /workspace; the cold tier is a bring-your-own S3-compatible bucket. The broker is
+  # the SOLE S3 client (the runtime pod stays network-isolated). Off by default so the
+  # default install + e2e are unchanged. See docs/s3-tiered-storage.md.
+  s3:
+    enabled: false              # MUST be true to use persistentMode: s3-tiered
+    endpoint: ""                # bring-your-own S3-compatible URL (https://s3.example.com)
+    bucket: ""                  # bucket name (must already exist)
+    prefix: "users"             # object-key prefix (users/<uid>/chats/<sid>/workspace-<ts>.tar.zst)
+    region: "us-east-1"          # S3 region (some MinIO/R2 setups ignore it)
+    credentialsSecret: ""      # a Secret (in the system ns) w/ access-key-id + secret-access-key
+    retentionDays: 30           # per-session lifetime (R2): object Expires = now + retentionDays
+    compression: zstd           # zstd only (D9)
+    sse: "AES256"              # SSE-S3 at rest (D9); set "" for stores without a KMS/SSE backend (dev MinIO)
+    periodicSyncInterval: 300   # R1: snapshot running sessions every N seconds
+    sizeLimit: "2Gi"            # hot-tier emptyDir sizeLimit + runtime MAX_WORKSPACE_BYTES (D2/D9)
+    tmpfs: false                # true => /workspace is tmpfs (Memory) instead of disk-backed emptyDir
+    reaperPollSeconds: 60       # reaper loop interval (lower = faster offload-on-reap; default 60)
+
 
 sandboxTemplate:
   name: code-standard-v1
