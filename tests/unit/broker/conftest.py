@@ -30,7 +30,6 @@ import pytest
 
 # (1) deterministic env BEFORE import so module globals are stable -------------------
 os.environ.setdefault("BROKER_SHARED_SECRET", "test-secret")
-os.environ.setdefault("BROKER_WARMPOOL", "test-warmpool")
 os.environ.setdefault("BROKER_RUNTIME_NS", "test-runtime-ns")
 os.environ.setdefault("BROKER_ROUTER_URL", "http://router.test:8080")
 os.environ.setdefault("BROKER_IDLE_TTL_SECONDS", "120")

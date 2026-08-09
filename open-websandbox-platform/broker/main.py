@@ -225,6 +225,33 @@ def _delete_runtime_key(sandbox_name: str) -> None:
             log.warning("reap runtime key %s: %s", sandbox_name, exc)
 
 
+def _sweep_orphan_runtime_keys(live_sandbox_names: set[str]) -> None:
+    """Leader-gated sweep: reap per-session runtime-key Secrets whose owning
+    Sandbox no longer exists (issue #51 hardening).
+
+    A broker crash between _delete_sandbox (deletes the Sandbox CR) and
+    _delete_runtime_key, or between _ensure_runtime_key and a failed
+    _create_sandbox, leaves an orphaned Secret with no owning Sandbox. This
+    lists Secrets labeled managed-by=owui-broker in RUNTIME_NS, derives each
+    owner from the owui-runtime-key-<sandbox> naming convention (#50), and
+    deletes any whose Sandbox is gone. 404-tolerant (a concurrent reap may
+    have already removed it). Idempotent: a live owner's key is never touched."""
+    try:
+        secs = core.list_namespaced_secret(
+            RUNTIME_NS, label_selector="app.kubernetes.io/managed-by=owui-broker")
+    except client.ApiException as exc:  # pragma: no cover - non-fatal; next tick retries
+        log.warning("orphan-key sweep: list secrets failed: %s", exc)
+        return
+    for sec in (secs.items or []):
+        sname = sec.metadata.name if sec.metadata else None
+        if not sname or not sname.startswith(RUNTIME_KEY_PREFIX):
+            continue  # a managed-by Secret that isn't a per-session key — not ours to reap
+        sandbox_name = sname[len(RUNTIME_KEY_PREFIX):]
+        if sandbox_name in live_sandbox_names:
+            continue
+        _delete_runtime_key(sandbox_name)
+        log.info("orphan-key sweep: reaped %s (owning sandbox %s gone)", sname, sandbox_name)
+
 def _runtime_auth_headers(sandbox_name: str) -> dict:
     """Authorization header for an outbound broker -> runtime hop (terminal/execute/files).
 
@@ -1022,6 +1049,11 @@ async def _reaper_loop():
                          if (c.get("metadata", {}).get("labels", {}) or {}).get(PROFILE, EPHEMERAL) == EPHEMERAL)
             ACTIVE_SANDBOXES.labels(profile=PERSISTENT).set(_n_per)
             ACTIVE_SANDBOXES.labels(profile=EPHEMERAL).set(_n_eph)
+            # Orphan-Secret sweep (issue #51): a crash between deleting the Sandbox CR
+            # and its per-session key (or between minting the key and a failed Sandbox
+            # create) leaves an owner-less Secret. Reap any broker-owned runtime-key
+            # Secret whose Sandbox is gone (idempotent against this iteration's live set).
+            _sweep_orphan_runtime_keys({s["metadata"]["name"] for s in res.get("items", [])})
         except Exception as exc:        # pragma: no cover - keep the loop alive
             log.warning("reaper iteration error: %s", exc)
         await asyncio.sleep(60)

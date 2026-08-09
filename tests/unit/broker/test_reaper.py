@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import main  # type: ignore[import-not-found]
@@ -117,3 +118,47 @@ async def test_start_reaper_creates_task(monkeypatch):
         await main._leader_task
     except BaseException:
         pass
+
+
+# --- orphan runtime-key Secret sweep (issue #51) ---------------------------------
+def test_sweep_orphan_runtime_keys_deletes_orphan(core):
+    """Secret exists, owning Sandbox gone → sweep deletes it."""
+    core.list_namespaced_secret.return_value = SimpleNamespace(items=[
+        SimpleNamespace(metadata=SimpleNamespace(name="owui-runtime-key-owui-orphan")),
+    ])
+    main._sweep_orphan_runtime_keys(live_sandbox_names=set())
+    core.delete_namespaced_secret.assert_called_once_with(
+        "owui-runtime-key-owui-orphan", main.RUNTIME_NS)
+
+
+def test_sweep_orphan_runtime_keys_retains_live(core):
+    """Secret exists, owning Sandbox live → retained."""
+    core.list_namespaced_secret.return_value = SimpleNamespace(items=[
+        SimpleNamespace(metadata=SimpleNamespace(name="owui-runtime-key-owui-live")),
+    ])
+    main._sweep_orphan_runtime_keys(live_sandbox_names={"owui-live"})
+    core.delete_namespaced_secret.assert_not_called()
+
+
+def test_sweep_orphan_runtime_keys_ignores_non_prefixed(core):
+    """A managed-by Secret that isn't a per-session key is left alone."""
+    core.list_namespaced_secret.return_value = SimpleNamespace(items=[
+        SimpleNamespace(metadata=SimpleNamespace(name="some-other-secret")),
+        SimpleNamespace(metadata=SimpleNamespace(name="owui-runtime-key-owui-orphan")),
+    ])
+    main._sweep_orphan_runtime_keys(live_sandbox_names=set())
+    # only the prefixed orphan is reaped; the other managed-by Secret is untouched
+    core.delete_namespaced_secret.assert_called_once_with(
+        "owui-runtime-key-owui-orphan", main.RUNTIME_NS)
+
+
+async def test_reaper_loop_sweeps_orphan_runtime_key(api, core, reaper_one_tick):
+    """The reaper loop runs the sweep each leader iteration: an owner-less
+    runtime-key Secret (no owning Sandbox) is reaped end-of-tick."""
+    api.list_namespaced_custom_object.return_value = {"items": []}  # no live sandboxes
+    core.list_namespaced_secret.return_value = SimpleNamespace(items=[
+        SimpleNamespace(metadata=SimpleNamespace(name="owui-runtime-key-owui-orphan")),
+    ])
+    await _run_once()
+    core.delete_namespaced_secret.assert_called_once_with(
+        "owui-runtime-key-owui-orphan", main.RUNTIME_NS)
