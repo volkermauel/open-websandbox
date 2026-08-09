@@ -1,0 +1,136 @@
+{
+  "title": "open-websandbox overview",
+  "uid": "open-websandbox-overview",
+  "tags": ["open-websandbox"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "description": "Request rate / latency / errors, active sandboxes and the broker->runtime hop for open-websandbox (broker + runtime). All metrics use the open_websandbox_ prefix. Source of truth: broker /metrics (open_websandbox-platform/broker/main.py) + runtime /metrics.",
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus instance scraping the broker ServiceMonitor + runtime PodMonitor (monitoring.prometheus.enabled).",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
+    { "type": "panel", "id": "stat", "name": "Stat", "version": "" }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "${DS_PROMETHEUS}" },
+        "label": "Datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "1m",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Broker request rate (by route)",
+      "description": "rate(open_websandbox_broker_http_requests_total[5m]) grouped by templated route + method. Spikes here = front-door pressure.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (path, method) (rate(open_websandbox_broker_http_requests_total[5m]))", "legendFormat": "{{method}} {{path}}" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Broker latency p50 / p95 (seconds)",
+      "description": "histogram_quantile over open_websandbox_broker_http_request_duration_seconds_bucket. p95 is the SLO edge.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le, path) (rate(open_websandbox_broker_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p50 {{path}}" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le, path) (rate(open_websandbox_broker_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95 {{path}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Broker error rate (5xx, by route)",
+      "description": "rate(open_websandbox_broker_http_requests_total{status=~\"5..\"}[5m]). Non-zero = handler/runtime failures surfacing at the front door.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (path) (rate(open_websandbox_broker_http_requests_total{status=~\"5..\"}[5m]))", "legendFormat": "{{path}}" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Active sandboxes (by profile)",
+      "description": "open_websandbox_broker_active_sandboxes — the leader-gated reaper view. ephemeral vs persistent.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (profile) (open_websandbox_broker_active_sandboxes)", "legendFormat": "{{profile}}" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Sandbox create / delete rate",
+      "description": "Lifecycle churn: rate(open_websandbox_broker_sandboxes_{created,deleted}_total[5m]) by profile.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (profile) (rate(open_websandbox_broker_sandboxes_created_total[5m]))", "legendFormat": "created {{profile}}" },
+        { "refId": "B", "expr": "sum by (profile) (rate(open_websandbox_broker_sandboxes_deleted_total[5m]))", "legendFormat": "deleted {{profile}}" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Broker -> runtime hop errors",
+      "description": "rate(open_websandbox_broker_runtime_hop_errors_total[5m]) — transport/timeout failures on the broker->runtime send. Should be ~0.",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null },
+          { "color": "orange", "value": 0.01 },
+          { "color": "red", "value": 0.1 }
+        ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(open_websandbox_broker_runtime_hop_errors_total[5m]))" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Runtime request rate (total)",
+      "description": "sum(rate(open_websandbox_runtime_http_requests_total[5m])) — load on the in-sandbox runtime API.",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(open_websandbox_runtime_http_requests_total[5m]))" }
+      ]
+    }
+  ]
+}

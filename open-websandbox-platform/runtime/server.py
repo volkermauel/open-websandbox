@@ -88,12 +88,12 @@ app = FastAPI(
 )
 
 
-# --- observability: Prometheus metrics --------------------------------------
+# --- observability: Prometheus metrics (open_websandbox_ prefix) --------------
 # A per-method/per-status request counter (scraped via /metrics), mirroring the
 # broker. Best-effort: even when a downstream handler raises we count a 500 so
 # error spikes stay visible to the scraper.
 _REQUESTS = Counter(
-    "runtime_http_requests_total",
+    "open_websandbox_runtime_http_requests_total",
     "Runtime HTTP requests handled",
     ["method", "status"],
 )
@@ -114,6 +114,51 @@ async def _count_requests(request: Request, call_next):
 async def metrics() -> Response:
     """Prometheus exposition (process + python runtime metrics + the request counter)."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+# --- OpenTelemetry tracing (bring-your-own collector via OTLP) -------------------
+# Optional/soft: a complete no-op when the OTel libraries are not importable OR
+# OTEL_EXPORTER_OTLP_ENDPOINT is unset, so the runtime boots + serves regardless.
+# When configured it auto-instruments FastAPI (server spans) so the broker->runtime
+# hop lands as a child of the propagated trace context. No collector is deployed by
+# default.
+def _setup_telemetry(app_obj, service_name: str) -> None:
+    """Configure OTel tracing against a bring-your-own OTLP collector.
+
+    A no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set AND the opentelemetry-* packages
+    are importable. Instruments the FastAPI app so inbound requests are traced; the
+    /metrics scrape is excluded from spans.
+    """
+    endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if not endpoint:
+        return
+    try:
+        from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    except ImportError:
+        log.debug("OpenTelemetry libraries not installed; tracing disabled")
+        return
+
+    provider = TracerProvider(resource=Resource.create({
+        "service.name": os.environ.get("OTEL_SERVICE_NAME", service_name),
+        "service.namespace": "open-websandbox",
+    }))
+    # OTLPSpanExporter() honours OTEL_EXPORTER_OTLP_ENDPOINT / *_PROTOCOL per the OTel spec.
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    trace.set_tracer_provider(provider)
+    FastAPIInstrumentor.instrument_app(app_obj, excluded_urls="metrics")
+    log.info("OpenTelemetry tracing enabled -> %s (service=%s)", endpoint, service_name)
+
+
+# Bootstrap at import: no-op in tests (no OTEL_EXPORTER_OTLP_ENDPOINT); active in
+# production when the chart points the runtime at a collector (bundled or BYO).
+_setup_telemetry(app, "open-websandbox-runtime")
 
 
 class ExecuteRequest(BaseModel):

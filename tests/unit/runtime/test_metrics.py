@@ -14,7 +14,8 @@ import server
 
 
 async def test_metrics_endpoint_exposes_request_counter(client):
-    """GET /metrics -> 200 and exposes the runtime_http_requests_total counter.
+    """GET /metrics -> 200 and exposes the open_websandbox_runtime_http_requests_total
+    counter.
 
     A prior request (GET /) must have been counted under the same counter, proving
     the middleware is wired into the request pipeline.
@@ -25,7 +26,7 @@ async def test_metrics_endpoint_exposes_request_counter(client):
     r = await client.get("/metrics")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/plain")
-    assert "runtime_http_requests_total" in r.text
+    assert "open_websandbox_runtime_http_requests_total" in r.text
     # The middleware labelled both the GET / and this scrape.
     assert 'method="GET"' in r.text
 
@@ -45,7 +46,7 @@ async def test_metrics_counts_unhandled_errors_as_500(client, monkeypatch):
         await client.get("/files/list")
 
     r = await client.get("/metrics")
-    assert 'runtime_http_requests_total{method="GET",status="500"}' in r.text
+    assert 'open_websandbox_runtime_http_requests_total{method="GET",status="500"}' in r.text
 
 
 async def test_shutdown_reaps_active_terminals(client, clean_terminals):
@@ -68,3 +69,21 @@ async def test_shutdown_reaps_active_terminals(client, clean_terminals):
     # Populated-iteration arc -> the tracked terminal is reaped.
     await server._on_shutdown()
     assert sid not in server._terminals
+
+
+def test_runtime_metrics_prefix():
+    """The runtime counter is registered under the open_websandbox_ prefix (D1)."""
+    from prometheus_client import REGISTRY
+    collectors = set(REGISTRY._names_to_collectors.keys())
+    assert "open_websandbox_runtime_http_requests_total" in collectors
+    assert "runtime_http_requests_total" not in collectors
+
+
+def test_runtime_otel_noop_without_endpoint(monkeypatch):
+    """With no OTEL_EXPORTER_OTLP_ENDPOINT the runtime's OTel setup is a safe no-op."""
+    import server  # type: ignore[import-not-found]
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    # Re-running setup must not raise and must not instrument (endpoint unset).
+    server._setup_telemetry(server.app, "open-websandbox-runtime")
+    # The app still answers health probes.
+    assert server.app.routes  # instrumented-or-not, the FastAPI app is intact

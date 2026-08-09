@@ -8,6 +8,13 @@
      runtime namespace, and injected into each pod as a projected volume. The broker
      owns those Secrets (see the Role below: secrets create/get/patch/delete) and reads
      one per hop (stateless). Only the inbound broker shared-secret is resolved here. */}}
+{{/* OTLP endpoint for broker + runtime traces. Explicit monitoring.otlp.endpoint wins;
+     else the bundled collector (otelCollector.enabled) -> its OTLP/HTTP receiver.
+     Empty => tracing disabled (the soft OTel init is a no-op). */}}
+{{- $otlp := .Values.monitoring.otlp.endpoint -}}
+{{- if and (not $otlp) .Values.otelCollector.enabled -}}
+{{- $otlp = printf "http://%s-otelCollector.%s.svc.cluster.local:4318" .Release.Name .Release.Namespace -}}
+{{- end -}}
 ---
 apiVersion: v1
 kind: Secret
@@ -160,6 +167,10 @@ spec:
           value: {{ .Values.broker.persistentMode | quote }}
         - name: BROKER_PARK_IDLE_SECONDS
           value: {{ .Values.broker.parkIdleSeconds | quote }}
+        {{- if $otlp }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: {{ $otlp | quote }}
+        {{- end }}
         startupProbe:
           httpGet:
             path: {{ .Values.broker.probes.startup.path }}

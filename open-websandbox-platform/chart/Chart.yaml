@@ -13,3 +13,13 @@ keywords:
   - sandbox
   - agents
   - kubernetes
+# Optional dependencies (all OFF by default).
+# - opentelemetry-collector: bundled collector subchart for the optional OTel tracing
+#   layer (monitoring.otlp). Enabled via otelCollector.enabled; values pass straight
+#   through to the upstream chart.
+dependencies:
+  - name: opentelemetry-collector
+    version: 0.169.0
+    repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+    condition: otelCollector.enabled
+    alias: otelCollector

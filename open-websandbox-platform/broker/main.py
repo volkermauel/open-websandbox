@@ -49,7 +49,13 @@ from fastapi import (
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from kubernetes import client, config
 from openapi_spec import OPENAPI
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
 
 # --- config -----------------------------------------------------------------
 SHARED_SECRET = os.environ.get("BROKER_SHARED_SECRET", "")
@@ -375,7 +381,9 @@ def _create_sandbox(name: str, user_id: str, session_id: str, profile: str) -> d
         "spec": {"operatingMode": "Running", "shutdownPolicy": "Retain", "podTemplate": pod_tmpl},
     }
     try:
-        return cast(dict, api.create_namespaced_custom_object(SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes", body))
+        sbx = cast(dict, api.create_namespaced_custom_object(SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes", body))
+        SANDBOXES_CREATED.labels(profile=profile).inc()  # re-wired from #49's claim path -> direct create
+        return sbx
     except client.ApiException as exc:
         if exc.status == 409:
             return _get_sandbox(name)
@@ -505,6 +513,7 @@ async def _migrate_staging_to_chat(user_id: str, chat_name: str, chat_pod_ip: st
                 log.warning("staging migrate: %s not reachable; deleting staging to prevent cross-chat leak user=%s",
                             staging, user_id[:16])
                 _delete_sandbox(staging)
+                SANDBOXES_DELETED.labels(profile=PERSISTENT).inc()
                 return
             moved = 0
             try:
@@ -596,27 +605,150 @@ app = FastAPI(title="code-standard broker", docs_url=None, redoc_url=None, opena
 _client = httpx.AsyncClient(timeout=httpx.Timeout(PROXY_TIMEOUT), follow_redirects=False)
 
 
-# --- observability: a request counter gives reaper/resolve/proxy visibility -------
-_REQUESTS = Counter(
-    "broker_http_requests_total", "Broker HTTP requests handled", ["method", "status"]
+# --- observability: Prometheus metrics (open_websandbox_ prefix) ----------------
+# Bounded-cardinality route label: the matched Route's templated path
+# (e.g. /api/terminals/{session_id}, /healthz, /{path:path}), NOT the raw URL — the
+# catch-all proxy would otherwise mint a unique label per request (cardinality bomb).
+def _route_template(request: Request) -> str:
+    route = request.scope.get("route")
+    return getattr(route, "path", None) or "unmatched"
+
+
+_HTTP_REQUESTS = Counter(
+    "open_websandbox_broker_http_requests_total",
+    "Broker HTTP requests handled", ["method", "path", "status"],
+)
+_HTTP_DURATION = Histogram(
+    "open_websandbox_broker_http_request_duration_seconds",
+    "Broker HTTP request latency", ["method", "path", "status"],
+)
+ACTIVE_SANDBOXES = Gauge(
+    "open_websandbox_broker_active_sandboxes",
+    "Active sandboxes managed by the broker (leader-gated reaper view)", ["profile"],
+)
+SANDBOXES_CREATED = Counter(
+    "open_websandbox_broker_sandboxes_created_total",
+    "Sandboxes created by the broker", ["profile"],
+)
+SANDBOXES_DELETED = Counter(
+    "open_websandbox_broker_sandboxes_deleted_total",
+    "Sandboxes deleted/reaped by the broker", ["profile"],
+)
+RUNTIME_HOP_ERRORS = Counter(
+    "open_websandbox_broker_runtime_hop_errors_total",
+    "Broker -> runtime hop failures (transport error / timeout)",
 )
 
 
 @app.middleware("http")
-async def _count_requests(request: Request, call_next):
+async def _observe_request(request: Request, call_next):
+    """Count + time every request; always emit a label (even on unhandled error).
+
+    The route template is resolved AFTER call_next (in finally): the matched Route is
+    populated by the Router inside call_next, so scope["route"] is only set once routing
+    has happened. Bounded-cardinality templated path, never the raw URL.
+    """
+    start = time.perf_counter()
+    status = "500"
     try:
         response = await call_next(request)
-        _REQUESTS.labels(request.method, str(response.status_code)).inc()
+        status = str(response.status_code)
         return response
-    except Exception:
-        _REQUESTS.labels(request.method, "500").inc()
-        raise
+    finally:
+        route = _route_template(request)  # resolved post-routing (scope["route"] now set)
+        _HTTP_REQUESTS.labels(request.method, route, status).inc()
+        _HTTP_DURATION.labels(request.method, route, status).observe(time.perf_counter() - start)
+
+
+# --- OpenTelemetry tracing (bring-your-own collector via OTLP) -------------------
+# Optional/soft: a complete no-op when the OTel libraries are not importable OR
+# OTEL_EXPORTER_OTLP_ENDPOINT is unset, so the broker boots + serves regardless.
+# When configured it auto-instruments FastAPI (server spans) + httpx (client spans);
+# the broker->runtime hop is then traced end-to-end (trace context propagates via the
+# httpx headers the instrumentation injects). No collector is deployed by default.
+class _NoOpSpan:
+    """Stand-in span used when OTel is inactive; absorbs every call."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def set_attribute(self, *_a, **_k):
+        pass
+
+    def set_attributes(self, *_a, **_k):
+        pass
+
+    def record_exception(self, *_a, **_k):
+        pass
+
+    def add_event(self, *_a, **_k):
+        pass
+
+
+class _NoOpTracer:
+    """Stand-in tracer used when OTel is inactive."""
+
+    def start_as_current_span(self, *_a, **_k):
+        return _NoOpSpan()
+
+
+_tracer = _NoOpTracer()
+
+
+def _setup_telemetry(app_obj, service_name: str, *, client=None) -> None:
+    """Configure OTel tracing against a bring-your-own OTLP collector.
+
+    A no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set AND the opentelemetry-* packages
+    are importable. Instruments the FastAPI app + (optionally) the shared httpx client so
+    the broker->runtime hop is traced. healthz/readyz/metrics scrapes are excluded.
+    """
+    endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if not endpoint:
+        return
+    try:
+        from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        if client is not None:
+            from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    except ImportError:
+        log.debug("OpenTelemetry libraries not installed; tracing disabled")
+        return
+
+    provider = TracerProvider(resource=Resource.create({
+        "service.name": os.environ.get("OTEL_SERVICE_NAME", service_name),
+        "service.namespace": "open-websandbox",
+    }))
+    # OTLPSpanExporter() honours OTEL_EXPORTER_OTLP_ENDPOINT / *_PROTOCOL per the OTel spec.
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    trace.set_tracer_provider(provider)
+    FastAPIInstrumentor.instrument_app(app_obj, excluded_urls="healthz,readyz,metrics")
+    if client is not None:
+        HTTPXClientInstrumentor().instrument()
+    global _tracer
+    _tracer = trace.get_tracer("open-websandbox.broker")
+    log.info("OpenTelemetry tracing enabled -> %s (service=%s)", endpoint, service_name)
+
+
+# Bootstrap at import: no-op in tests (no OTEL_EXPORTER_OTLP_ENDPOINT); active in
+# production when the chart points the broker at a collector (bundled or BYO).
+_setup_telemetry(app, "open-websandbox-broker", client=_client)
 
 
 @app.get("/metrics", include_in_schema=False)
 async def metrics() -> Response:
-    """Prometheus exposition (process + python runtime metrics + the request counter).
-    Registered before the catch-all proxy so scrape traffic isn't forwarded to a sandbox."""
+    """Prometheus exposition: process/python-runtime metrics + the open_websandbox_*
+    counters/histograms/gauges. Registered before the catch-all proxy so scrape traffic
+    isn't forwarded to a sandbox."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
@@ -819,8 +951,20 @@ async def proxy(path: str, request: Request, _=Security(_auth)):
     body = await request.body()
     upstream = httpx.Request(request.method, f"http://{pod_ip}:8888/{path}",
                              headers=fwd, params=request.query_params, content=body)
-    resp = await _client.send(upstream, stream=True)
-    resp_body = await resp.aread()
+    with _tracer.start_as_current_span("broker.runtime_hop") as span:
+        # Correlate the hop to a specific sandbox (the auto httpx span only sees the URL).
+        span.set_attribute("sandbox.id", sandbox_id)
+        span.set_attribute("sandbox.pod_ip", pod_ip)
+        span.set_attribute("http.method", request.method)
+        span.set_attribute("http.route", path)
+        try:
+            resp = await _client.send(upstream, stream=True)
+            resp_body = await resp.aread()
+            span.set_attribute("http.status_code", resp.status_code)
+        except Exception as hop_exc:
+            RUNTIME_HOP_ERRORS.inc()
+            span.record_exception(hop_exc)
+            raise
     out_headers = {k: v for k, v in resp.headers.items() if k.lower() not in HOP}
     # Rewrite redirect Location so clients follow back through the broker instead of
     # the runtime pod IP (e.g. Starlette's /list/. -> /list/ 307), which is unreachable
@@ -862,6 +1006,7 @@ async def _reaper_loop():
                     if idle > REAP_TTL:
                         log.info("reaping persistent sandbox %s (idle %ds)", sname, int(idle))
                         _delete_sandbox(sname)
+                        SANDBOXES_DELETED.labels(profile=PERSISTENT).inc()
                     elif idle > PARK_TTL and _sandbox_operating_mode(sname) != "Suspended":
                         log.info("parking persistent sandbox %s (idle %ds)", sname, int(idle))
                         _set_sandbox_operating_mode(sname, "Suspended")
@@ -869,6 +1014,14 @@ async def _reaper_loop():
                     if idle > IDLE_TTL:
                         log.info("reaping ephemeral sandbox %s (idle %ds)", sname, int(idle))
                         _delete_sandbox(sname)
+                        SANDBOXES_DELETED.labels(profile=EPHEMERAL).inc()
+            # Active-sandbox gauge (leader view): count broker-owned sandboxes by profile.
+            _n_per = sum(1 for c in res.get("items", [])
+                         if (c.get("metadata", {}).get("labels", {}) or {}).get(PROFILE) == PERSISTENT)
+            _n_eph = sum(1 for c in res.get("items", [])
+                         if (c.get("metadata", {}).get("labels", {}) or {}).get(PROFILE, EPHEMERAL) == EPHEMERAL)
+            ACTIVE_SANDBOXES.labels(profile=PERSISTENT).set(_n_per)
+            ACTIVE_SANDBOXES.labels(profile=EPHEMERAL).set(_n_eph)
         except Exception as exc:        # pragma: no cover - keep the loop alive
             log.warning("reaper iteration error: %s", exc)
         await asyncio.sleep(60)

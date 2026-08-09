@@ -286,7 +286,7 @@ def test_stop_reaper_noop_when_no_task(monkeypatch):
 def test_metrics_endpoint(client):
     r = client.get("/metrics")
     assert r.status_code == 200
-    assert "broker_http_requests_total" in r.text  # the request counter is exposed
+    assert "open_websandbox_broker_http_requests_total" in r.text  # the prefixed request counter is exposed
 
 
 def test_stop_reaper_swallows_aclose_error(monkeypatch):
@@ -318,6 +318,7 @@ def test_metrics_middleware_counts_500(monkeypatch):
         assert r.status_code == 500
 
     val = REGISTRY.get_sample_value(
-        "broker_http_requests_total", {"method": "GET", "status": "500"}
+        "open_websandbox_broker_http_requests_total",
+        {"method": "GET", "path": "/{path:path}", "status": "500"},
     )
     assert val and val >= 1.0

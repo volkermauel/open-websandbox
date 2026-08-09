@@ -141,3 +141,59 @@ router:
   # service CIDR (kube-dns = fd00:1::a). NEVER widen to ::/0 (egresses the whole IPv6 internet
   # on :53); single-stack-IPv4 clusters can leave the default — the IPv4 rule still covers DNS.
   kubeDnsCidrIPv6: "fd00:1::a/128"
+
+# ---------------------------------------------------------------------------
+# Observability — Prometheus scrape (ServiceMonitor/PodMonitor) + OpenTelemetry
+# traces (bring-your-own collector) + an OPTIONAL bundled otel-collector subchart.
+# Everything OFF by default so the chart installs cleanly on clusters without the
+# prometheus-operator CRDs or a collector.
+monitoring:
+  # Prometheus scrape via monitoring.coreos.com ServiceMonitor + PodMonitor. Requires
+  # the prometheus-operator (kube-prometheus-stack) CRDs; OFF by default so clusters
+  # without it install cleanly. When enabled: a ServiceMonitor scrapes the broker
+  # (owui-broker Service, :8080/metrics) and a PodMonitor scrapes the runtime pods
+  # (app: code-standard, :8888/metrics). NOTE the runtime namespace is default-deny
+  # (NetworkPolicy) — allow ingress from your Prometheus namespace if you enable this.
+  prometheus:
+    enabled: false
+    interval: 60s          # per-minute is sufficient (owner decision)
+  # OpenTelemetry traces. Broker + runtime export via OTLP when `otlp.endpoint` is set
+  # (OTEL_EXPORTER_OTLP_ENDPOINT on both pods). Empty => tracing disabled (soft no-op;
+  # both services boot + serve regardless). Bring-your-own: point this at YOUR collector.
+  # When otelCollector.enabled is true (below) this defaults to the bundled collector.
+  otlp:
+    endpoint: ""
+# Optional bundled opentelemetry-collector subchart (OFF by default). When enabled,
+# the chart deploys a collector (deployment mode, release namespace) and
+# monitoring.otlp.endpoint defaults to its OTLP/HTTP receiver. Values below pass
+# straight through to the upstream chart:
+#   https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-collector
+otelCollector:
+  enabled: false
+  mode: deployment
+  image:
+    # otel-collector-contrib (the chart requires image.repository; contrib carries the
+    # OTLP receiver + common exporters). Pin to the chart's appVersion (0.169.0 -> 0.158.0).
+    repository: otel/opentelemetry-collector-contrib
+    tag: "0.158.0"
+  config:
+    # Receive OTLP from broker + runtime (grpc 4317 / http 4318). The chart derives the
+    # Service ports from these receivers, so 4318 is reachable at
+    # <release>-opentelemetry-collector.<ns>.svc:4318 (the default monitoring.otlp.endpoint).
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    exporters:
+      # Default: log traces to the collector's stdout. Point this at YOUR backend
+      # (otlp -> Tempo/Jaeger, etc.) via `otelCollector.config.exporters`.
+      debug:
+        verbosity: basic
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          exporters: [debug]
