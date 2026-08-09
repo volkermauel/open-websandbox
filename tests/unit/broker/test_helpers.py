@@ -28,20 +28,12 @@ def test_env_int_missing(monkeypatch):
 
 
 # --- deterministic name helpers --------------------------------------------------
-def test_claim_name_is_deterministic_and_prefixed():
-    a = main._claim_name("user-1", "sess-1")
-    b = main._claim_name("user-1", "sess-1")
+def test_ephemeral_sandbox_name_is_deterministic_and_prefixed():
+    a = main._ephemeral_sandbox_name("user-1", "sess-1")
+    b = main._ephemeral_sandbox_name("user-1", "sess-1")
     assert a == b
     assert a.startswith(main.CLAIM_PREFIX)
-    assert a != main._claim_name("user-1", "sess-2")
-
-
-def test_persistent_claim_name_is_per_user():
-    a = main._persistent_claim_name("user-1")
-    assert a.startswith(main.PERSISTENT_PREFIX)
-    # same user → same name; different user → different name
-    assert a == main._persistent_claim_name("user-1")
-    assert a != main._persistent_claim_name("user-2")
+    assert a != main._ephemeral_sandbox_name("user-1", "sess-2")
 
 
 def test_chat_sandbox_name_is_per_chat():

@@ -22,6 +22,7 @@ sandbox (get-or-create claim; resume if parked) -> reverse-proxy to the sandbox-
 injecting X-Sandbox-Id / X-Sandbox-Namespace / X-Sandbox-Pod-IP (priority-1 resolution).
 """
 import asyncio
+import base64
 import contextlib
 import copy
 import datetime
@@ -30,6 +31,7 @@ import hmac
 import json
 import logging
 import os
+import secrets
 import time
 from typing import cast
 
@@ -51,17 +53,18 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
 
 # --- config -----------------------------------------------------------------
 SHARED_SECRET = os.environ.get("BROKER_SHARED_SECRET", "")
-# Outbound inter-component credential (broker -> runtime hop). Defaults to the inbound
-# broker secret when unset: the chart resolves both from one shared secret, so a
-# single-secret deploy keeps working; an explicit RUNTIME_API_KEY (the chart injects it
-# into the broker env too) wins so sandboxTemplate.runtimeApiKey overrides are honored.
-RUNTIME_API_KEY = os.environ.get("RUNTIME_API_KEY", "") or SHARED_SECRET
-# Known-unsafe placeholder values (mirror the runtime's _PLACEHOLDER_API_KEYS): both
-# the _validate_config() boot guard and the _auth request guard treat these as "unset".
+# Known-unsafe placeholder values (mirror the runtime's _PLACEHOLDER_KEYS): the
+# _validate_config() boot guard and the _auth request guard treat these as "unset".
 _PLACEHOLDER_SECRETS = frozenset({"", "dev-shared-secret-change-me", "change-me", "changeme", "placeholder"})
-WARMPOOL = os.environ.get("BROKER_WARMPOOL", "code-standard-warmpool")
 RUNTIME_NS = os.environ.get("BROKER_RUNTIME_NS", "agent-sandbox-runtime")
 ROUTER_URL = os.environ.get("BROKER_ROUTER_URL", "http://sandbox-router-svc.agent-sandbox-system:8080")
+# Per-session runtime API keys (issue #4): the broker mints one per sandbox pod,
+# persists it to a per-session Secret owui-runtime-key-<sandbox> in RUNTIME_NS, injects
+# it into the pod as a projected volume (mounted at /etc/runtime-key/api-key), and
+# reads it back per hop (stateless). Rotate-on-resume mints a fresh key before a parked
+# sandbox resumes. The chart grants the broker SA create/get/update/patch/delete on
+# Secrets (see chart/templates/broker.yaml).
+RUNTIME_KEY_PREFIX = os.environ.get("BROKER_RUNTIME_KEY_PREFIX", "owui-runtime-key-")
 
 
 def _env_int(name: str, default: int) -> int:
@@ -138,79 +141,118 @@ def _auth(credentials: HTTPAuthorizationCredentials | None = Security(bearer)) -
         raise HTTPException(status_code=401, detail="invalid bearer token")
 
 
-def _runtime_auth_headers() -> dict:
-    """Authorization header for an outbound broker -> runtime hop (terminal/execute/files).
-
-    RUNTIME_API_KEY defaults to SHARED_SECRET when unset (one shared secret), so this is
-    populated whenever the broker is configured. The runtime's _auth_runtime validates it
-    fail-closed (503 on unset, 401 on mismatch) — see runtime/server.py."""
-    return {"Authorization": f"Bearer {RUNTIME_API_KEY}"}
-
-
-# --- session -> sandbox -----------------------------------------------------
-def _claim_name(user_id: str, session_id: str) -> str:
-    """Deterministic, DNS-label-safe ephemeral claim name (one per session)."""
-    digest = hashlib.sha256(f"{user_id}|{session_id}".encode()).hexdigest()[:12]
-    return f"{CLAIM_PREFIX}{digest}"
+# --- per-session runtime API keys (issue #4) ---------------------------------
+# The broker is STATELESS: the per-session key lives in a per-session Secret
+# (owui-runtime-key-<sandbox>) in RUNTIME_NS, which the broker reads on each hop
+# (no in-memory/leader key state, no DB). It mints one per sandbox at creation,
+# rotates it on resume, reaps it with the sandbox, and injects it into the pod as a
+# projected Secret volume (the runtime reads /etc/runtime-key/api-key — see
+# runtime/server.py + chart). One pod sees exactly one key.
+RUNTIME_KEY_SECRET_LABELS = {**MANAGED_BY, "owui.io/component": "runtime-key"}
 
 
-def _persistent_claim_name(user_id: str) -> str:
-    """Deterministic per-USER persistent claim name (resumed by any session)."""
-    return f"{PERSISTENT_PREFIX}{hashlib.sha256(user_id.encode()).hexdigest()[:12]}"
+def _runtime_key_secret_name(sandbox_name: str) -> str:
+    return f"{RUNTIME_KEY_PREFIX}{sandbox_name}"
 
 
-def _get_claim(name: str) -> dict | None:
+def _mint_runtime_key() -> str:
+    """A fresh high-entropy per-session key (256 bits, URL-safe)."""
+    return secrets.token_urlsafe(32)
+
+
+def _write_runtime_key(sandbox_name: str, key: str) -> None:
+    """Create-or-replace the per-session key Secret (idempotent: mint + rotate)."""
+    name = _runtime_key_secret_name(sandbox_name)
+    body = {
+        "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+        "metadata": {"name": name, "namespace": RUNTIME_NS, "labels": RUNTIME_KEY_SECRET_LABELS},
+        "stringData": {"api-key": key},
+    }
     try:
-        return cast(dict, api.get_namespaced_custom_object(GROUP, VER, RUNTIME_NS, "sandboxclaims", name))
+        core.create_namespaced_secret(RUNTIME_NS, body)
+    except client.ApiException as exc:
+        if exc.status != 409:
+            raise
+        core.patch_namespaced_secret(name, RUNTIME_NS, {"stringData": {"api-key": key}})
+
+
+def _ensure_runtime_key(sandbox_name: str) -> None:
+    """Get-or-create the per-session key. Idempotent — used on sandbox creation.
+
+    Re-running resolve_sandbox for an existing session must NOT rotate (that is
+    rotate-on-resume's job); a stable key across a session's life is what the runtime
+    caches and the broker sends on every hop."""
+    try:
+        core.read_namespaced_secret(_runtime_key_secret_name(sandbox_name), RUNTIME_NS)
+        return
+    except client.ApiException as exc:
+        if exc.status != 404:
+            raise
+    _write_runtime_key(sandbox_name, _mint_runtime_key())
+
+
+def _rotate_runtime_key(sandbox_name: str) -> None:
+    """Mint a FRESH key (rotate-on-resume). Create-or-patch; the resumed pod mounts it."""
+    _write_runtime_key(sandbox_name, _mint_runtime_key())
+
+
+def _runtime_key_for(sandbox_name: str) -> str | None:
+    """Stateless per-hop lookup: read the per-session key. None when the Secret is
+    missing (a misconfiguration / a reaped session) so the hop is sent unauthenticated
+    and the runtime fails closed (401/503). Never raises on 404."""
+    try:
+        sec = core.read_namespaced_secret(_runtime_key_secret_name(sandbox_name), RUNTIME_NS)
     except client.ApiException as exc:
         if exc.status == 404:
             return None
         raise
+    raw = (sec.data or {}).get("api-key")
+    return base64.b64decode(raw).decode() if raw else None
 
 
-def _create_claim(name: str, profile: str) -> dict | None:
-    spec: dict = {"warmPoolRef": {"name": WARMPOOL}}
-    if profile == PERSISTENT:
-        # Forces a cold start (warm pool pods have no PVC). The controller merges this
-        # `workspace` VCT into the pod, replacing the template's same-named emptyDir, so
-        # /workspace is backed by a per-user cephfs PVC. lifecycle.Retain keeps the
-        # Sandbox object (and its PVC) when the pod is shut down on expiry.
-        spec["volumeClaimTemplates"] = [{
-            "metadata": {"name": "workspace"},
-            "spec": {"accessModes": ["ReadWriteMany"], "storageClassName": PERSISTENT_SC,
-                     "resources": {"requests": {"storage": PERSISTENT_SIZE}}},
-        }]
-        spec["lifecycle"] = {"shutdownPolicy": "Retain"}
-    body = {
-        "apiVersion": f"{GROUP}/{VER}",
-        "kind": "SandboxClaim",
-        "metadata": {"name": name, "namespace": RUNTIME_NS,
-                     "labels": {**MANAGED_BY, PROFILE: profile},
-                     "annotations": {LAST_USED: str(_now_ts())}},
-        "spec": spec,
-    }
+def _delete_runtime_key(sandbox_name: str) -> None:
+    """Reap the per-session key Secret with the sandbox (best-effort)."""
     try:
-        return cast(dict, api.create_namespaced_custom_object(GROUP, VER, RUNTIME_NS, "sandboxclaims", body))
+        core.delete_namespaced_secret(_runtime_key_secret_name(sandbox_name), RUNTIME_NS)
     except client.ApiException as exc:
-        if exc.status == 409:           # raced with another broker replica; fetch
-            return _get_claim(name)
-        raise
+        if exc.status != 404:
+            log.warning("reap runtime key %s: %s", sandbox_name, exc)
 
 
-def _claim_ready(claim: dict) -> bool:
-    return any(c.get("type") == "Ready" and c.get("status") == "True"
-               for c in claim.get("status", {}).get("conditions", []))
+def _runtime_auth_headers(sandbox_name: str) -> dict:
+    """Authorization header for an outbound broker -> runtime hop (terminal/execute/files).
+
+    Resolves the per-session key for the target pod via a STATELESS Secret get (no
+    in-memory cache: the Secret is the single source of truth, HA-safe across replicas).
+    Returns {} when the key is unresolved so the runtime fails closed (401/503)."""
+    key = _runtime_key_for(sandbox_name)
+    return {"Authorization": f"Bearer {key}"} if key else {}
 
 
-def _sandbox_name(claim: dict) -> str | None:
-    return (claim.get("status", {}).get("sandbox", {}) or {}).get("name")
+# --- session -> sandbox -----------------------------------------------------
+def _ephemeral_sandbox_name(user_id: str, session_id: str) -> str:
+    """Deterministic, DNS-label-safe ephemeral per-SESSION Sandbox name."""
+    digest = hashlib.sha256(f"{user_id}|{session_id}".encode()).hexdigest()[:12]
+    return f"{CLAIM_PREFIX}{digest}"
 
 
-def _claim_pod_ip(claim: dict) -> str | None:
-    """Pod IP from the claim's own status (populated by the controller once the pod is up)."""
-    sbx = (claim.get("status", {}).get("sandbox", {}) or {})
-    ips = sbx.get("podIPs") or []
-    return ips[0] if ips else None
+def _inject_runtime_key_volume(pod_tmpl: dict, sandbox_name: str) -> None:
+    """Add the per-session runtime-key Secret volume + a readOnly mount at /etc/runtime-key.
+
+    The broker mints the per-session key into Secret owui-runtime-key-<sandbox> (see
+    _ensure_runtime_key / _rotate_runtime_key) BEFORE the Sandbox is created, so the
+    (non-optional) projected secret volume is satisfiable at pod-creation time. The
+    runtime reads /etc/runtime-key/api-key — one pod, one key (issue #4)."""
+    secret_name = _runtime_key_secret_name(sandbox_name)
+    pod_spec = pod_tmpl.setdefault("spec", {})
+    volumes = pod_spec.setdefault("volumes", [])
+    if not any(v.get("name") == "runtime-key" for v in volumes):
+        volumes.append({"name": "runtime-key", "secret": {
+            "secretName": secret_name, "items": [{"key": "api-key", "path": "api-key"}]}})
+    for c in pod_spec.get("containers", []):
+        mounts = c.setdefault("volumeMounts", [])
+        if not any(vm.get("name") == "runtime-key" for vm in mounts):
+            mounts.append({"name": "runtime-key", "mountPath": "/etc/runtime-key", "readOnly": True})
 
 
 def _sandbox_operating_mode(sandbox_name: str) -> str | None:
@@ -224,9 +266,7 @@ def _sandbox_operating_mode(sandbox_name: str) -> str | None:
 
 
 def _set_sandbox_operating_mode(sandbox_name: str, mode: str) -> None:
-    """Park (Suspended) or resume (Running) a persistent sandbox. operatingMode is a
-    Sandbox-only field (not in the SandboxClaim blueprint), so the claim controller
-    does not fight this patch."""
+    """Park (Suspended) or resume (Running) a sandbox by patching spec.operatingMode."""
     try:
         api.patch_namespaced_custom_object(
             SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes", sandbox_name,
@@ -236,19 +276,16 @@ def _set_sandbox_operating_mode(sandbox_name: str, mode: str) -> None:
         log.warning("operatingMode patch %s=%s failed: %s", sandbox_name, mode, exc)
 
 
-def _touch(name: str) -> None:
-    """Stamp last-used on the claim (best-effort; drives idle park/reap)."""
-    try:
-        api.patch_namespaced_custom_object(
-            GROUP, VER, RUNTIME_NS, "sandboxclaims", name,
-            {"metadata": {"annotations": {LAST_USED: str(_now_ts())}}})
-    except client.ApiException as exc:        # pragma: no cover - non-fatal
-        log.debug("non-fatal claim last-used touch: %s", exc)
+# --- per-session direct Sandbox (both profiles) ------------------------------
+# The broker creates a per-session Sandbox (agents.x-k8s.io) directly for BOTH
+# profiles (issue #4): the v1beta1 SandboxClaim requires warmPoolRef (warm-pod reuse)
+# and its env is static-only (no secretKeyRef/volumes), so it cannot carry a per-session
+# Secret. A direct Sandbox carries a full per-instance podTemplate the controller honors,
+# so the broker injects a projected per-session Secret volume here (true per-pod scoping).
 
-# --- persistent profile: per-chat direct Sandbox, chat folder mounted at /workspace --
 
 def _chat_sandbox_name(user_id: str, session_id: str) -> str:
-    """Deterministic per-CHAT persistent sandbox name (one sandbox per chat)."""
+    """Deterministic per-CHAT persistent Sandbox name (one sandbox per chat)."""
     h = hashlib.sha256(f"{user_id}/{session_id}".encode()).hexdigest()[:12]
     return f"{CHAT_PREFIX}{h}"
 
@@ -281,7 +318,7 @@ def _ensure_user_pvc(user_id: str) -> str:
 
 
 def _persistent_volume(user_id: str) -> tuple[str, str]:
-    """Return (pvc_name, subpath_prefix) for the active persistent mode.
+    """(pvc_name, subpath_prefix) for the active persistent mode.
 
     shared-subpath: the static shared PVC, prefix users/<user_id>/.
     per-user-pvc:   the user's dedicated PVC (ensured), prefix '' (chat is top-level)."""
@@ -299,36 +336,42 @@ def _get_sandbox(name: str) -> dict | None:
         raise
 
 
-def _create_chat_sandbox(name: str, user_id: str, session_id: str) -> dict | None:
-    """Create a per-chat Sandbox whose /workspace IS the chat's folder (subPath slice).
+def _create_sandbox(name: str, user_id: str, session_id: str, profile: str) -> dict | None:
+    """Create a per-session Sandbox (both profiles) with a per-session runtime-key volume.
 
-    The podTemplate is cloned from the base SandboxTemplate; the `workspace` volume is
-    pointed at the persistent volume (shared PVC or per-user PVC) and its mount gets
-    subPath=<prefix><chat-id>/, so /workspace is this chat's folder only — other chats
-    and other users are invisible (hard isolation)."""
-    pvc_name, prefix = _persistent_volume(user_id)
+    The podTemplate is cloned from the base SandboxTemplate and gets:
+      - a projected per-session Secret volume `runtime-key` -> /etc/runtime-key (issue #4);
+      - /workspace: ephemeral keeps the template's emptyDir; persistent points it at the
+        per-chat folder via a subPath slice of the persistent volume (shared PVC or
+        per-user PVC) — other chats and users stay invisible (hard isolation).
+    shutdownPolicy=Retain keeps the Sandbox object when parked so resume (not recreate)
+    reuses the same identity + per-session Secret."""
     tmpl = cast(dict, api.get_namespaced_custom_object(GROUP, VER, RUNTIME_NS, "sandboxtemplates", BASE_TEMPLATE))
     pod_tmpl = copy.deepcopy(tmpl["spec"]["podTemplate"])
     pod_spec = pod_tmpl.setdefault("spec", {})
-    pod_tmpl.setdefault("metadata", {}).setdefault("labels", {})["profile"] = "persistent"
-    sub_path = f"{prefix}{_subdir_for(session_id)}/"
-    for v in pod_spec.get("volumes", []):
-        if v.get("name") == "workspace":
-            v.clear()
-            v["name"] = "workspace"
-            v["persistentVolumeClaim"] = {"claimName": pvc_name}
-    for c in pod_spec.get("containers", []):
-        for vm in c.get("volumeMounts", []):
-            if vm.get("name") == "workspace":
-                vm["subPath"] = sub_path
+    pod_tmpl.setdefault("metadata", {}).setdefault("labels", {})["profile"] = profile
+    if profile == PERSISTENT:
+        pvc_name, prefix = _persistent_volume(user_id)
+        sub_path = f"{prefix}{_subdir_for(session_id)}/"
+        for v in pod_spec.get("volumes", []):
+            if v.get("name") == "workspace":
+                v.clear()
+                v["name"] = "workspace"
+                v["persistentVolumeClaim"] = {"claimName": pvc_name}
+        for c in pod_spec.get("containers", []):
+            for vm in c.get("volumeMounts", []):
+                if vm.get("name") == "workspace":
+                    vm["subPath"] = sub_path
+    # ephemeral: leave the template's emptyDir workspace as-is
+    _inject_runtime_key_volume(pod_tmpl, name)
+    labels = {**MANAGED_BY, PROFILE: profile}
+    annots: dict = {LAST_USED: str(_now_ts()), "broker-user": user_id, "broker-session": session_id}
+    if profile == PERSISTENT:
+        labels["broker-persistent-mode"] = PERSISTENT_MODE
+        labels["broker-chat"] = "true"
     body = {
-        "apiVersion": f"{SANDBOX_GROUP}/{VER}",
-        "kind": "Sandbox",
-        "metadata": {"name": name, "namespace": RUNTIME_NS,
-                     "labels": {**MANAGED_BY, PROFILE: PERSISTENT, "broker-persistent-mode": PERSISTENT_MODE,
-                                "broker-chat": "true"},
-                     "annotations": {LAST_USED: str(_now_ts()),
-                                     "broker-user": user_id, "broker-session": session_id}},
+        "apiVersion": f"{SANDBOX_GROUP}/{VER}", "kind": "Sandbox",
+        "metadata": {"name": name, "namespace": RUNTIME_NS, "labels": labels, "annotations": annots},
         "spec": {"operatingMode": "Running", "shutdownPolicy": "Retain", "podTemplate": pod_tmpl},
     }
     try:
@@ -352,11 +395,6 @@ def _sandbox_pod_ip(sbx: dict) -> str | None:
 def _sandbox_ready_with_ip(sbx: dict) -> bool:
     """Ready predicate for watches: sandbox is Ready AND has a pod IP."""
     return _sandbox_ready(sbx) and bool(_sandbox_pod_ip(sbx))
-
-
-def _claim_ready_with_ip(claim: dict) -> bool:
-    """Ready predicate for watches: claim is Ready AND its sandbox has a pod IP."""
-    return _claim_ready(claim) and bool(_claim_pod_ip(claim))
 
 
 def _resume_if_suspended(name: str, _obj) -> None:
@@ -415,34 +453,13 @@ def _watch_until_ready(group: str, plural: str, name: str, is_ready, deadline_s:
     return None
 
 
-
-async def _resolve_chat_sandbox(user_id: str, session_id: str) -> tuple[str, str]:
-    """Persistent path (both backends): get-or-create a per-chat Sandbox (direct, not a
-    claim), resuming if parked, then wait for the pod IP. /workspace is the chat's
-    folder via subPath — no per-chat subfolders are visible inside the sandbox."""
-    name = _chat_sandbox_name(user_id, session_id)
-    pre = _get_sandbox(name)
-    sbx = pre or _create_chat_sandbox(name, user_id, session_id)
-    just_created = pre is None
-    if sbx is None:
-        raise HTTPException(status_code=500, detail=f"chat sandbox {name} could not be created")
-    obj = await asyncio.to_thread(
-        _watch_until_ready, SANDBOX_GROUP, "sandboxes", name, _sandbox_ready_with_ip,
-        CLAIM_READY_TIMEOUT, _resume_if_suspended
-    )
-    if obj is None:
-        raise HTTPException(status_code=504, detail=f"chat sandbox {name} not ready in {CLAIM_READY_TIMEOUT}s")
-    pod_ip = cast(str, _sandbox_pod_ip(obj))
-    _touch_sandbox(name)
-    log.info("session user=%s chat=%s profile=persistent mode=%s -> sandbox=%s pod=%s",
-             user_id[:32], session_id[:16], PERSISTENT_MODE, name, pod_ip)
-    if just_created and session_id != user_id:
-        await _migrate_staging_to_chat(user_id, pod_ip)
-    return name, pod_ip
-
-
 async def _ensure_sandbox_running_ip(name: str, timeout: float = 90.0) -> str | None:
-    """Resume a parked sandbox (if needed) and wait for its pod IP via a Watch. None on timeout/missing."""
+    """Resume a parked sandbox (rotating its per-session key first) + wait for the pod IP.
+
+    Rotate-on-resume (issue #4): a fresh key is minted BEFORE the new pod boots, so a key
+    observed by a prior (parked) pod cannot be replayed against the resumed pod."""
+    if _sandbox_operating_mode(name) == "Suspended":
+        _rotate_runtime_key(name)
     obj = await asyncio.to_thread(
         _watch_until_ready, SANDBOX_GROUP, "sandboxes", name, _sandbox_ready_with_ip,
         timeout, _resume_if_suspended
@@ -454,18 +471,18 @@ _MIGRATE_ZIP = "__broker_migrate.zip"
 _migrate_locks: dict = {}
 
 
-async def _clear_workspace(pod_ip: str) -> None:
+async def _clear_workspace(sandbox_name: str, pod_ip: str) -> None:
     """Best-effort wipe of a sandbox's /workspace contents (keeps the mount point)."""
     with contextlib.suppress(Exception):
         await _client.post(
             f"http://{pod_ip}:8888/execute",
-            headers=_runtime_auth_headers(),
+            headers=_runtime_auth_headers(sandbox_name),
             json={"command": "find /workspace -mindepth 1 -delete"},
             timeout=60,
         )
 
 
-async def _migrate_staging_to_chat(user_id: str, chat_pod_ip: str) -> None:
+async def _migrate_staging_to_chat(user_id: str, chat_name: str, chat_pod_ip: str) -> None:
     """Carry the user's staging /workspace into the freshly-created chat sandbox, then
     wipe staging. Fires once per new chat (session != user) — moves files uploaded
     BEFORE the chat had a chatId, and guarantees no A->B cross-chat leak.
@@ -473,7 +490,10 @@ async def _migrate_staging_to_chat(user_id: str, chat_pod_ip: str) -> None:
     Best-effort: failures are logged, never fatal. If the staging pod IS reachable the
     workspace is always wiped (anti-leak, independent of the move succeeding). If it is
     NOT reachable, the staging Sandbox is deleted outright (per the product decision that
-    short-lived pre-chat uploads are disposable) so its data cannot leak into a later chat."""
+    short-lived pre-chat uploads are disposable) so its data cannot leak into a later chat.
+
+    Hops are authenticated with the per-session key of the TARGET sandbox (issue #4):
+    staging hops use the staging key, chat hops use the chat key."""
     staging = _chat_sandbox_name(user_id, user_id)
     lock = _migrate_locks.setdefault(user_id, asyncio.Lock())
     async with lock:
@@ -489,17 +509,17 @@ async def _migrate_staging_to_chat(user_id: str, chat_pod_ip: str) -> None:
             moved = 0
             try:
                 lr = await _client.get(f"http://{sip}:8888/files/list",
-                                      headers=_runtime_auth_headers(),
+                                      headers=_runtime_auth_headers(staging),
                                       params={"directory": "/workspace"}, timeout=30)
                 names = [e["name"] for e in lr.json().get("entries", [])] if lr.status_code == 200 else []
                 if names:
                     ar = await _client.post(f"http://{sip}:8888/files/archive",
-                                            headers=_runtime_auth_headers(),
+                                            headers=_runtime_auth_headers(staging),
                                             json={"paths": names}, timeout=120)
                     if ar.status_code == 200 and ar.content:
                         ur = await _client.post(
                             f"http://{chat_pod_ip}:8888/files/upload",
-                            headers=_runtime_auth_headers(),
+                            headers=_runtime_auth_headers(chat_name),
                             files={"file": (_MIGRATE_ZIP, ar.content, "application/zip")},
                             data={"directory": "/workspace"}, timeout=120,
                         )
@@ -511,7 +531,7 @@ async def _migrate_staging_to_chat(user_id: str, chat_pod_ip: str) -> None:
                                 " os.remove('" + _MIGRATE_ZIP + "')\""
                             )
                             await _client.post(f"http://{chat_pod_ip}:8888/execute",
-                                               headers=_runtime_auth_headers(),
+                                               headers=_runtime_auth_headers(chat_name),
                                                json={"command": extract_cmd}, timeout=60)
                             moved = len(names)
                         else:
@@ -523,41 +543,49 @@ async def _migrate_staging_to_chat(user_id: str, chat_pod_ip: str) -> None:
             except Exception as exc:
                 log.warning("staging migrate: move phase failed (will still clear): %s", exc)
             # ALWAYS clear staging once reachable — anti-leak, independent of the move.
-            await _clear_workspace(sip)
+            await _clear_workspace(staging, sip)
             log.info("staging migrate user=%s staging=%s -> chat=%s moved=%d entries",
-                     user_id[:16], staging, chat_pod_ip, moved)
+                     user_id[:16], staging, chat_name, moved)
         except Exception as exc:
             log.warning("staging migrate failed (non-fatal): %s", exc)
 
 
-
 async def resolve_sandbox(user_id: str, session_id: str, profile: str) -> tuple[str, str]:
-    """Return (sandbox_id, pod_ip): get-or-create the sandbox for this user/session,
-    resuming a parked persistent sandbox if necessary, then wait for the pod IP.
+    """Return (sandbox_id, pod_ip): get-or-create the per-session Sandbox for this
+    user/session, minting a per-session runtime key (issue #4), rotating it on resume,
+    then waiting for the pod IP. sandbox_id == the Sandbox (== pod) name, so the
+    per-session key Secret owui-runtime-key-<sandbox_id> resolves the Bearer on every hop.
 
-    Persistent (both backends) provisions a per-CHAT direct Sandbox whose /workspace
-    IS the chat's folder (subPath slice) — other chats and other users are invisible.
-    BROKER_PERSISTENT_MODE selects the backing volume: per-user-pvc (a dedicated
-    per-user PVC) or shared-subpath (one shared RWX PVC, prefix users/<id>/).
-    Ephemeral uses a warm-pool SandboxClaim (emptyDir /workspace)."""
-    if profile == PERSISTENT:
-        return await _resolve_chat_sandbox(user_id, session_id)
-    name = _claim_name(user_id, session_id)
-    claim = _get_claim(name) or _create_claim(name, profile)
-    if claim is None:
-        raise HTTPException(status_code=500, detail=f"claim {name} could not be created")
+    Both profiles now provision a per-CHAT/per-SESSION direct Sandbox (the SandboxClaim
+    warm-pool path cannot carry a per-session Secret — see _create_sandbox). Persistent:
+    /workspace is the chat's folder via subPath (shared PVC or per-user PVC); ephemeral:
+    emptyDir /workspace. BROKER_PERSISTENT_MODE selects the backing volume."""
+    name = (_chat_sandbox_name(user_id, session_id) if profile == PERSISTENT
+            else _ephemeral_sandbox_name(user_id, session_id))
+    pre = _get_sandbox(name)
+    just_created = pre is None
+    if just_created:
+        # Mint the per-session key BEFORE the pod is created so the (non-optional)
+        # projected secret volume is satisfiable at pod-creation time.
+        _ensure_runtime_key(name)
+        if _create_sandbox(name, user_id, session_id, profile) is None:
+            raise HTTPException(status_code=500, detail=f"sandbox {name} could not be created")
+    elif _sandbox_operating_mode(name) == "Suspended":
+        # Rotate-on-resume: a fresh key before the resumed (new) pod boots.
+        _rotate_runtime_key(name)
     obj = await asyncio.to_thread(
-        _watch_until_ready, GROUP, "sandboxclaims", name, _claim_ready_with_ip, CLAIM_READY_TIMEOUT
+        _watch_until_ready, SANDBOX_GROUP, "sandboxes", name, _sandbox_ready_with_ip,
+        CLAIM_READY_TIMEOUT, _resume_if_suspended
     )
     if obj is None:
-        raise HTTPException(status_code=504, detail=f"sandbox claim {name} not ready in {CLAIM_READY_TIMEOUT}s")
-    sandbox_id = cast(str, _sandbox_name(obj))
-    pod_ip = cast(str, _claim_pod_ip(obj))
-    _touch(name)
-    log.info("session user=%s profile=%s -> claim=%s sandbox=%s pod=%s",
-             user_id[:32], profile, name, sandbox_id, pod_ip)
-    return sandbox_id, pod_ip
-
+        raise HTTPException(status_code=504, detail=f"sandbox {name} not ready in {CLAIM_READY_TIMEOUT}s")
+    pod_ip = cast(str, _sandbox_pod_ip(obj))
+    _touch_sandbox(name)
+    log.info("session user=%s profile=%s -> sandbox=%s pod=%s",
+             user_id[:32], profile, name, pod_ip)
+    if just_created and profile == PERSISTENT and session_id != user_id:
+        await _migrate_staging_to_chat(user_id, name, pod_ip)
+    return name, pod_ip
 
 # --- reverse proxy ----------------------------------------------------------
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
@@ -626,7 +654,7 @@ async def ready():
     partial-outage where /healthz stays green while every resolve_sandbox throws."""
     try:
         api.list_namespaced_custom_object(
-            GROUP, VER, RUNTIME_NS, "sandboxclaims", limit=1, _request_timeout=3,
+            SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes", limit=1, _request_timeout=3,
         )
     except Exception as exc:
         log.warning("readyz: apiserver unreachable: %s", exc)
@@ -692,7 +720,7 @@ async def terminal_ws(client_ws: WebSocket, session_id: str):
     with contextlib.suppress(Exception):
         await _client.post(
             f"http://{pod_ip}:8888/api/terminals",
-            headers={**_runtime_auth_headers(), "X-Session-Id": session_id},
+            headers={**_runtime_auth_headers(sandbox_id), "X-Session-Id": session_id},
         )
 
     # Plaintext WebSocket is correct here: in-cluster pod-to-pod traffic inside the
@@ -785,8 +813,8 @@ async def proxy(path: str, request: Request, _=Security(_auth)):
     # Inject the runtime inter-component credential so the DIRECT broker -> runtime pod
     # hop (the catch-all bypasses the sandbox-router, which drops Authorization) satisfies
     # _auth_runtime on /execute, /files/* and the terminal management endpoints.
-    # RUNTIME_API_KEY is what the runtime expects (defaults to SHARED_SECRET when unset).
-    fwd.update(_runtime_auth_headers())
+    # Per-session runtime key (issue #4): resolves THIS pod's key from its Secret.
+    fwd.update(_runtime_auth_headers(sandbox_id))
     # No X-Workspace-Subdir: each chat's folder IS /workspace (per-chat subPath).
     body = await request.body()
     upstream = httpx.Request(request.method, f"http://{pod_ip}:8888/{path}",
@@ -809,65 +837,51 @@ async def proxy(path: str, request: Request, _=Security(_auth)):
 
 # --- idle reaper ------------------------------------------------------------
 async def _reaper_loop():
+    """Park + reap idle per-session Sandboxes (both profiles, issue #4).
+
+    All broker-owned sandboxes are now direct `agents.x-k8s.io/Sandbox` objects labeled
+    managed-by=owui-broker (the SandboxClaim warm-pool path is gone — it cannot carry a
+    per-session Secret). Persistent sandboxes are parked (Suspended) after PARK_TTL and
+    reaped after REAP_TTL; ephemeral sandboxes (emptyDir) are reaped after IDLE_TTL.
+    Reaping also deletes the per-session runtime-key Secret."""
     while True:
         try:
             res = cast(dict, api.list_namespaced_custom_object(
-                GROUP, VER, RUNTIME_NS, "sandboxclaims",
+                SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes",
                 label_selector="app.kubernetes.io/managed-by=owui-broker"))
             now = time.time()
-            for c in res.get("items", []):
-                name = c["metadata"]["name"]
-                labels = c.get("metadata", {}).get("labels", {}) or {}
+            for s in res.get("items", []):
+                sname = s["metadata"]["name"]
+                labels = s.get("metadata", {}).get("labels", {}) or {}
                 profile = labels.get(PROFILE, EPHEMERAL)
-                lu = int((c.get("metadata", {}).get("annotations", {}) or {}).get(LAST_USED, "0") or 0)
+                lu = int((s.get("metadata", {}).get("annotations", {}) or {}).get(LAST_USED, "0") or 0)
                 if not lu:
                     continue
                 idle = now - lu
-                sandbox = _sandbox_name(c)
                 if profile == PERSISTENT:
                     if idle > REAP_TTL:
-                        log.info("reaping persistent claim %s (idle %ds)", name, int(idle))
-                        _delete_claim(name)
-                    elif idle > PARK_TTL and sandbox and _sandbox_operating_mode(sandbox) != "Suspended":
-                        log.info("parking persistent claim %s sandbox=%s (idle %ds)", name, sandbox, int(idle))
-                        _set_sandbox_operating_mode(sandbox, "Suspended")
+                        log.info("reaping persistent sandbox %s (idle %ds)", sname, int(idle))
+                        _delete_sandbox(sname)
+                    elif idle > PARK_TTL and _sandbox_operating_mode(sname) != "Suspended":
+                        log.info("parking persistent sandbox %s (idle %ds)", sname, int(idle))
+                        _set_sandbox_operating_mode(sname, "Suspended")
                 else:  # ephemeral
                     if idle > IDLE_TTL:
-                        log.info("reaping ephemeral claim %s (idle %ds)", name, int(idle))
-                        _delete_claim(name)
-            # per-chat persistent sandboxes (direct Sandbox objects, both modes)
-            sres = cast(dict, api.list_namespaced_custom_object(
-                SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes",
-                label_selector="broker-chat=true"))
-            for s in sres.get("items", []):
-                sname = s["metadata"]["name"]
-                slu = int((s.get("metadata", {}).get("annotations", {}) or {}).get(LAST_USED, "0") or 0)
-                if not slu:
-                    continue
-                sidle = now - slu
-                if sidle > REAP_TTL:
-                    log.info("reaping chat sandbox %s (idle %ds)", sname, int(sidle))
-                    _delete_sandbox(sname)
-                elif sidle > PARK_TTL and _sandbox_operating_mode(sname) != "Suspended":
-                    log.info("parking chat sandbox %s (idle %ds)", sname, int(sidle))
-                    _set_sandbox_operating_mode(sname, "Suspended")
+                        log.info("reaping ephemeral sandbox %s (idle %ds)", sname, int(idle))
+                        _delete_sandbox(sname)
         except Exception as exc:        # pragma: no cover - keep the loop alive
             log.warning("reaper iteration error: %s", exc)
         await asyncio.sleep(60)
 
 
-def _delete_claim(name: str) -> None:
-    try:
-        api.delete_namespaced_custom_object(GROUP, VER, RUNTIME_NS, "sandboxclaims", name)
-    except client.ApiException as exc:      # pragma: no cover - non-fatal
-        log.warning("reap failed for %s: %s", name, exc)
-
-
 def _delete_sandbox(name: str) -> None:
+    """Delete a per-session Sandbox and its per-session runtime-key Secret (issue #4)."""
     try:
         api.delete_namespaced_custom_object(SANDBOX_GROUP, VER, RUNTIME_NS, "sandboxes", name)
     except client.ApiException as exc:      # pragma: no cover - non-fatal
-        log.warning("reap failed for sandbox %s: %s", name, exc)
+        if exc.status != 404:
+            log.warning("reap failed for sandbox %s: %s", name, exc)
+    _delete_runtime_key(name)
 
 # Tracked so shutdown can cancel it.
 _reaper_task: asyncio.Task | None = None

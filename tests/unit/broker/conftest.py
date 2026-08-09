@@ -54,6 +54,16 @@ _core = MagicMock(name="broker_core")
 _kc.CustomObjectsApi = lambda *a, **k: _api
 _kc.CoreV1Api = lambda *a, **k: _core
 
+# Default per-session key Secret read (issue #4): proxy/terminal/resolve tests that
+# don't override read_namespaced_secret still get a valid key back so _runtime_auth_headers
+# resolves a Bearer instead of raising on the MagicMock default. Tests that exercise the
+# 404 / error arms override side_effect explicitly.
+import base64 as _b64  # noqa: E402
+from types import SimpleNamespace as _SNS  # noqa: E402
+
+_core.read_namespaced_secret.return_value = _SNS(
+    data={"api-key": _b64.b64encode(b"test-per-session-key").decode()})
+
 # (3) make `import main` work -------------------------------------------------------
 _BROKER_DIR = Path(__file__).resolve().parents[3] / "open-websandbox-platform" / "broker"
 if str(_BROKER_DIR) not in sys.path:
@@ -86,9 +96,15 @@ def make_claim(name: str = "c1", ready: bool = True, sandbox: str | None = "sbx-
 
 def make_sandbox(name: str = "sbx-1", ready: bool = True, pod_ip: str | None = "10.0.0.1",
                  operating_mode: str = "Running", last_used: int = 1,
-                 chat: bool = True) -> dict:
-    """A realistic Sandbox dict for resolve/reaper/migrate tests."""
-    labels = {"broker-chat": "true"} if chat else {}
+                 profile: str = "persistent", chat: bool = True) -> dict:
+    """A realistic per-session Sandbox dict for resolve/reaper/migrate tests (issue #4).
+
+    All broker-owned sandboxes are direct `agents.x-k8s.io/Sandbox` objects labeled
+    managed-by=owui-broker + broker-profile (ephemeral|persistent); the reaper selects on
+    managed-by=owui-broker. `chat=True` adds broker-chat=true (persistent per-chat)."""
+    labels = {**main.MANAGED_BY, main.PROFILE: profile}
+    if chat:
+        labels["broker-chat"] = "true"
     return {
         "metadata": {"name": name, "namespace": main.RUNTIME_NS,
                      "labels": labels,
