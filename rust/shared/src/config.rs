@@ -2,15 +2,16 @@
 //!
 //! The Python components today read their behaviour from environment variables
 //! with fixed names; the Rust rewrite keeps those names and values identical so
-//! the chart's env blocks are unchanged. PR-A surfaces two representative
-//! fields to prove the `from_env` + serde-default pattern; the full config
-//! object expands in PR-C.
+//! the chart's env blocks are unchanged. PR-A surfaced two representative
+//! fields; PR-C-1 fills in the broker knobs needed for the HTTP surface and
+//! Sandbox lifecycle: the shared Bearer secret, the namespace sandboxes live
+//! in, the base template to clone, and the default persistence profile.
 //!
 //! Note on testing: [`BrokerConfig::from_env`] reads the process environment
 //! directly, and [`std::env::set_var`]/[`remove_var`](std::env::remove_var) are
 //! `unsafe` since Rust 1.83 — incompatible with `#![forbid(unsafe_code)]`. The
-//! pure parsing core is therefore factored into [`parse_value`], which the unit
-//! tests exercise without touching the live environment.
+//! pure parsing core is therefore factored into [`BrokerConfig::from_map`],
+//! which the unit tests exercise without touching the live environment.
 
 #![forbid(unsafe_code)]
 
@@ -19,7 +20,7 @@ use std::fmt;
 use std::str::FromStr;
 
 /// Convenience alias for fallible operations whose callers don't need a typed
-/// error. Used at the broker/runtime boundary in PR-B/PR-C.
+/// error. Used at the broker/runtime boundary.
 pub type AnyResult<T> = anyhow::Result<T>;
 
 /// Errors raised while loading configuration from the environment.
@@ -31,11 +32,78 @@ pub enum ConfigError {
     Invalid { var: &'static str, message: String },
 }
 
+/// Known-unsafe placeholder values for `BROKER_SHARED_SECRET`. The broker's boot
+/// guard and per-request auth treat these as "unset" (fail-closed), mirroring
+/// the Python `_PLACEHOLDER_SECRETS` frozenset exactly.
+pub const PLACEHOLDER_SECRETS: &[&str] = &[
+    "",
+    "dev-shared-secret-change-me",
+    "change-me",
+    "changeme",
+    "placeholder",
+];
+
+/// True when `secret` is empty or a known placeholder (counts as "not
+/// configured" — see [`PLACEHOLDER_SECRETS`]).
+#[must_use]
+pub fn is_placeholder_secret(secret: &str) -> bool {
+    PLACEHOLDER_SECRETS.contains(&secret)
+}
+
+/// Persistence profile — what backing volume a sandbox gets.
+///
+/// Serializes as the lowercase literals `persistent` / `ephemeral` (D12 — same
+/// values the Python broker honours in `BROKER_DEFAULT_PROFILE` and the
+/// `X-Persistence` header). Defaults to [`Profile::Persistent`], matching the
+/// Python deploy default.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    utoipa::ToSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum Profile {
+    /// Per-user/per-chat PVC-backed workspace; survives across sessions.
+    #[default]
+    Persistent,
+    /// emptyDir workspace; destroyed when the sandbox is reaped.
+    Ephemeral,
+}
+
+impl Profile {
+    /// Lowercase wire value (`persistent` / `ephemeral`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Profile::Persistent => "persistent",
+            Profile::Ephemeral => "ephemeral",
+        }
+    }
+}
+
+impl FromStr for Profile {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "persistent" => Ok(Profile::Persistent),
+            "ephemeral" => Ok(Profile::Ephemeral),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Broker configuration loaded from the environment.
 ///
 /// Field names mirror the env-var names the Python broker already honours
-/// (D12 — drop-in). PR-C fills in the remaining knobs (warm-pool sizing, leader
-/// election, storage tiering, ...).
+/// (D12 — drop-in). Later PRs add the remaining knobs (warm-pool sizing, leader
+/// election, TTLs, storage tiering, ...).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct BrokerConfig {
     /// Maximum concurrent terminal (PTY) sessions per runtime before new ones
@@ -47,29 +115,77 @@ pub struct BrokerConfig {
     /// default `1 MiB`).
     #[serde(default = "default_max_output_bytes")]
     pub max_output_bytes: u64,
+
+    /// Shared Bearer secret authenticating Open WebUI ↔ broker requests (env
+    /// `BROKER_SHARED_SECRET`). Empty or a known placeholder counts as "not
+    /// configured" → the broker fails closed (boot refuses, requests get 503).
+    #[serde(default)]
+    pub shared_secret: String,
+
+    /// Namespace where broker-owned `Sandbox` objects live (env
+    /// `BROKER_RUNTIME_NS`, default `agent-sandbox-runtime`).
+    #[serde(default = "default_runtime_ns")]
+    pub runtime_ns: String,
+
+    /// Name of the base `SandboxTemplate` the broker clones per sandbox (env
+    /// `BROKER_BASE_TEMPLATE`, default `code-standard-v1`).
+    #[serde(default = "default_base_template")]
+    pub base_template: String,
+
+    /// Persistence profile used when a request omits an explicit override (env
+    /// `BROKER_DEFAULT_PROFILE`, default `persistent`).
+    #[serde(default)]
+    pub default_profile: Profile,
 }
 
 const fn default_max_terminal_sessions() -> u32 {
     8
 }
 
-const fn default_max_output_bytes() -> u64 {
+fn default_max_output_bytes() -> u64 {
     1_048_576 // 1 MiB
+}
+
+fn default_runtime_ns() -> String {
+    "agent-sandbox-runtime".to_string()
+}
+
+fn default_base_template() -> String {
+    "code-standard-v1".to_string()
 }
 
 impl BrokerConfig {
     /// Load configuration from process environment variables, applying the same
     /// defaults as the Python implementation (D12).
     ///
-    /// Returns [`ConfigError::Invalid`] when a recognised variable is set to a
-    /// value that cannot be parsed into the declared type; absent variables fall
-    /// back to their documented defaults.
+    /// Returns [`ConfigError::Invalid`] when a recognised numeric variable is
+    /// set to a value that cannot be parsed; absent variables fall back to
+    /// their documented defaults. A malformed `BROKER_DEFAULT_PROFILE` falls
+    /// back to `persistent` (matching the Python defensive fallback) rather than
+    /// erroring.
     pub fn from_env() -> Result<Self, ConfigError> {
+        Self::from_map(|name| env::var(name).ok().filter(|v| !v.is_empty()))
+    }
+
+    /// Pure, testable core: build a config from a name→value lookup. Absent or
+    /// empty values fall back to the documented defaults; present-but-malformed
+    /// numerics surface as [`ConfigError::Invalid`] (a malformed profile falls
+    /// back to `persistent`).
+    pub(crate) fn from_map<G>(get: G) -> Result<Self, ConfigError>
+    where
+        G: Fn(&str) -> Option<String>,
+    {
         Ok(Self {
-            max_terminal_sessions: env_value("MAX_TERMINAL_SESSIONS")?
+            max_terminal_sessions: env_value("MAX_TERMINAL_SESSIONS", &get)?
                 .unwrap_or_else(default_max_terminal_sessions),
-            max_output_bytes: env_value("MAX_OUTPUT_BYTES")?
+            max_output_bytes: env_value("MAX_OUTPUT_BYTES", &get)?
                 .unwrap_or_else(default_max_output_bytes),
+            shared_secret: get("BROKER_SHARED_SECRET").unwrap_or_default(),
+            runtime_ns: get("BROKER_RUNTIME_NS").unwrap_or_else(default_runtime_ns),
+            base_template: get("BROKER_BASE_TEMPLATE").unwrap_or_else(default_base_template),
+            default_profile: get("BROKER_DEFAULT_PROFILE")
+                .and_then(|raw| raw.parse().ok())
+                .unwrap_or_default(),
         })
     }
 }
@@ -78,14 +194,15 @@ impl BrokerConfig {
 ///
 /// Returns `Ok(None)` when the variable is absent or empty; returns
 /// [`ConfigError::Invalid`] when it is present but malformed.
-fn env_value<T>(var: &'static str) -> Result<Option<T>, ConfigError>
+fn env_value<T, G>(var: &'static str, get: &G) -> Result<Option<T>, ConfigError>
 where
+    G: Fn(&str) -> Option<String>,
     T: FromStr,
     T::Err: fmt::Display,
 {
-    match env::var(var) {
-        Ok(raw) if !raw.is_empty() => parse_value(var, &raw).map(Some),
-        _ => Ok(None),
+    match get(var) {
+        Some(raw) => parse_value(var, &raw).map(Some),
+        None => Ok(None),
     }
 }
 
@@ -100,13 +217,25 @@ where
 {
     raw.parse::<T>().map_err(|err| ConfigError::Invalid {
         var,
-        message: format!("{raw:?} is not a valid {type}: {err}", type = std::any::type_name::<T>()),
+        message: format!(
+            "{raw:?} is not a valid {type}: {err}",
+            type = std::any::type_name::<T>()
+        ),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn map<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name: &str| {
+            pairs
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| v.to_string())
+        }
+    }
 
     #[test]
     fn parse_value_accepts_valid_input() {
@@ -142,18 +271,83 @@ mod tests {
         let cfg: BrokerConfig = serde_json::from_str("{}").expect("empty object");
         assert_eq!(cfg.max_terminal_sessions, 8);
         assert_eq!(cfg.max_output_bytes, 1_048_576);
+        assert_eq!(cfg.shared_secret, "");
+        assert_eq!(cfg.runtime_ns, "agent-sandbox-runtime");
+        assert_eq!(cfg.base_template, "code-standard-v1");
+        assert_eq!(cfg.default_profile, Profile::Persistent);
     }
 
     #[test]
     fn serde_round_trips_explicit_values() {
-        let json = r#"{"max_terminal_sessions":2,"max_output_bytes":512}"#;
-        let cfg: BrokerConfig = serde_json::from_str(json).expect("explicit");
-        assert_eq!(cfg.max_terminal_sessions, 2);
-        assert_eq!(cfg.max_output_bytes, 512);
-        let reserialized = serde_json::to_string(&cfg).expect("serialize");
-        assert!(
-            reserialized.contains("\"max_terminal_sessions\":2"),
-            "{reserialized}"
+        let cfg = BrokerConfig {
+            max_terminal_sessions: 2,
+            max_output_bytes: 512,
+            shared_secret: "s3cret".into(),
+            runtime_ns: "ns".into(),
+            base_template: "tmpl".into(),
+            default_profile: Profile::Ephemeral,
+        };
+        let json = serde_json::to_string(&cfg).expect("serialize");
+        assert!(json.contains("\"max_terminal_sessions\":2"), "{json}");
+        assert!(json.contains("\"default_profile\":\"ephemeral\""), "{json}");
+        let back: BrokerConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn from_map_reads_broker_env_vars() {
+        let cfg = BrokerConfig::from_map(map(&[
+            ("BROKER_SHARED_SECRET", "hunter2"),
+            ("BROKER_RUNTIME_NS", "sandbox-ns"),
+            ("BROKER_BASE_TEMPLATE", "code-standard-v2"),
+            ("BROKER_DEFAULT_PROFILE", "ephemeral"),
+            ("MAX_TERMINAL_SESSIONS", "4"),
+        ]))
+        .expect("ok");
+        assert_eq!(cfg.shared_secret, "hunter2");
+        assert_eq!(cfg.runtime_ns, "sandbox-ns");
+        assert_eq!(cfg.base_template, "code-standard-v2");
+        assert_eq!(cfg.default_profile, Profile::Ephemeral);
+        assert_eq!(cfg.max_terminal_sessions, 4);
+    }
+
+    #[test]
+    fn from_map_defaults_when_env_absent() {
+        let cfg = BrokerConfig::from_map(map(&[])).expect("ok");
+        assert_eq!(cfg.shared_secret, "");
+        assert_eq!(cfg.runtime_ns, "agent-sandbox-runtime");
+        assert_eq!(cfg.base_template, "code-standard-v1");
+        assert_eq!(cfg.default_profile, Profile::Persistent);
+    }
+
+    #[test]
+    fn from_map_bad_profile_falls_back_to_persistent() {
+        let cfg = BrokerConfig::from_map(map(&[("BROKER_DEFAULT_PROFILE", "nope")]))
+            .expect("falls back, not errors");
+        assert_eq!(cfg.default_profile, Profile::Persistent);
+    }
+
+    #[test]
+    fn profile_serializes_lowercase() {
+        assert_eq!(
+            serde_json::to_string(&Profile::Persistent).unwrap(),
+            "\"persistent\""
         );
+        assert_eq!(
+            serde_json::to_string(&Profile::Ephemeral).unwrap(),
+            "\"ephemeral\""
+        );
+        assert_eq!(
+            serde_json::from_str::<Profile>("\"ephemeral\"").unwrap(),
+            Profile::Ephemeral
+        );
+    }
+
+    #[test]
+    fn placeholder_detection() {
+        for p in PLACEHOLDER_SECRETS {
+            assert!(is_placeholder_secret(p), "{p:?} should be placeholder");
+        }
+        assert!(!is_placeholder_secret("a-strong-shared-secret-123456"));
     }
 }

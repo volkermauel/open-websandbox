@@ -5,6 +5,29 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+description = "Sandbox broker (axum + tokio + kube-rs): Open WebUI front door + Kubernetes Sandbox lifecycle for the open-websandbox Rust control plane."
 
 [lib]
 path = "src/lib.rs"
+
+[[bin]]
+name = "broker"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+axum = "0.8"
+kube.workspace = true
+k8s-openapi.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+shared = { version = "0.1.0", path = "../shared" }
+thiserror.workspace = true
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+http = "1"

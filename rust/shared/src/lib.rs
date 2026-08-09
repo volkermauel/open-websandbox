@@ -15,5 +15,10 @@ pub mod config;
 pub mod crd;
 
 pub use auth::constant_time_eq;
-pub use config::{AnyResult, BrokerConfig, ConfigError};
-pub use crd::{Sandbox, SandboxSpec, SandboxTemplate, SandboxTemplateSpec};
+pub use config::{
+    is_placeholder_secret, AnyResult, BrokerConfig, ConfigError, Profile, PLACEHOLDER_SECRETS,
+};
+pub use crd::{
+    OperatingMode, PodIpEntry, Sandbox, SandboxCondition, SandboxSpec, SandboxStatus,
+    SandboxTemplate, SandboxTemplateSpec, ShutdownPolicy,
+};
