@@ -14,6 +14,7 @@ pub mod error;
 pub mod execute;
 pub mod files;
 pub mod safe_path;
+pub mod snapshot;
 pub mod state;
 
 pub use app::build_router;
