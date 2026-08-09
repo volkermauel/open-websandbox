@@ -88,6 +88,7 @@ def _now_ts() -> int:
 IDLE_TTL = _env_int("BROKER_IDLE_TTL_SECONDS", 120)                  # ephemeral reap (return to warm pool): 2 min
 PARK_TTL = _env_int("BROKER_PARK_IDLE_SECONDS", 120)                 # persistent suspend: 2 min (cold-start is 1-6s)
 REAP_TTL = _env_int("BROKER_REAP_SECONDS", 7 * 24 * 3600)            # persistent reap: 7 days
+REAPER_POLL_SECONDS = _env_int("BROKER_REAPER_POLL_SECONDS", 60)       # reaper loop interval (default 60s; smaller for fast e2e)
 CLAIM_READY_TIMEOUT = _env_int("BROKER_CLAIM_TIMEOUT_SECONDS", 60)
 # allow long-running commands (sandbox MAX_TIMEOUT is 600s)
 PROXY_TIMEOUT = _env_int("BROKER_PROXY_TIMEOUT_SECONDS", 660)
@@ -160,8 +161,12 @@ core = client.CoreV1Api()  # per-user-pvc mode: manage per-user PVCs
 # disabled (default), the broker boots + imports without it installed.
 try:  # pragma: no cover - optional dep, exercised live in the image
     import aioboto3  # type: ignore[import-not-found]  # noqa: F401
+    from botocore import (
+        config as botocore_config,  # type: ignore[import-not-found]  # noqa: F401
+    )
 except Exception:  # pragma: no cover
     aioboto3 = None  # type: ignore[assignment]
+    botocore_config = None  # type: ignore[assignment]
 
 
 bearer = HTTPBearer(auto_error=False)
@@ -309,9 +314,11 @@ async def _get_s3_client():
     except OSError as exc:  # pragma: no cover
         raise RuntimeError(f"S3 credentials unreadable at {S3_CREDS_DIR}: {exc}") from exc
     session = aioboto3.Session()
+    # Path-style addressing is required by MinIO/R2/Proxmox and works on AWS S3 too (D6).
+    cfg = botocore_config.Config(s3={"addressing_style": "path"}, retries={"max_attempts": 3})
     async with session.client(
         "s3", endpoint_url=(S3_ENDPOINT or None), region_name=S3_REGION,
-        aws_access_key_id=access_key, aws_secret_access_key=secret_key,
+        aws_access_key_id=access_key, aws_secret_access_key=secret_key, config=cfg,
     ) as s3:
         yield s3
 
@@ -1279,7 +1286,7 @@ async def _reaper_loop():
             ACTIVE_SANDBOXES.labels(profile=EPHEMERAL).set(_n_eph)
         except Exception as exc:        # pragma: no cover - keep the loop alive
             log.warning("reaper iteration error: %s", exc)
-        await asyncio.sleep(60)
+        await asyncio.sleep(REAPER_POLL_SECONDS)
 
 
 def _delete_sandbox(name: str) -> None:
