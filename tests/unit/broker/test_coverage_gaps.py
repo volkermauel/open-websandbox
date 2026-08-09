@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import main  # type: ignore[import-not-found]
 import pytest
-from conftest import make_claim, make_sandbox
+from conftest import make_sandbox
 from starlette.websockets import WebSocketDisconnect
 
 _AUTH = {"Authorization": "Bearer test-secret"}
@@ -35,10 +35,11 @@ def _resp(status=200, body=b"{}", headers=None, content_type="application/json")
 
 # --- _create_chat_sandbox ---------------------------------------------------
 
-def test_create_chat_sandbox_preserves_non_workspace_volumes(api, monkeypatch):
+def test_create_sandbox_preserves_non_workspace_volumes(api, monkeypatch):
     """A non-'workspace' volume/mount in the base template is left untouched: only the
     workspace volume is rewired to the PVC and only the workspace mount gets a subPath.
-    Covers the loop-iteration-but-no-match branches in _create_chat_sandbox."""
+    The per-session runtime-key volume is injected alongside (issue #4). Covers the
+    loop-iteration-but-no-match branches in _create_sandbox."""
     monkeypatch.setattr(main, "_persistent_volume", lambda u: ("ws-pvc", "users/u1/"))
     template = {"spec": {"podTemplate": {"spec": {
         "volumes": [
@@ -53,7 +54,7 @@ def test_create_chat_sandbox_preserves_non_workspace_volumes(api, monkeypatch):
     api.get_namespaced_custom_object.return_value = template
     api.create_namespaced_custom_object.return_value = {"metadata": {"name": "cs1"}}
 
-    main._create_chat_sandbox("cs1", "u1", "sess-1")
+    main._create_sandbox("cs1", "u1", "sess-1", main.PERSISTENT)
 
     body = api.create_namespaced_custom_object.call_args.args[-1]
     spec = body["spec"]["podTemplate"]["spec"]
@@ -66,17 +67,20 @@ def test_create_chat_sandbox_preserves_non_workspace_volumes(api, monkeypatch):
     # non-workspace left exactly as-is
     assert vols["cache"] == {"name": "cache", "emptyDir": {}}
     assert "subPath" not in mounts["cache"]
+    # per-session runtime-key volume injected (issue #4)
+    assert vols["runtime-key"]["secret"]["secretName"] == main._runtime_key_secret_name("cs1")
 
 
-# --- _resolve_chat_sandbox / _ensure_sandbox_running_ip retry loops ---------
+# --- resolve_sandbox / _ensure_sandbox_running_ip retry loops -----------------
 
-def test_resolve_chat_sandbox_waits_for_pod_ip(monkeypatch):
+def test_resolve_sandbox_waits_for_pod_ip(monkeypatch):
     """Watch-until-ready returns the sandbox once it has a pod IP."""
     with_ip = make_sandbox(name="cs1", ready=True, pod_ip="10.0.0.9")
-    monkeypatch.setattr(main, "_get_sandbox", lambda n: with_ip)
+    monkeypatch.setattr(main, "_get_sandbox", lambda n: with_ip)  # pre-existing
+    monkeypatch.setattr(main, "_sandbox_operating_mode", lambda n: "Running")  # not suspended
     monkeypatch.setattr(main, "_watch_until_ready", lambda *a, **k: with_ip)
     monkeypatch.setattr(main, "_touch_sandbox", lambda n: None)
-    name, ip = asyncio.run(main._resolve_chat_sandbox("u1", "sess-1"))
+    name, ip = asyncio.run(main.resolve_sandbox("u1", "sess-1", main.PERSISTENT))
     assert ip == "10.0.0.9"
     assert name == main._chat_sandbox_name("u1", "sess-1")  # the hashed per-chat name
 
@@ -94,16 +98,14 @@ def test_ensure_sandbox_running_ip_missing(monkeypatch):
     assert asyncio.run(main._ensure_sandbox_running_ip("sb1", timeout=5.0)) is None
 
 
-# --- resolve_sandbox ephemeral claim retry loop -----------------------------
+# --- resolve_sandbox ready predicate ---------------------------------------
 
-def test_claim_ready_with_ip_predicate():
-    """_claim_ready_with_ip is True only when the claim is ready AND has a pod IP.
-
-    The old poll loop's three skip branches (not-ready / ready-no-sandbox / ready-no-ip)
-    collapse into this single watch predicate now that resolution is event-driven."""
-    assert main._claim_ready_with_ip(make_claim("c1", ready=True, sandbox="sbx-1", pod_ip="10.0.0.5"))
-    assert not main._claim_ready_with_ip(make_claim("c1", ready=True, sandbox="sbx-1", pod_ip=None))
-    assert not main._claim_ready_with_ip(make_claim("c1", ready=False))
+def test_sandbox_ready_with_ip_predicate():
+    """_sandbox_ready_with_ip is True only when the per-session Sandbox is Ready AND has
+    a pod IP — the watch predicate that gates resolution (event-driven now)."""
+    assert main._sandbox_ready_with_ip(make_sandbox("cs1", ready=True, pod_ip="10.0.0.5"))
+    assert not main._sandbox_ready_with_ip(make_sandbox("cs1", ready=True, pod_ip=None))
+    assert not main._sandbox_ready_with_ip(make_sandbox("cs1", ready=False))
 
 
 # --- proxy redirect without a Location header -------------------------------
@@ -136,16 +138,16 @@ async def _run_once():
         pass
 
 
-async def test_reaper_persistent_fresh_claim_kept(api, monkeypatch, reaper_one_tick):
-    """A persistent claim idle < PARK_TTL is neither reaped nor parked: covers the
-    persistent `elif idle > PARK_TTL` False branch (continue to next claim)."""
+async def test_reaper_persistent_fresh_sandbox_kept(api, monkeypatch, reaper_one_tick):
+    """A persistent per-session Sandbox idle < PARK_TTL is neither reaped nor parked:
+    covers the persistent `elif idle > PARK_TTL` False branch (continue to next)."""
     fresh = time.time_ns() // 1_000_000_000  # idle ~0
-    claim = make_claim(name="c1", profile="persistent", last_used=fresh, sandbox="sbx-1")
-    api.list_namespaced_custom_object.side_effect = [{"items": [claim]}, {"items": []}]
+    sbx = make_sandbox(name="owui-c-1", profile="persistent", last_used=fresh)
+    api.list_namespaced_custom_object.return_value = {"items": [sbx]}
     monkeypatch.setattr(main, "_sandbox_operating_mode", lambda n: "Running")
     parked, deleted = [], []
     monkeypatch.setattr(main, "_set_sandbox_operating_mode", lambda n, m: parked.append((n, m)))
-    monkeypatch.setattr(main, "_delete_claim", lambda n: deleted.append(n))
+    monkeypatch.setattr(main, "_delete_sandbox", lambda n: deleted.append(n))
     await _run_once()
     assert parked == [] and deleted == []
 
@@ -155,7 +157,7 @@ async def test_reaper_chat_sandbox_fresh_kept(api, monkeypatch, reaper_one_tick)
     `elif sidle > PARK_TTL` False branch (continue to next sandbox)."""
     fresh = time.time_ns() // 1_000_000_000
     sbx = make_sandbox(name="owui-c-1", last_used=fresh)
-    api.list_namespaced_custom_object.side_effect = [{"items": []}, {"items": [sbx]}]
+    api.list_namespaced_custom_object.return_value = {"items": [sbx]}
     monkeypatch.setattr(main, "_sandbox_operating_mode", lambda n: "Running")
     parked, deleted = [], []
     monkeypatch.setattr(main, "_set_sandbox_operating_mode", lambda n, m: parked.append((n, m)))
@@ -251,9 +253,10 @@ def test_validate_config_accepts_strong_secret(monkeypatch):
 def test_readyz_ok_when_apiserver_reachable(client, api):
     api.list_namespaced_custom_object.return_value = {"items": []}
     assert client.get("/readyz").status_code == 200
-    # /readyz lists sandboxclaims in the EXTENSIONS group, not the sandboxes group — a
-    # wrong group 404s and leaves the broker NotReady forever (caught by the KIND e2e).
-    assert api.list_namespaced_custom_object.call_args.args[0] == "extensions.agents.x-k8s.io"
+    # /readyz lists sandboxes in the AGENTS group (issue #4: the broker now owns direct
+    # per-session Sandboxes, not sandboxclaims) — a wrong group 404s and leaves the
+    # broker NotReady forever (caught by the KIND e2e).
+    assert api.list_namespaced_custom_object.call_args.args[0] == "agents.x-k8s.io"
 
 
 def test_readyz_503_when_apiserver_down(client, api):

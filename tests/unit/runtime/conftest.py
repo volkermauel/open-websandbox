@@ -26,8 +26,10 @@ from __future__ import annotations
 
 import os
 import resource as _resource
+import secrets
 import socket
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import AsyncIterator
@@ -42,11 +44,19 @@ import pytest
 # keeps working. This must run before the first `import server` anywhere.
 _os_env_max_procs = str(_resource.getrlimit(_resource.RLIMIT_NPROC)[1])
 os.environ.setdefault("MAX_PROCS", _os_env_max_procs)
-# Fail-closed RUNTIME_API_KEY: the runtime now DENIES ON UNSET (503), so the suite runs
-# with a strong key by default. Tests that exercise the deny-on-unset path monkeypatch/
-# delenv it; the request-guard tests use `client_noauth` to control the Bearer explicitly.
-RUNTIME_KEY = "test-runtime-key"
-os.environ.setdefault("RUNTIME_API_KEY", RUNTIME_KEY)
+# Fail-closed PER-SESSION KEY (issue #4): the runtime now reads its key from a
+# projected-Secret volume (RUNTIME_KEY_FILE) instead of an env var, and DENIES ON
+# UNSET (503). The suite runs with a strong key by default, backed by a real temp
+# file (mirrors the in-cluster projected volume). Tests that exercise the deny-on-unset
+# or rotate paths write/swap the file (see the `runtime_key` fixture) or point
+# RUNTIME_KEY_FILE at a missing path; the request-guard tests use `client_noauth` to
+# control the Bearer explicitly.
+RUNTIME_KEY = "test-runtime-key-per-session"
+_KEY_DIR = tempfile.mkdtemp(prefix="rt-key-")
+RUNTIME_KEY_FILE = os.path.join(_KEY_DIR, "api-key")
+with open(RUNTIME_KEY_FILE, "w", encoding="utf-8") as _f:
+    _f.write(RUNTIME_KEY)
+os.environ.setdefault("RUNTIME_KEY_FILE", RUNTIME_KEY_FILE)
 RT_AUTH = {"Authorization": f"Bearer {RUNTIME_KEY}"}
 
 # --- make the runtime package importable as top-level `server` -----------------
@@ -98,6 +108,52 @@ async def client_noauth(workdir: str) -> AsyncIterator[httpx.AsyncClient]:
 def rt_auth() -> dict:
     """The default inter-component Bearer (matches RUNTIME_KEY) for live uvicorn tests."""
     return dict(RT_AUTH)
+
+
+@pytest.fixture
+def runtime_key():
+    """Control handle for the per-session key file (issue #4).
+
+    Returns an object with:
+      .set(value)   — write a key value to the mounted file + invalidate the cache;
+      .rotate()     — mint+write a FRESH key (simulate rotate-on-resume);
+      .unset()      — point RUNTIME_KEY_FILE at a missing path (fail-closed 503);
+      .value        — the current key string.
+    Always restores the default key + path on teardown so other tests see the strong
+    default. """
+
+    class _Handle:
+        def __init__(self):
+            self.value = RUNTIME_KEY
+            self._server = server
+            self._orig_file = server.RUNTIME_KEY_FILE
+
+        def _invalidate(self):
+            server._key_cache["mtime"] = -1.0  # force re-read on next _load_session_key()
+
+        def set(self, value: str) -> str:
+            self.value = value
+            server.RUNTIME_KEY_FILE = RUNTIME_KEY_FILE
+            with open(RUNTIME_KEY_FILE, "w", encoding="utf-8") as f:
+                f.write(value)
+            self._invalidate()
+            return value
+
+        def rotate(self) -> str:
+            return self.set("rotated-" + secrets.token_urlsafe(24))
+
+        def unset(self) -> None:
+            # Point at a path that does not exist -> _load_session_key() returns '' (503).
+            server.RUNTIME_KEY_FILE = os.path.join(_KEY_DIR, "does-not-exist")
+            self._invalidate()
+
+    h = _Handle()
+    yield h
+    # teardown: restore the default key + path for subsequent tests
+    server.RUNTIME_KEY_FILE = h._orig_file
+    with open(RUNTIME_KEY_FILE, "w", encoding="utf-8") as f:
+        f.write(RUNTIME_KEY)
+    server._key_cache["mtime"] = -1.0
 
 
 @pytest.fixture

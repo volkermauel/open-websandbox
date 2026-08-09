@@ -92,11 +92,12 @@ def test_proxy_redirect_location_rewrite(client, httpx_client, monkeypatch):
 
 
 def test_proxy_injects_runtime_credential(client, httpx_client, monkeypatch):
-    # The catch-all proxy strips the inbound Authorization (HOP) and injects the runtime
-    # inter-component Bearer so the broker -> router -> runtime hop clears _auth_runtime
-    # on /execute, /files/* and the terminal management endpoints.
+    # The catch-all proxy strips the inbound Authorization (HOP) and injects the
+    # PER-SESSION runtime Bearer for the target pod (issue #4: resolved from
+    # owui-runtime-key-<sandbox>) so the broker -> router -> runtime hop clears
+    # _auth_runtime on /execute, /files/* and the terminal management endpoints.
     monkeypatch.setattr(main, "resolve_sandbox", AsyncMock(return_value=("sbx-1", "10.0.0.1")))
     httpx_client.send.return_value = _resp(200, b"{}")
     client.post("/execute", headers={**_AUTH, "X-User-Id": "u1"}, json={"command": "echo hi"})
     sent = httpx_client.send.call_args.args[0]  # the forwarded httpx.Request
-    assert sent.headers["authorization"] == f"Bearer {main.RUNTIME_API_KEY}"
+    assert sent.headers["authorization"] == f"Bearer {main._runtime_key_for('sbx-1')}"

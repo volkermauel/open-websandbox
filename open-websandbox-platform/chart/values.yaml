@@ -80,13 +80,9 @@ sandboxTemplate:
   runtimeRepository: open-websandbox-runtime
   maxProcs: 256
   uid: 1000
-  # Inter-component API key the runtime enforces on its terminal surface (fail-closed:
-  # the runtime refuses to boot without it; mirrors broker.sharedSecret). Leave EMPTY
-  # ("") to derive it from the broker shared secret (owui-broker-secret) so the
-  # broker->runtime terminal hop authenticates with the same credential. Set it
-  # explicitly to decouple the runtime key from the broker secret. values.schema.json
-  # rejects the known placeholders; the runtime itself refuses to start on one.
-  runtimeApiKey: ""
+  # No shared runtimeApiKey anymore (issue #4): each sandbox pod receives its OWN
+  # per-session key, minted by the broker and delivered as a projected Secret volume
+  # (owui-runtime-key-<sandbox>). The chart no longer injects a shared runtime key.
   dns:
     policy: None
     # IPv4 public resolvers by default. IPv6 DNS *egress* IS allowed
@@ -102,7 +98,12 @@ sandboxTemplate:
     packages: 4Gi
 
 warmPool:
-  replicas: 2
+  # 0 under per-session key enforcement (issue #4): the upstream controller's warm-pool
+  # REUSE model cannot project a per-session Secret into a pod created before its
+  # session exists (a SandboxClaim's env is static-only; no per-pod volume), so ephemeral
+  # now cold-starts a direct per-session Sandbox like persistent. Re-enable only if
+  # upstream gains per-CR secret projection.
+  replicas: 0
   templateName: code-standard-v1
 
 sharedPvc:
