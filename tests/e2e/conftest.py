@@ -149,7 +149,7 @@ from botocore.config import Config
 c = boto3.client('s3', endpoint_url=os.environ['BROKER_S3_ENDPOINT'],
    aws_access_key_id=open('/etc/s3-creds/access-key-id').read().strip(),
    aws_secret_access_key=open('/etc/s3-creds/secret-access-key').read().strip(),
-   config=Config(s3={'addressing_style':'path'}))
+   config=Config(s3={{'addressing_style':'path'}}))
 r = c.list_objects_v2(Bucket=os.environ['BROKER_S3_BUCKET'], Prefix={prefix!r})
 print(json.dumps([o['Key'] for o in r.get('Contents', [])]))
 """
