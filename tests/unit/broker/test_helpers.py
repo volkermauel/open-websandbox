@@ -74,7 +74,7 @@ def test_profile_normalization_invalid_falls_back(tmp_path):
         "import kubernetes.client as kc,kubernetes.config as kcfg\n"
         "kcfg.load_incluster_config=kcfg.load_kube_config=lambda *a,**k:None\n"
         "kc.CustomObjectsApi=kc.CoreV1Api=lambda *a,**k:None\n"
-        "sys.path.insert(0,'agent-sandbox-platform/broker')\n"
+        "sys.path.insert(0,'open-websandbox-platform/broker')\n"
         "import main;print(main.DEFAULT_PROFILE,main.PERSISTENT_MODE)\n"
     )
     out = subprocess.check_output([sys.executable, "-c", code], cwd=str(repo)).decode()

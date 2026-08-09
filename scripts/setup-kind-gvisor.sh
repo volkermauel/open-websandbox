@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bring up a gVisor-enabled KIND cluster locally for the open-sandbox e2e suite.
+# Bring up a gVisor-enabled KIND cluster locally for the open-websandbox e2e suite.
 #
 # gVisor delivery is identical to CI: runsc + its containerd shim + the gvisor-bin
 # sidecar dir are installed on the HOST (infra/kind/install-runsc.sh) and bind-mounted
@@ -13,7 +13,7 @@
 # NODE_IMAGE=kindest/node:v1.31.0 to skip the wrapper (e.g. CI, or sane hosts).
 set -Eeuo pipefail
 
-CLUSTER_NAME="${CLUSTER_NAME:-open-sandbox-e2e}"
+CLUSTER_NAME="${CLUSTER_NAME:-open-websandbox-e2e}"
 NODE_IMAGE="${NODE_IMAGE:-kindest-node-nofile:v1.31.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
