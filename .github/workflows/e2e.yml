@@ -144,6 +144,11 @@ jobs:
         run: |
           kubectl create namespace "$SYS_NS" --dry-run=client -o yaml | kubectl apply -f -
           kubectl create namespace "$RUNTIME_NS" --dry-run=client -o yaml | kubectl apply -f -
+          # Pre-apply the vendored CRDs and wait for establishment so helm can build the
+          # SandboxTemplate instance in one pass (helm applies crds/ but does not wait for
+          # the API server to establish them -> intermittent 'no matches for kind' failures).
+          kubectl apply -f open-websandbox-platform/chart/crds/
+          kubectl wait --for=condition=Established --all crd --timeout=120s || true
           helm install open-websandbox open-websandbox-platform/chart/ \
             -f "$VALUES_FILE" -n "$SYS_NS"
           kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
@@ -288,6 +293,10 @@ jobs:
         run: |
           kubectl create namespace "$SYS_NS" --dry-run=client -o yaml | kubectl apply -f -
           kubectl create namespace "$RUNTIME_NS" --dry-run=client -o yaml | kubectl apply -f -
+          # Pre-apply the vendored CRDs and wait for establishment before helm install
+          # (see the matrix profile step for rationale).
+          kubectl apply -f open-websandbox-platform/chart/crds/
+          kubectl wait --for=condition=Established --all crd --timeout=120s || true
           kubectl -n "$SYS_NS" apply -f tests/e2e/fixtures/minio.yaml
           kubectl -n "$SYS_NS" rollout status deploy/minio --timeout=180s
 
