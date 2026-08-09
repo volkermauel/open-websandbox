@@ -1,14 +1,13 @@
 //! open-websandbox broker — the Open WebUI front door + Sandbox lifecycle.
 //!
-//! PR-C-1 delivers the HTTP foundation and the Kubernetes `Sandbox` CRUD this
-//! crate is built on. The broker's request path is, in outline, the same as the
-//! Python original (`broker/main.py`): authenticate the shared Bearer secret →
-//! resolve-or-create the per-session `Sandbox` → reverse-proxy to the runtime
-//! pod. This chunk makes the broker-served HTTP surface, the auth guard, the
-//! kube-rs client, and the `Sandbox` lifecycle CRUD real and tested; the
-//! resolve-on-request reverse proxy, leader election, reaper, warm pool, S3
-//! tiering, per-session key management, and metrics land in later PRs (C-2 →
-//! C-4).
+//! The broker's request path mirrors the Python original (`broker/main.py`):
+//! authenticate the shared Bearer secret → [`resolve`] the per-session `Sandbox`
+//! (get-or-create + wait for `Ready`) → [`proxy`] the runtime-tool request to the
+//! resolved pod. PR-C-1 landed the HTTP foundation, auth guard, kube-rs client,
+//! and `Sandbox` lifecycle CRUD; PR-C-2 (this code) adds the resolve-on-request
+//! flow + the reverse proxy + the terminal WebSocket relay. Leader election,
+//! idle reaper, warm pool, S3 tiering, per-session-key Secret injection/rotation,
+//! and metrics land in C-3/C-4.
 //!
 //! `#![forbid(unsafe_code)]` holds across the whole crate (D8): every memory-
 //! safety guarantee comes from the type system and the audited dependency
@@ -22,14 +21,18 @@ pub mod auth;
 pub mod client;
 pub mod config;
 pub mod error;
+pub mod proxy;
+pub mod resolve;
 pub mod sandbox;
 pub mod state;
 pub mod store;
+pub mod terminal;
 
 pub use app::build_router;
 pub use client::build_client;
 pub use config::ServerConfig;
 pub use error::ApiError;
+pub use resolve::{resolve_sandbox, sandbox_name, ResolvedSandbox};
 pub use sandbox::{build_sandbox, extract_pod_template};
 pub use shared;
 pub use state::AppState;
