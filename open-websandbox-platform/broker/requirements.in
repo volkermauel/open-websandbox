@@ -12,3 +12,4 @@ httpx==0.28.1
 kubernetes==36.0.3
 websockets==17.0.1
 prometheus_client==0.26.0
+aioboto3==15.5.0

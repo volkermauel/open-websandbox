@@ -167,6 +167,29 @@ spec:
           value: {{ .Values.broker.persistentMode | quote }}
         - name: BROKER_PARK_IDLE_SECONDS
           value: {{ .Values.broker.parkIdleSeconds | quote }}
+        {{- if .Values.broker.s3.enabled }}
+        # S3-tiered cold tier (issue #52): the broker is the sole S3 client. Credentials are
+        # read from a projected Secret volume at /etc/s3-creds (no secret in env, #48).
+        # The chart references the Secret by name; operators create it (bring-your-own).
+        - name: BROKER_S3_ENABLED
+          value: "true"
+        - name: BROKER_S3_ENDPOINT
+          value: {{ .Values.broker.s3.endpoint | quote }}
+        - name: BROKER_S3_BUCKET
+          value: {{ .Values.broker.s3.bucket | quote }}
+        - name: BROKER_S3_PREFIX
+          value: {{ .Values.broker.s3.prefix | quote }}
+        - name: BROKER_S3_REGION
+          value: {{ .Values.broker.s3.region | default "us-east-1" | quote }}
+        - name: BROKER_S3_RETENTION_DAYS
+          value: {{ .Values.broker.s3.retentionDays | quote }}
+        - name: BROKER_S3_PERIODIC_SYNC_SECONDS
+          value: {{ .Values.broker.s3.periodicSyncInterval | quote }}
+        - name: BROKER_S3_SIZE_LIMIT
+          value: {{ .Values.broker.s3.sizeLimit | quote }}
+        - name: BROKER_S3_TMPFS
+          value: {{ .Values.broker.s3.tmpfs | quote }}
+        {{- end }}
         {{- if $otlp }}
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: {{ $otlp | quote }}
@@ -209,9 +232,20 @@ spec:
         volumeMounts:
         - name: tmp
           mountPath: /tmp
+        {{- if .Values.broker.s3.enabled }}
+        - name: s3-creds
+          mountPath: /etc/s3-creds
+          readOnly: true
+        {{- end }}
       volumes:
       - name: tmp
         emptyDir: {}
+      {{- if .Values.broker.s3.enabled }}
+      - name: s3-creds
+        secret:
+          secretName: {{ .Values.broker.s3.credentialsSecret | quote }}
+          defaultMode: 0o400
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service
