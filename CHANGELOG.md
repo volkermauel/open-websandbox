@@ -12,6 +12,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Per-session broker<->runtime API key (#4).** Each sandbox pod now gets its OWN
+  broker<->runtime key, replacing the single shared `RUNTIME_API_KEY` (hard cutover,
+  no backward compatibility). The broker mints a fresh high-entropy key per sandbox,
+  persists it to a per-session Secret `owui-runtime-key-<sandbox>`, injects it into the
+  pod as a projected Secret volume (`/etc/runtime-key/api-key`), reads it back per hop
+  via a stateless Secret get (the broker stays stateless — no in-memory/leader state),
+  rotates it on resume, and reaps it with the sandbox. Delivery = projected per-session
+  Secret volume via a broker-created direct `Sandbox` (the runtime NetworkPolicy denies
+  API egress and `automountServiceAccountToken: false`, so the runtime reads the key
+  from the mounted file — no API/RBAC/NetworkPolicy change); ephemeral moves off the
+  warm-pool `SandboxClaim` path onto a direct per-session `Sandbox` (the controller's
+  warm-pod reuse cannot project a per-pod Secret), so the warm pool is disabled by
+  default (`warmPool.replicas: 0`). The vendored `kubernetes-sigs/agent-sandbox`
+  controller + CRDs are byte-for-byte preserved.
+
 ## [0.1.0] - 2026-08-07
 
 First usable release of **open-websandbox**, the multi-tenant Kubernetes sandbox
