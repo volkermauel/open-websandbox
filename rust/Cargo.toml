@@ -21,6 +21,7 @@ homepage = "https://github.com/volkermauel/open-websandbox"
 # toolchain (rustc/cargo 1.97.1).
 [workspace.dependencies]
 anyhow = "1.0.104"
+async-trait = "0.1.89"
 # k8s-openapi requires exactly one version feature to be enabled. `shared` owns
 # the CRD type derives and therefore owns this feature selection for now; when
 # `broker`/`runtime` gain binaries in PR-B/PR-C, the pinned k8s version feature
