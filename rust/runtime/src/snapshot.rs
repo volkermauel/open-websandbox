@@ -30,7 +30,7 @@ use std::process::Stdio;
 
 use axum::body::{Body, Bytes};
 use axum::extract::State;
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{header, StatusCode};
 use axum::response::Response;
 use axum::Json;
 use http_body_util::channel::Channel;
@@ -55,13 +55,6 @@ pub struct RestoreResponse {
     bytes: u64,
 }
 
-fn subdir_from(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get("x-workspace-subdir")
-        .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.is_empty())
-}
-
 fn spawn_err(e: std::io::Error) -> ApiError {
     ApiError::Internal(format!("failed to spawn tar/zstd pipeline: {e}"))
 }
@@ -77,12 +70,8 @@ fn hardened(cmd: &mut Command) -> &mut Command {
 // GET /snapshot
 // ---------------------------------------------------------------------------
 
-pub async fn snapshot(
-    _auth: Authed,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Response, ApiError> {
-    let base = request_base(&state.config.workdir, subdir_from(&headers))?;
+pub async fn snapshot(_auth: Authed, State(state): State<AppState>) -> Result<Response, ApiError> {
+    let base = request_base(&state.config.workdir, None)?;
 
     // Pre-check: refuse BEFORE opening any pipe (D9 fail-on-exceed).
     if workspace_size(&base) > state.config.max_workspace_bytes {
@@ -180,11 +169,9 @@ pub async fn snapshot(
 pub async fn restore(
     _auth: Authed,
     State(state): State<AppState>,
-    headers: HeaderMap,
     body: Body,
 ) -> Result<Json<RestoreResponse>, ApiError> {
-    let subdir = subdir_from(&headers).map(str::to_owned);
-    let base = request_base(&state.config.workdir, subdir.as_deref())?;
+    let base = request_base(&state.config.workdir, None)?;
     let cap = state.config.max_workspace_bytes;
 
     // zstd -d -q   (stdin <- HTTP body, stdout -> tar.stdin)
