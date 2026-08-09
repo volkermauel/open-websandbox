@@ -189,6 +189,8 @@ spec:
           value: {{ .Values.broker.s3.sizeLimit | quote }}
         - name: BROKER_S3_TMPFS
           value: {{ .Values.broker.s3.tmpfs | quote }}
+        - name: BROKER_REAPER_POLL_SECONDS
+          value: {{ .Values.broker.s3.reaperPollSeconds | quote }}
         {{- end }}
         {{- if $otlp }}
         - name: OTEL_EXPORTER_OTLP_ENDPOINT

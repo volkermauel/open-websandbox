@@ -1,0 +1,32 @@
+# KIND/runc profile for the S3-tiered e2e suite (issue #52).
+#
+# Runs the broker with broker.persistentMode=s3-tiered + broker.s3.enabled=true, pointed
+# at the in-cluster MinIO fixture (tests/e2e/fixtures/minio.yaml). The hot tier is an
+# emptyDir /workspace; the cold tier is MinIO. idleTtlSeconds + reaperPollSeconds are
+# lowered so the offload-on-reap path is exercised deterministically within the test
+# timeout. Default e2e (values-kind.yaml) is unaffected — this is a separate profile.
+sandboxTemplate:
+  runtimeClassName: ""            # runc (KIND can't nest gVisor)
+router:
+  kubeApiServerCidr: "10.96.0.1/32"   # KIND service CIDR (kubeadm default)
+  kubeDnsCidr: "10.96.0.10/32"
+broker:
+  defaultProfile: persistent      # s3-tiered is a persistent backing mode
+  persistentMode: s3-tiered
+  idleTtlSeconds: 15              # reap (offload) idle s3-tiered sandboxes fast
+  parkIdleSeconds: 15
+  s3:
+    enabled: true
+    endpoint: "http://minio.agent-sandbox-system:9000"
+    bucket: "owsb-e2e"
+    prefix: "users"
+    region: "us-east-1"
+    credentialsSecret: "owui-s3-creds"   # created by tests/e2e/fixtures/minio.yaml
+    retentionDays: 1
+    compression: zstd
+    periodicSyncInterval: 600     # keep the periodic sweep out of the way (reap is authoritative)
+    sizeLimit: "2Gi"
+    tmpfs: false
+    reaperPollSeconds: 10         # fast, deterministic offload-on-reap
+sharedPvc:
+  storageClass: standard          # KIND default (unused in s3-tiered — no PVC)

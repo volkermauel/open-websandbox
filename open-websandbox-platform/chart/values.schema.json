@@ -114,7 +114,8 @@
             "compression": { "type": "string", "enum": ["zstd"], "description": "Compression codec (zstd only, D9)." },
             "periodicSyncInterval": { "type": "integer", "minimum": 30, "description": "R1: snapshot running sessions every N seconds." },
             "sizeLimit": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$", "description": "Hot-tier emptyDir sizeLimit + runtime MAX_WORKSPACE_BYTES (default 2Gi, D2/D9)." },
-            "tmpfs": { "type": "boolean", "description": "true => /workspace is tmpfs (Memory) instead of disk-backed emptyDir." }
+            "tmpfs": { "type": "boolean", "description": "true => /workspace is tmpfs (Memory) instead of disk-backed emptyDir." },
+            "reaperPollSeconds": { "type": "integer", "minimum": 5, "description": "Reaper loop interval when s3 is enabled (lower = faster offload-on-reap; default 60)." }
           }
         }
       }

@@ -90,6 +90,7 @@ broker:
     periodicSyncInterval: 300   # R1: snapshot running sessions every N seconds
     sizeLimit: "2Gi"            # hot-tier emptyDir sizeLimit + runtime MAX_WORKSPACE_BYTES (D2/D9)
     tmpfs: false                # true => /workspace is tmpfs (Memory) instead of disk-backed emptyDir
+    reaperPollSeconds: 60       # reaper loop interval (lower = faster offload-on-reap; default 60)
 
 
 sandboxTemplate:

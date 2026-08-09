@@ -116,3 +116,59 @@ def second_broker(second_session) -> Iterator[httpx.Client]:
         base_url=BROKER_URL, timeout=60, headers=headers_for(SECOND_USER, second_session)
     ) as c:
         yield c
+
+
+# --- S3-tiered e2e (issue #52) ------------------------------------------------
+# The s3-tiered e2e is opt-in: it only runs when E2E_S3=1 is set (the default runc/
+# gvisor matrix is unaffected). It stands up an in-cluster MinIO (tests/e2e/fixtures/
+# minio.yaml), points the broker at it, and inspects objects by exec'ing the broker's
+# own boto3 + projected creds (no extra test deps, no mc image).
+import json  # noqa: E402
+import subprocess  # noqa: E402
+
+S3_SYS_NS = os.environ.get("E2E_SYS_NS", "agent-sandbox-system")
+S3_BUCKET = os.environ.get("E2E_S3_BUCKET", "owsb-e2e")
+
+
+def _kubectl_exec_broker(script: str) -> str:
+    """Run a Python snippet inside the broker pod (has boto3 + /etc/s3-creds)."""
+    r = subprocess.run(
+        ["kubectl", "-n", S3_SYS_NS, "exec", "-i", "deploy/owui-broker", "--", "python3", "-"],
+        input=script, capture_output=True, text=True, timeout=60,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"kubectl exec broker failed: {r.stderr[-500:]}")
+    return r.stdout
+
+
+def minio_list_objects(prefix: str = "users/") -> list[str]:
+    """List object keys under `prefix` in the e2e MinIO bucket (via the broker's boto3)."""
+    script = f"""
+import boto3, os, json
+c = boto3.client('s3', endpoint_url=os.environ['BROKER_S3_ENDPOINT'],
+   aws_access_key_id=open('/etc/s3-creds/access-key-id').read().strip(),
+   aws_secret_access_key=open('/etc/s3-creds/secret-access-key').read().strip())
+r = c.list_objects_v2(Bucket=os.environ['BROKER_S3_BUCKET'], Prefix={prefix!r})
+print(json.dumps([o['Key'] for o in r.get('Contents', [])]))
+"""
+    out = _kubectl_exec_broker(script)
+    return json.loads(out.strip().splitlines()[-1])
+
+
+@pytest.fixture(scope="session")
+def require_s3() -> None:
+    """Gate the s3-tiered e2e: skip unless E2E_S3=1. Also ensures the bucket exists."""
+    if not os.environ.get("E2E_S3"):
+        pytest.skip("S3-tiered e2e is opt-in (set E2E_S3=1)")
+    _kubectl_exec_broker("""
+import boto3, os
+from botocore.exceptions import ClientError
+c = boto3.client('s3', endpoint_url=os.environ['BROKER_S3_ENDPOINT'],
+   aws_access_key_id=open('/etc/s3-creds/access-key-id').read().strip(),
+   aws_secret_access_key=open('/etc/s3-creds/secret-access-key').read().strip())
+try:
+    c.create_bucket(Bucket=os.environ['BROKER_S3_BUCKET']); print('bucket created')
+except ClientError as e:
+    print('bucket present:', e.response.get('Error', {}).get('Code'))
+""")
+
