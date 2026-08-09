@@ -1,5 +1,5 @@
 //! Broker-served OWUI parity routes (`/api/config`, `/api/status`) and the
-//! catch-all reverse-proxy stub.
+//! catch-all reverse-proxy auth gate (forwarding is covered in `proxy_resolve.rs`).
 
 #![forbid(unsafe_code)]
 
@@ -70,23 +70,6 @@ async fn api_config_and_status_require_auth() {
         ),
         StatusCode::UNAUTHORIZED
     );
-}
-
-#[tokio::test]
-async fn catch_all_proxy_stub_returns_501_when_authed() {
-    let env = Env::new();
-    // Any proxied runtime op (/execute, /files/*, /api/terminals, /download/...) lands
-    // on the catch-all and returns 501 (PR-C-2 implements forwarding).
-    let resp = env
-        .send(
-            Method::POST,
-            "/execute",
-            Bearer::Default,
-            Some(serde_json::json!({"command": "echo hi"}).to_string()),
-        )
-        .await;
-    assert_eq!(status(&resp), StatusCode::NOT_IMPLEMENTED);
-    assert!(body_text(resp).await.contains("PR-C-2"));
 }
 
 #[tokio::test]

@@ -136,6 +136,28 @@ pub struct BrokerConfig {
     /// `BROKER_DEFAULT_PROFILE`, default `persistent`).
     #[serde(default)]
     pub default_profile: Profile,
+
+    /// Shared broker→runtime API key the broker injects as `Authorization:
+    /// Bearer <key>` on the direct pod hop (env `BROKER_RUNTIME_API_KEY`).
+    ///
+    /// PR-C-2 uses this single shared key; PR-C-3 replaces it with the per-session
+    /// `owui-runtime-key-<sandbox>` Secret the Python broker mints/rotates (issue
+    /// #4). Empty ⇒ no Authorization header is forwarded (the runtime then
+    /// fail-closes), mirroring the Python `_runtime_auth_headers` `if key else {}`.
+    #[serde(default)]
+    pub runtime_api_key: String,
+
+    /// Seconds to wait for a freshly created/resumed Sandbox to reach `Ready`
+    /// (env `BROKER_CLAIM_TIMEOUT_SECONDS`, default `60`). Mirrors the Python
+    /// `CLAIM_READY_TIMEOUT`. Expiry surfaces as HTTP 503 (sandbox unavailable).
+    #[serde(default = "default_claim_timeout_seconds")]
+    pub claim_timeout_seconds: u64,
+
+    /// Total seconds allowed for one broker→runtime pod hop (env
+    /// `BROKER_PROXY_TIMEOUT_SECONDS`, default `660`). Mirrors the Python
+    /// `PROXY_TIMEOUT`; applied to the shared `reqwest` client.
+    #[serde(default = "default_proxy_timeout_seconds")]
+    pub proxy_timeout_seconds: u64,
 }
 
 const fn default_max_terminal_sessions() -> u32 {
@@ -152,6 +174,33 @@ fn default_runtime_ns() -> String {
 
 fn default_base_template() -> String {
     "code-standard-v1".to_string()
+}
+
+const fn default_claim_timeout_seconds() -> u64 {
+    60
+}
+
+const fn default_proxy_timeout_seconds() -> u64 {
+    660
+}
+
+/// The all-defaults broker config (the same value `BrokerConfig::from_map(|_| None)`
+/// yields), exposed as [`Default`] so tests can override single fields with
+/// `BrokerConfig { shared_secret: "...", ..Default::default() }`.
+impl Default for BrokerConfig {
+    fn default() -> Self {
+        Self {
+            max_terminal_sessions: default_max_terminal_sessions(),
+            max_output_bytes: default_max_output_bytes(),
+            shared_secret: String::new(),
+            runtime_ns: default_runtime_ns(),
+            base_template: default_base_template(),
+            default_profile: Profile::Persistent,
+            runtime_api_key: String::new(),
+            claim_timeout_seconds: default_claim_timeout_seconds(),
+            proxy_timeout_seconds: default_proxy_timeout_seconds(),
+        }
+    }
 }
 
 impl BrokerConfig {
@@ -186,6 +235,11 @@ impl BrokerConfig {
             default_profile: get("BROKER_DEFAULT_PROFILE")
                 .and_then(|raw| raw.parse().ok())
                 .unwrap_or_default(),
+            runtime_api_key: get("BROKER_RUNTIME_API_KEY").unwrap_or_default(),
+            claim_timeout_seconds: env_value("BROKER_CLAIM_TIMEOUT_SECONDS", &get)?
+                .unwrap_or_else(default_claim_timeout_seconds),
+            proxy_timeout_seconds: env_value("BROKER_PROXY_TIMEOUT_SECONDS", &get)?
+                .unwrap_or_else(default_proxy_timeout_seconds),
         })
     }
 }
@@ -278,6 +332,14 @@ mod tests {
     }
 
     #[test]
+    fn serde_defaults_cover_new_proxy_fields() {
+        let cfg: BrokerConfig = serde_json::from_str("{}").expect("empty object");
+        assert_eq!(cfg.runtime_api_key, "");
+        assert_eq!(cfg.claim_timeout_seconds, 60);
+        assert_eq!(cfg.proxy_timeout_seconds, 660);
+    }
+
+    #[test]
     fn serde_round_trips_explicit_values() {
         let cfg = BrokerConfig {
             max_terminal_sessions: 2,
@@ -286,10 +348,15 @@ mod tests {
             runtime_ns: "ns".into(),
             base_template: "tmpl".into(),
             default_profile: Profile::Ephemeral,
+            runtime_api_key: "rt-key".into(),
+            claim_timeout_seconds: 30,
+            proxy_timeout_seconds: 99,
         };
         let json = serde_json::to_string(&cfg).expect("serialize");
         assert!(json.contains("\"max_terminal_sessions\":2"), "{json}");
         assert!(json.contains("\"default_profile\":\"ephemeral\""), "{json}");
+        assert!(json.contains("\"runtime_api_key\":\"rt-key\""), "{json}");
+        assert!(json.contains("\"claim_timeout_seconds\":30"), "{json}");
         let back: BrokerConfig = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, cfg);
     }
@@ -301,6 +368,9 @@ mod tests {
             ("BROKER_RUNTIME_NS", "sandbox-ns"),
             ("BROKER_BASE_TEMPLATE", "code-standard-v2"),
             ("BROKER_DEFAULT_PROFILE", "ephemeral"),
+            ("BROKER_RUNTIME_API_KEY", "rt-key"),
+            ("BROKER_CLAIM_TIMEOUT_SECONDS", "42"),
+            ("BROKER_PROXY_TIMEOUT_SECONDS", "300"),
             ("MAX_TERMINAL_SESSIONS", "4"),
         ]))
         .expect("ok");
@@ -308,6 +378,9 @@ mod tests {
         assert_eq!(cfg.runtime_ns, "sandbox-ns");
         assert_eq!(cfg.base_template, "code-standard-v2");
         assert_eq!(cfg.default_profile, Profile::Ephemeral);
+        assert_eq!(cfg.runtime_api_key, "rt-key");
+        assert_eq!(cfg.claim_timeout_seconds, 42);
+        assert_eq!(cfg.proxy_timeout_seconds, 300);
         assert_eq!(cfg.max_terminal_sessions, 4);
     }
 
@@ -318,6 +391,9 @@ mod tests {
         assert_eq!(cfg.runtime_ns, "agent-sandbox-runtime");
         assert_eq!(cfg.base_template, "code-standard-v1");
         assert_eq!(cfg.default_profile, Profile::Persistent);
+        assert_eq!(cfg.runtime_api_key, "");
+        assert_eq!(cfg.claim_timeout_seconds, 60);
+        assert_eq!(cfg.proxy_timeout_seconds, 660);
     }
 
     #[test]

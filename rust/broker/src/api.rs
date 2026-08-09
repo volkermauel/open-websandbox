@@ -291,11 +291,3 @@ pub async fn delete_sandbox(
         .map_err(map_store_err)?;
     Ok(StatusCode::NO_CONTENT)
 }
-
-/// `/{*path}` catch-all reverse proxy. C-1 returns 501: the resolve-on-request
-/// flow + runtime hop forwarding lands in PR-C-2.
-pub async fn proxy_catch_all(_: Authed) -> ApiError {
-    ApiError::NotImplemented(
-        "reverse-proxy not implemented in PR-C-1 (lands in PR-C-2)".to_string(),
-    )
-}

@@ -187,6 +187,10 @@ pub struct StubSandboxStore {
     sandboxes: Mutex<HashMap<String, Sandbox>>,
     templates: Mutex<HashMap<String, SandboxTemplate>>,
     reachable: AtomicBool,
+    /// Pod IP stamped as a Ready status onto a sandbox at create time. `None`
+    /// (default) ⇒ created sandboxes have no status, so a resolve poll will time
+    /// out unless the test later calls [`Self::mark_ready`].
+    auto_ready_on_create: Mutex<Option<String>>,
 }
 
 impl StubSandboxStore {
@@ -196,6 +200,7 @@ impl StubSandboxStore {
             sandboxes: Mutex::new(HashMap::new()),
             templates: Mutex::new(HashMap::new()),
             reachable: AtomicBool::new(true),
+            auto_ready_on_create: Mutex::new(None),
         }
     }
 
@@ -228,6 +233,32 @@ impl StubSandboxStore {
     pub fn set_reachable(&self, reachable: bool) {
         self.reachable.store(reachable, Ordering::SeqCst);
     }
+
+    /// Stamp a Ready status (with `pod_ip`) onto every sandbox created via
+    /// [`create_sandbox`](SandboxStore::create_sandbox), simulating an instantly-
+    /// ready controller. Pass `None` to leave created sandboxes status-less
+    /// (e.g. to exercise the resolve timeout path).
+    pub fn set_auto_ready_on_create(&self, pod_ip: Option<String>) {
+        *self.auto_ready_on_create.lock().expect("stub auto_ready") = pod_ip;
+    }
+
+    /// Mark an existing sandbox Ready with `pod_ip` (flip the status the poll loop
+    /// observes). Returns `false` if the sandbox is not present.
+    pub fn mark_ready(&self, name: &str, pod_ip: &str) -> bool {
+        let mut map = self.sandboxes.lock().expect("stub sandboxes");
+        if let Some(sbx) = map.get_mut(name) {
+            sbx.status = Some(make_ready_status(pod_ip));
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Snapshot of the current sandbox store (name → `Sandbox`), for assertions.
+    #[must_use]
+    pub fn snapshot(&self) -> HashMap<String, Sandbox> {
+        self.sandboxes.lock().expect("stub sandboxes").clone()
+    }
 }
 
 impl Default for StubSandboxStore {
@@ -247,11 +278,20 @@ impl SandboxStore for StubSandboxStore {
             .cloned())
     }
 
-    async fn create_sandbox(&self, sandbox: Sandbox) -> Result<Sandbox, StoreError> {
+    async fn create_sandbox(&self, mut sandbox: Sandbox) -> Result<Sandbox, StoreError> {
         let mut map = self.sandboxes.lock().expect("stub sandboxes");
         let name = sandbox.name_any();
         if map.contains_key(&name) {
             return Err(StoreError::Conflict);
+        }
+        // Simulate the controller flipping a freshly-created sandbox to Ready.
+        if let Some(ip) = self
+            .auto_ready_on_create
+            .lock()
+            .expect("stub auto_ready")
+            .clone()
+        {
+            sandbox.status = Some(make_ready_status(&ip));
         }
         map.insert(name.clone(), sandbox.clone());
         Ok(sandbox)
@@ -311,5 +351,26 @@ impl SandboxStore for StubSandboxStore {
 
     async fn apiserver_reachable(&self) -> bool {
         self.reachable.load(Ordering::SeqCst)
+    }
+}
+
+/// Build a Ready `SandboxStatus` for the stub (a controller would populate this
+/// as it scheduled the pod).
+fn make_ready_status(pod_ip: &str) -> shared::SandboxStatus {
+    use shared::{PodIpEntry, SandboxCondition, SandboxStatus};
+    SandboxStatus {
+        phase: Some("Running".to_string()),
+        pod_i_ps: Some(vec![PodIpEntry {
+            ip: pod_ip.to_string(),
+        }]),
+        conditions: Some(vec![SandboxCondition {
+            r#type: "Ready".to_string(),
+            status: "True".to_string(),
+            reason: None,
+            message: None,
+            last_transition_time: None,
+        }]),
+        ready: Some(true),
+        message: None,
     }
 }

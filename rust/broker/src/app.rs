@@ -8,9 +8,11 @@ use axum::Router;
 
 use crate::api::{
     api_config, api_status, create_sandbox, delete_sandbox, docs, get_sandbox, healthz,
-    list_sandboxes, metrics, openapi_json, proxy_catch_all, readyz,
+    list_sandboxes, metrics, openapi_json, readyz,
 };
+use crate::proxy::proxy_catch_all;
 use crate::state::AppState;
+use crate::terminal::terminal_ws;
 
 /// Build the full broker router over `state`.
 ///
@@ -36,7 +38,11 @@ pub fn build_router(state: AppState) -> Router {
             "/api/sandboxes/{name}",
             get(get_sandbox).delete(delete_sandbox),
         )
-        // Catch-all reverse proxy (C-1 stub → 501; PR-C-2 implements forwarding).
+        // Interactive terminal WebSocket relay (OWUI open-terminal contract).
+        // POST /api/terminals (create) still flows through the catch-all proxy.
+        .route("/api/terminals/{id}", get(terminal_ws))
+        // Catch-all reverse proxy: /execute, /files/*, /snapshot, /restore,
+        // /api/terminals (POST), … → resolved runtime pod.
         .route("/{*path}", any(proxy_catch_all))
         .with_state(state)
 }

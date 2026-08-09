@@ -103,6 +103,9 @@ fn broker_test_config() -> BrokerConfig {
         runtime_ns: "agent-sandbox-runtime".to_string(),
         base_template: BASE_TEMPLATE.to_string(),
         default_profile: Profile::Persistent,
+        runtime_api_key: "rt-test-key".to_string(),
+        claim_timeout_seconds: 60,
+        proxy_timeout_seconds: 660,
     }
 }
 
