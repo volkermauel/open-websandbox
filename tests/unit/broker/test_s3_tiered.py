@@ -11,6 +11,7 @@ resolve, the s3-tiered sandbox create variant, and the fail-closed boot guard.
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from unittest.mock import AsyncMock
 
@@ -182,6 +183,17 @@ async def test_offload_failure_raises(fake_s3, monkeypatch, httpx_client):
     assert fake_s3.objects == {}                      # nothing written
 
 
+async def test_offload_uses_multipart_for_large_snapshot(fake_s3, monkeypatch, httpx_client):
+    """A snapshot larger than the part size is split into multiple S3 parts (D3)."""
+    monkeypatch.setattr(main, "PROXY_TIMEOUT", 30)
+    monkeypatch.setattr(main, "S3_PART_SIZE", 4)       # 10 bytes -> 3 parts (4,4,2)
+    monkeypatch.setattr(main, "_now_ts", lambda: 1700000000)
+    httpx_client.get.return_value = _snapshot_resp(b"0123456789")
+    key = await main._offload_to_s3("owui-c-1", "10.0.0.1", "alice", "sess-1")
+    # the fake S3 reassembles parts in order -> exact payload round-trips
+    assert fake_s3.objects[key]["data"] == b"0123456789"
+
+
 # --- restore (D4 / D7) -----------------------------------------------------------
 async def test_restore_noop_first_creation(fake_s3, httpx_client):
     assert await main._restore_from_s3("owui-c-1", "10.0.0.1", "alice", "sess-1") is None
@@ -267,6 +279,31 @@ async def test_periodic_sync_once_offloads_running(fake_s3, api, monkeypatch):
     monkeypatch.setattr(main, "_sandbox_operating_mode", lambda n: "Running")
     monkeypatch.setattr(main, "_offload_to_s3", _fake_offload)
     assert await main._periodic_sync_once() == 1       # only the running s3-tiered sandbox
+
+
+async def test_apply_leadership_lifecycle_periodic_task(monkeypatch, s3_env):
+    """The leader starts the periodic-sync task when S3 is enabled, and stops it on loss."""
+    main._reaper_task = None
+    main._periodic_task = None
+    monkeypatch.setattr(main, "_reaper_loop", AsyncMock())
+
+    async def _block(*_a, **_k):
+        await asyncio.sleep(10000)   # stay alive until cancelled
+
+    monkeypatch.setattr(main, "_periodic_sync_loop", _block)
+    try:
+        await main._apply_leadership(True)            # leader + S3 -> create the periodic task
+        assert main._periodic_task is not None and not main._periodic_task.done()
+        await main._apply_leadership(False)           # leadership lost -> cancel + clear
+        assert main._periodic_task is None
+    finally:
+        for t in (main._reaper_task, main._periodic_task):
+            if t is not None and not t.done():
+                t.cancel()
+                with contextlib.suppress(BaseException):
+                    await t
+        main._reaper_task = None
+        main._periodic_task = None
 
 
 # --- D4 synchronous restore on resolve ------------------------------------------

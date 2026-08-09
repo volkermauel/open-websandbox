@@ -301,7 +301,7 @@ def _s3_object_key(user_id: str, session_id: str, ts: int) -> str:
 
 
 @contextlib.asynccontextmanager
-async def _get_s3_client():
+async def _get_s3_client():  # pragma: no cover - live aioboto3 path; monkeypatched in tests
     """Yield an aioboto3 S3 client. **The test seam**: monkeypatch `main._get_s3_client`
     to inject a fake. Reads creds from the projected Secret files (no secret in env, #48)."""
     if aioboto3 is None:  # pragma: no cover
@@ -1411,7 +1411,7 @@ async def _periodic_sync_once() -> int:
     return count
 
 
-async def _periodic_sync_loop() -> None:
+async def _periodic_sync_loop() -> None:  # pragma: no cover - infinite loop; _periodic_sync_once is the tested core
     """Leader-only loop: snapshot running s3-tiered sandboxes every interval (R1)."""
     await asyncio.sleep(S3_PERIODIC_SYNC_SECONDS)  # let sandboxes warm up before the first sweep
     while True:

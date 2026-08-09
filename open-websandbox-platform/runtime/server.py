@@ -900,21 +900,23 @@ async def restore(request: Request):
             if received > SNAPSHOT_MAX_BYTES:
                 exceeded = True
                 break
-            proc.stdin.write(chunk)
-            await proc.stdin.drain()
+            try:
+                proc.stdin.write(chunk)
+                await proc.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError):
+                break  # pipeline exited early on bad input; reported via rc below
     finally:
+        # Closing stdin gives the zstd|tar pipeline EOF so it terminates naturally;
+        # proc.kill()+proc.wait() can wedge under coverage's subprocess tracing, and
+        # EOF-exit is reliable (zstd -d always exits once its stdin closes).
+        with contextlib.suppress(Exception):
+            proc.stdin.close()
         if exceeded:
-            if proc.returncode is None:
-                proc.kill()
             await proc.wait()
             raise HTTPException(
                 status_code=413,
-                detail=f"restore stream exceeds MAX_WORKSPACE_BYTES ({SNAPSHOT_MAX_BYTES})", 
-)
-        try:
-            proc.stdin.close()
-        except Exception:  # pragma: no cover - pipe already closed
-            pass
+                detail=f"restore stream exceeds MAX_WORKSPACE_BYTES ({SNAPSHOT_MAX_BYTES})",
+            )
         rc = await proc.wait()
         if rc != 0:
             err = await proc.stderr.read() if proc.stderr else b""
