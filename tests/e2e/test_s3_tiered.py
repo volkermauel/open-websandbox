@@ -35,6 +35,7 @@ from conftest import (  # type: ignore[import-not-found]
 )
 
 RUNTIME_NS = "agent-sandbox-runtime"
+SYS_NS = "agent-sandbox-system"
 S3_KEY_RE = re.compile(r"^users/[^/]+/chats/[^/]+/workspace-\d{10}\.tar\.zst$")
 OFFLOAD_TIMEOUT = 240  # IDLE_TTL(15) + reaper poll(10) + generous CI slack
 
@@ -81,7 +82,21 @@ def _wait_reaped(user: str, session: str, timeout: int = OFFLOAD_TIMEOUT) -> Non
         if r.stdout.strip() == "":  # CR gone -> reaped
             return
         time.sleep(5)
+    _dump_sandbox_diag(name)  # why didn't the reaper delete it? show CR + broker logs
     pytest.fail(f"sandbox {name} was not reaped within {timeout}s")
+
+
+def _dump_sandbox_diag(name: str) -> None:
+    """Print the sandbox CR (labels/status) + recent broker reaper logs on a reap timeout."""
+    print(f"\n=== DIAG: sandbox {name} not reaped ===", flush=True)
+    r = _kubectl(["-n", RUNTIME_NS, "get", "sandbox", name, "-o", "yaml", "--ignore-not-found"])
+    print("--- sandbox CR ---", flush=True)
+    print(r.stdout, flush=True)
+    r = _kubectl(["-n", SYS_NS, "logs", "deploy/owui-broker", "--tail=80"])
+    print("--- broker logs (tail 80) ---", flush=True)
+    for ln in r.stdout.splitlines():
+        if any(k in ln.lower() for k in ("reap", "offload", "restore", name.lower(), "s3 sync", "leader")):
+            print(ln, flush=True)
 
 
 # --- 1. offload-on-reap ---------------------------------------------------------
