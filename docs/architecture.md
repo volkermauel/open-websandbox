@@ -14,14 +14,14 @@ rationale lives in [`openspec/changes/adopt-agent-sandbox/design.md`](../openspe
 
 | Component | Language | Where it runs | Role |
 |-----------|----------|---------------|------|
-| **broker** | Python (FastAPI) | `agent-sandbox-system` (Deploy `owui-broker`, `:8080`) | Front door. Authenticates Open WebUI (shared bearer + `X-User-Id` / `X-Session-Id`), resolves or creates the sandbox user + session via the agent-sandbox CRDs, waits for `Ready`, reads the live Pod IP, and reverse-proxies the in-sandbox runtime. Owns the idle reaper (park / reap). Endpoints: `/api/config`, `/api/status`, `/api/terminals/{id}` (WS), `/healthz`, `/readyz`, `/metrics`; everything else (`/execute`, `/files/*`, `/ports`, …) is proxied to the runtime. ([`agent-sandbox-platform/broker/main.py`](../agent-sandbox-platform/broker/main.py)) |
-| **sandbox-router** | Go (self-built) | `agent-sandbox-system` (Deploy `sandbox-router`, Service `sandbox-router-svc:8080`) | Reverse proxy that dials the live sandbox Pod IP directly on `:8888`. Keeps a Pod-IP cache (it watches sandbox-owned pods cluster-wide) for the fast path and falls back to cluster DNS. Built from upstream `kubernetes-sigs/agent-sandbox`'s `sandbox-router/Dockerfile` at the pinned tag. ([`agent-sandbox-platform/deploy/base/router/`](../agent-sandbox-platform/deploy/base/router/)) |
-| **runtime** | Python (FastAPI) | each sandbox pod in `agent-sandbox-runtime` (`:8888`) | Runs **inside** each sandbox. `POST /execute`, a rich `/files/*` API (read/write/list/glob/grep/cwd/mkdir/move/replace/delete/upload/archive), `GET /ports`, and interactive PTY terminals over `POST /api/terminals` + `WS /api/terminals/{id}`. ([`agent-sandbox-platform/runtime/server.py`](../agent-sandbox-platform/runtime/server.py)) |
-| **agent-sandbox controller** | Go (upstream) | `agent-sandbox-system` (Deploy `agent-sandbox-controller`) | Upstream [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox) controller, pinned **v0.5.3** (image `registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.3`). Reconciles the `agents.x-k8s.io` / `extensions.agents.x-k8s.io` CRDs: `SandboxTemplate`, `SandboxWarmPool`, `SandboxClaim`, `Sandbox`. Vendored + SHA256-recorded in [`agent-sandbox-platform/upstream/`](../agent-sandbox-platform/upstream/). |
+| **broker** | Python (FastAPI) | `agent-sandbox-system` (Deploy `owui-broker`, `:8080`) | Front door. Authenticates Open WebUI (shared bearer + `X-User-Id` / `X-Session-Id`), resolves or creates the sandbox user + session via the agent-sandbox CRDs, waits for `Ready`, reads the live Pod IP, and reverse-proxies the in-sandbox runtime. Owns the idle reaper (park / reap). Endpoints: `/api/config`, `/api/status`, `/api/terminals/{id}` (WS), `/healthz`, `/readyz`, `/metrics`; everything else (`/execute`, `/files/*`, `/ports`, …) is proxied to the runtime. ([`open-websandbox-platform/broker/main.py`](../open-websandbox-platform/broker/main.py)) |
+| **sandbox-router** | Go (self-built) | `agent-sandbox-system` (Deploy `sandbox-router`, Service `sandbox-router-svc:8080`) | Reverse proxy that dials the live sandbox Pod IP directly on `:8888`. Keeps a Pod-IP cache (it watches sandbox-owned pods cluster-wide) for the fast path and falls back to cluster DNS. Built from upstream `kubernetes-sigs/agent-sandbox`'s `sandbox-router/Dockerfile` at the pinned tag. ([`open-websandbox-platform/deploy/base/router/`](../open-websandbox-platform/deploy/base/router/)) |
+| **runtime** | Python (FastAPI) | each sandbox pod in `agent-sandbox-runtime` (`:8888`) | Runs **inside** each sandbox. `POST /execute`, a rich `/files/*` API (read/write/list/glob/grep/cwd/mkdir/move/replace/delete/upload/archive), `GET /ports`, and interactive PTY terminals over `POST /api/terminals` + `WS /api/terminals/{id}`. ([`open-websandbox-platform/runtime/server.py`](../open-websandbox-platform/runtime/server.py)) |
+| **agent-sandbox controller** | Go (upstream) | `agent-sandbox-system` (Deploy `agent-sandbox-controller`) | Upstream [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox) controller, pinned **v0.5.3** (image `registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.3`). Reconciles the `agents.x-k8s.io` / `extensions.agents.x-k8s.io` CRDs: `SandboxTemplate`, `SandboxWarmPool`, `SandboxClaim`, `Sandbox`. Vendored + SHA256-recorded in [`open-websandbox-platform/upstream/`](../open-websandbox-platform/upstream/). |
 
 We vendor the upstream manifest (SHA256-recorded) rather than `kubectl apply` a
 remote URL, so deploys are reproducible and auditable. See
-[`agent-sandbox-platform/upstream/SHA256SUMS`](../agent-sandbox-platform/upstream/SHA256SUMS).
+[`open-websandbox-platform/upstream/SHA256SUMS`](../open-websandbox-platform/upstream/SHA256SUMS).
 
 ## Topology and data flow
 
@@ -170,7 +170,7 @@ stateDiagram-v2
 | **`shared-subpath`** | one per chat | `owui-c-<sha256(user\|session)[:12]>` | sub-path of the shared `workspace-shared` PVC (RWX, `cephfs`, `50Gi`) |
 
 Either way the runtime validates every path before touching it (`_safe_path` in
-[`runtime/server.py`](../agent-sandbox-platform/runtime/server.py)) so a claim can only
+[`runtime/server.py`](../open-websandbox-platform/runtime/server.py)) so a claim can only
 read/write its own subtree.
 
 ## Isolation layers
@@ -184,14 +184,14 @@ next:
 2. **Non-root, least privilege.** `runAsUser`/`runAsGroup`/`fsGroup: 1000`,
    `runAsNonRoot: true`, **all Linux capabilities dropped**, `seccomp: RuntimeDefault`.
    (See `securityContext` in
-   [`sandboxtemplate-code-standard.yaml`](../agent-sandbox-platform/deploy/base/sandboxtemplate-code-standard.yaml).)
+   [`sandboxtemplate-code-standard.yaml`](../open-websandbox-platform/deploy/base/sandboxtemplate-code-standard.yaml).)
 3. **No Kubernetes identity.** `automountServiceAccountToken: false`; the
    `KUBERNETES_SERVICE_*` env vars are explicitly unset, so the in-sandbox service CIDR
    isn't even discoverable. Users never hold a kubeconfig/token; only the broker has a
-   narrowly scoped `Role` ([`broker.yaml`](../agent-sandbox-platform/deploy/base/broker.yaml))
+   narrowly scoped `Role` ([`broker.yaml`](../open-websandbox-platform/deploy/base/broker.yaml))
    to create claims.
 4. **Default-deny network.** The runtime-namespace
-   [`NetworkPolicy`](../agent-sandbox-platform/deploy/base/networkpolicy-runtime.yaml)
+   [`NetworkPolicy`](../open-websandbox-platform/deploy/base/networkpolicy-runtime.yaml)
    allows only:
    - **ingress** from `agent-sandbox-system` on TCP/8888 (router + broker),
    - **egress** to public DNS resolvers (UDP/TCP 53 → `8.8.8.8` / `1.1.1.1`; the

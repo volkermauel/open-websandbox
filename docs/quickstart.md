@@ -53,22 +53,22 @@ The manifest the chart renders from is vendored and SHA256-recorded in the repo.
 You can verify its integrity before installing (run from the repo root):
 
 ```bash
-sha256sum -c agent-sandbox-platform/upstream/SHA256SUMS
+sha256sum -c open-websandbox-platform/upstream/SHA256SUMS
 ```
 
 > **Managing the controller yourself?** If the upstream controller already runs
 > cluster-wide, install with `--set upstream.deploy=false` (and add `--skip-crds` if
 > the CRDs are already present). In that case apply the vendored manifest yourself:
-> `kubectl apply -f agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml`.
+> `kubectl apply -f open-websandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml`.
 
 ## 3. Install the chart
 
 !!! warning "Pre-release — artifacts are not published yet"
 
     **No GitHub Release has been cut yet.** The pre-built images
-    (`ghcr.io/volkermauel/open-sandbox-{broker,runtime,router}:v0.1.0`), the OCI chart
-    (`oci://ghcr.io/volkermauel/charts/open-sandbox --version 0.1.0`), and the release
-    tarball (`…/releases/download/v0.1.0/open-sandbox-0.1.0.tgz`) are all produced by
+    (`ghcr.io/volkermauel/open-websandbox-{broker,runtime,router}:v0.1.0`), the OCI chart
+    (`oci://ghcr.io/volkermauel/charts/open-websandbox --version 0.1.0`), and the release
+    tarball (`…/releases/download/v0.1.0/open-websandbox-0.1.0.tgz`) are all produced by
     the [`release.yml`](../.github/workflows/release.yml) workflow **on the first
     `v0.1.0` git tag**. Until that tag exists those references `404`, and any install
     that pulls them ends in `ImagePullBackOff`.
@@ -79,8 +79,8 @@ sha256sum -c agent-sandbox-platform/upstream/SHA256SUMS
     post-release install paths, kept here verbatim; they become valid the moment
     `v0.1.0` is tagged.
 
-The chart ships three images — `open-sandbox-broker`, `open-sandbox-runtime`, and
-`open-sandbox-router` (the last is self-built from upstream `kubernetes-sigs/agent-sandbox`
+The chart ships three images — `open-websandbox-broker`, `open-websandbox-runtime`, and
+`open-websandbox-router` (the last is self-built from upstream `kubernetes-sigs/agent-sandbox`
 v0.5.3; see [`release.yml`](../.github/workflows/release.yml)). Match the install path
 to your situation:
 
@@ -95,7 +95,7 @@ so **no registry pull happens** — Kubernetes uses the images you loaded:
 #    `kind load` / `microk8s.ctr` commands are in the Deployment guide, §2:
 #       docs/deploy.md  →  "Build & load the images"
 # 2. Install from the local chart (default values = pre-loaded images, no GHCR pull):
-helm install open-websandbox agent-sandbox-platform/chart
+helm install open-websandbox open-websandbox-platform/chart
 ```
 
 See [Deployment guide §2 — Build & load the images](deploy.md#2-build-load-the-images)
@@ -116,12 +116,12 @@ COMMON="--set imageRegistry=ghcr.io \
 
 ### Option B — published chart tarball *(available once the v0.1.0 Release is published)*
 
-Once `release.yml` runs on the `v0.1.0` tag it attaches `open-sandbox-0.1.0.tgz` to the
+Once `release.yml` runs on the `v0.1.0` tag it attaches `open-websandbox-0.1.0.tgz` to the
 GitHub Release:
 
 ```bash
 helm install open-websandbox \
-  https://github.com/volkermauel/open-websandbox/releases/download/v0.1.0/open-sandbox-0.1.0.tgz \
+  https://github.com/volkermauel/open-websandbox/releases/download/v0.1.0/open-websandbox-0.1.0.tgz \
   $COMMON
 ```
 
@@ -131,7 +131,7 @@ Once released, the chart is also pushed to GHCR by `release.yml`:
 
 ```bash
 helm install open-websandbox \
-  oci://ghcr.io/volkermauel/charts/open-sandbox --version 0.1.0 \
+  oci://ghcr.io/volkermauel/charts/open-websandbox --version 0.1.0 \
   $COMMON
 ```
 
@@ -170,7 +170,7 @@ kubectl -n agent-sandbox-system get deploy/agent-sandbox-controller
 kubectl get crd | grep -E 'agents.x-k8s.io|extensions.agents.x-k8s.io'
 
 # Control plane pods (broker + router) — all Running/Ready
-kubectl -n agent-sandbox-system get pods -l app.kubernetes.io/part-of=open-sandbox
+kubectl -n agent-sandbox-system get pods -l app.kubernetes.io/part-of=open-websandbox
 
 # Warm pool — 2 pre-warmed runtime pods under gVisor (runsc)
 kubectl -n agent-sandbox-runtime get pods
@@ -256,7 +256,7 @@ kubectl -n agent-sandbox-system logs -f deploy/owui-broker | \
 helm uninstall open-websandbox
 # Only if you applied the upstream manifest yourself (--set upstream.deploy=false);
 # otherwise 'helm uninstall' already removes the controller + CRDs it installed:
-# kubectl delete -f agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
+# kubectl delete -f open-websandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
 kubectl delete namespace agent-sandbox-runtime agent-sandbox-system
 ```
 

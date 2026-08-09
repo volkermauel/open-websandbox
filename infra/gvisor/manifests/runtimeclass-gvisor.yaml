@@ -5,8 +5,8 @@
 #
 # When you dedicate + taint sandbox worker nodes (AgentSandbox.md §6.3), switch to
 # Variant B by uncommenting the `scheduling:` block, after labelling/ainting nodes:
-#   kubectl label node <node> workload.open-websandbox.local/type=agent-sandbox
-#   kubectl taint  node <node> workload.open-websandbox.local/type=agent-sandbox:NoSchedule
+#   kubectl label node <node> sandbox.open-websandbox.dev/type=sandbox
+#   kubectl taint  node <node> sandbox.open-websandbox.dev/type=sandbox:NoSchedule
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata:
@@ -14,9 +14,9 @@ metadata:
 handler: runsc
 #scheduling:
 #  nodeSelector:
-#    workload.open-websandbox.local/type: agent-sandbox
+#    sandbox.open-websandbox.dev/type: sandbox
 #  tolerations:
-#    - key: workload.open-websandbox.local/type
+#    - key: sandbox.open-websandbox.dev/type
 #      operator: Equal
-#      value: agent-sandbox
+#      value: sandbox
 #      effect: NoSchedule

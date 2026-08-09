@@ -6,21 +6,21 @@ runtime image, and upgrade/rollback. See [`architecture.md`](architecture.md)
 for how the pieces fit and [`deploy.md`](deploy.md) for the install it assumes.
 
 The single-glance health script
-[`agent-sandbox-platform/scripts/sandbox-status.sh`](../agent-sandbox-platform/scripts/sandbox-status.sh)
+[`open-websandbox-platform/scripts/sandbox-status.sh`](../open-websandbox-platform/scripts/sandbox-status.sh)
 covers most of these checks at once (claims, active users, warm pool, pods,
 control plane, quota, PVCs, node pressure; `-w` tails broker reap/park/error
 lines):
 
 ```bash
-agent-sandbox-platform/scripts/sandbox-status.sh        # snapshot
-agent-sandbox-platform/scripts/sandbox-status.sh -w     # + recent reaper/error events
+open-websandbox-platform/scripts/sandbox-status.sh        # snapshot
+open-websandbox-platform/scripts/sandbox-status.sh -w     # + recent reaper/error events
 ```
 
 ## Warm pool tuning
 
 The warm pool pre-warms `N` sandboxes from `code-standard-v1` so a fresh
 ephemeral claim binds instantly instead of paying cold-start. Config lives in
-[`sandboxwarmpool-code-standard.yaml`](../agent-sandbox-platform/deploy/base/sandboxwarmpool-code-standard.yaml):
+[`sandboxwarmpool-code-standard.yaml`](../open-websandbox-platform/deploy/base/sandboxwarmpool-code-standard.yaml):
 
 ```yaml
 spec:
@@ -79,7 +79,7 @@ kubectl -n agent-sandbox-system logs deploy/owui-broker -f \
 ## Capacity limits
 
 Hard guardrails for the `agent-sandbox-runtime` namespace, from
-[`resourcequota.yaml`](../agent-sandbox-platform/deploy/base/resourcequota.yaml):
+[`resourcequota.yaml`](../open-websandbox-platform/deploy/base/resourcequota.yaml):
 
 | Resource | Request cap | Limit cap | Other |
 |----------|-------------|-----------|-------|
@@ -94,7 +94,7 @@ The `LimitRange` in the same file gives any pod without explicit resources a
 sane default: request 250 m / 512 Mi / 1 Gi, limit 2 CPU / 4 Gi / 4 Gi.
 
 Per-sandbox caps (from
-[`sandboxtemplate-code-standard.yaml`](../agent-sandbox-platform/deploy/base/sandboxtemplate-code-standard.yaml)):
+[`sandboxtemplate-code-standard.yaml`](../open-websandbox-platform/deploy/base/sandboxtemplate-code-standard.yaml)):
 request 250 m / 512 Mi / 2 Gi, limit **2 CPU / 4 Gi / 12 Gi ephemeral**. Plus
 runtime-enforced soft limits: command timeout (`DEFAULT_TIMEOUT` 120 s, max
 `MAX_TIMEOUT` 600 s), stdout/stderr capped at `MAX_OUTPUT_BYTES` (1 MiB),
@@ -233,7 +233,7 @@ cleanly. Mitigations:
 
 Egress is locked to public DNS (8.8.8.8/1.1.1.1) and HTTPS+HTTP (443/80) to the
 **public internet only**, with all RFC1918/link-local blocked (see
-[`networkpolicy-runtime.yaml`](../agent-sandbox-platform/deploy/base/networkpolicy-runtime.yaml)).
+[`networkpolicy-runtime.yaml`](../open-websandbox-platform/deploy/base/networkpolicy-runtime.yaml)).
 If `pip`/`npm`/`git` hang or fail inside a sandbox:
 
 - DNS failures → check the resolver IPs are reachable from the node
@@ -254,9 +254,9 @@ pre-loaded into each worker's containerd. An `ErrImageNeverPull` /
 
 ```bash
 # on the node where the pod is scheduled (MicroK8s):
-docker save ghcr.io/<owner>/open-sandbox-runtime:<tag> \
+docker save ghcr.io/<owner>/open-websandbox-runtime:<tag> \
   | ssh ubuntu@<node> 'sudo microk8s.ctr images import -'
-microk8s.ctr images ls | grep open-sandbox-runtime          # verify
+microk8s.ctr images ls | grep open-websandbox-runtime          # verify
 ```
 
 Repeat for every worker (sandboxes can land on any gVisor node). If you push to
@@ -382,7 +382,7 @@ as your only uptime signal. Monitor instead:
 
 ```bash
 # Single-glance reality check (claims, warm pool, pods, quota, PVCs, nodes):
-agent-sandbox-platform/scripts/sandbox-status.sh
+open-websandbox-platform/scripts/sandbox-status.sh
 # Or the specific signals that matter:
 kubectl -n agent-sandbox-runtime get sandboxwarmpool -o jsonpath='{.items[*].status.readyReplicas}'
 kubectl -n agent-sandbox-runtime get pvc --no-headers | awk '$3!="Bound"' | wc -l   # Pending PVC count
@@ -397,7 +397,7 @@ The runtime image is referenced by the SandboxTemplate
 1. Build and load the new image to every gVisor worker
    ([deploy.md](deploy.md#2-build-load-the-images)).
 2. Bump the image tag in
-   [`sandboxtemplate-code-standard.yaml`](../agent-sandbox-platform/deploy/base/sandboxtemplate-code-standard.yaml)
+   [`sandboxtemplate-code-standard.yaml`](../open-websandbox-platform/deploy/base/sandboxtemplate-code-standard.yaml)
    and `kubectl apply` it. **Existing pods keep the old image** — the template
    change only affects *newly created* pods.
 3. Recycle live pods so they pick up the new image:
@@ -426,7 +426,7 @@ is stateless and recovers claims on restart) / `deploy/sandbox-router`.
   rollback doesn't lose user sandboxes.
 - **Upstream controller** (`agent-sandbox` v0.5.3): a new minor is a CRD
   upgrade — read its release notes, re-vendor the new manifest into
-  [`upstream/`](../agent-sandbox-platform/upstream/) with a fresh `SHA256SUMS`,
+  [`upstream/`](../open-websandbox-platform/upstream/) with a fresh `SHA256SUMS`,
   apply CRDs **before** the controller Deployment (forward-compatible CRDs
   first), then `kubectl rollout restart deploy/agent-sandbox-controller -n
   agent-sandbox-system`. Roll back by re-applying the v0.5.3 manifest; never

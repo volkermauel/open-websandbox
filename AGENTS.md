@@ -15,14 +15,15 @@ keeps sandboxes off the rest of the cluster. The control plane is a Python/FastA
 [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox)
 controller, pinned **v0.5.3**), deployed via a **Helm chart**.
 
-> **Naming note.** Project naming is being unified to `open-websandbox` across all
-> references (issue #3). On current `main` the platform directory may still appear as
-> `agent-sandbox-platform/` and the namespaces as `agent-sandbox-system` /
-> `agent-sandbox-runtime`; the commands below use the canonical target names
-> (`open-websandbox-platform/`, `open-websandbox-system` / `open-websandbox-runtime`,
-> registry `ghcr.io/open-websandbox`). References to the **upstream `agent-sandbox`
-> project** (controller + CRDs: `Sandbox`, `SandboxTemplate`, `SandboxWarmPool`,
-> `SandboxClaim`) keep their name — that is the external dependency, not our project.
+> **Naming note.** Project naming is unified to `open-websandbox` (issue #3). The
+> platform directory is `open-websandbox-platform/`; the three images live at
+> `ghcr.io/volkermauel/open-websandbox-{broker,runtime,router}`. The **vendored
+> upstream `agent-sandbox` system is intentionally kept verbatim**: the namespaces
+> `agent-sandbox-system` / `agent-sandbox-runtime`, the `agent-sandbox-controller`
+> Deployment, the `sandbox-router` / `sandbox-router-svc` services, and the
+> `agents.x-k8s.io` CRDs (`Sandbox`, `SandboxTemplate`, `SandboxWarmPool`,
+> `SandboxClaim`) all retain their upstream names — that is the external dependency,
+> not our project. Node-selection label domain: `sandbox.open-websandbox.dev/type=sandbox`.
 
 ## Repository layout
 

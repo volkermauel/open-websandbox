@@ -61,7 +61,7 @@ invariants.
 
 [`AgentSandbox.md`](../../../AgentSandbox.md) §6.2 wants **dedicated**,
 `NoSchedule`-tainted sandbox nodes (≥1, preferably 2 for maintenance/HA),
-labelled `workload.open-websandbox.local/type=agent-sandbox`, so untrusted sandbox pods
+labelled `sandbox.open-websandbox.dev/type=sandbox`, so untrusted sandbox pods
 never co-reside with cluster-critical or trusted workloads and so a
 noisy/compromised sandbox cannot starve neighbours. The target cluster already
 runs **CNPG** (Postgres), **ArgoCD**, and other stateful/management workloads on
@@ -81,7 +81,7 @@ operational coupling: node maintenance on a shared worker that hosts the CNPG
 
 **Dedicate + taint sandbox nodes** (follow §6.2 as written): label +
 `NoSchedule`-taint 1 node (single-cluster) / 2 nodes (HA + maintenance) as
-`workload.open-websandbox.local/type=agent-sandbox`, install/activate gVisor there, and
+`sandbox.open-websandbox.dev/type=sandbox`, install/activate gVisor there, and
 bind the `gvisor` `RuntimeClass` node selector + toleration to them.
 
 - gVisor's value proposition is isolation of *untrusted* code; co-locating on
@@ -152,7 +152,7 @@ Reproducibility and supply-chain integrity require a fixed, verifiable upstream.
 ### Decision
 
 Pin `kubernetes-sigs/agent-sandbox` at **v0.5.3**. Vendor the install manifest
-into [`agent-sandbox-platform/upstream/`](../../../agent-sandbox-platform/)
+into [`open-websandbox-platform/upstream/`](../../../open-websandbox-platform/)
 with a recorded **SHA256**. Never reference `latest` in production (§4.16).
 
 ### Consequences
@@ -242,7 +242,7 @@ Phase 5.
 
 1. **D1: dedicate+taint sandbox nodes, or shared workers first?** —
    **`[NEEDS DECISION]`**; recommendation above.
-2. Build location: this planning repo (`agent-sandbox-platform/` subdir) vs. a
+2. Build location: this planning repo (`open-websandbox-platform/` subdir) vs. a
    new dedicated repo?
 3. Apply target: production cluster now, or a dev overlay/namespace first?
 4. Persistent backing selection (D7) — confirm `per-user-pvc` for Phase 3.

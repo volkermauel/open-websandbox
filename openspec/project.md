@@ -1,4 +1,4 @@
-# open-sandbox
+# open-websandbox
 
 A portable, isolated, multi-tenant **sandbox runtime** for Open WebUI's **Open Terminal**
 integration — built on **kubernetes-sigs/agent-sandbox** and **gVisor**, with zero

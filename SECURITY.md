@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-open-sandbox is a sandboxing platform. If you find a security issue **in open-sandbox
+open-websandbox is a sandboxing platform. If you find a security issue **in open-websandbox
 itself** (the broker, runtime, router, Helm chart, or its deployment configuration), please
 report it privately — **do not open a public GitHub issue**.
 
@@ -16,7 +16,7 @@ disclosure timeline with you.
 
 ## Scope
 
-This policy covers the open-sandbox **control plane** — the broker, router, and runtime,
+This policy covers the open-websandbox **control plane** — the broker, router, and runtime,
 the Helm chart, and the documented deployment (NetworkPolicy, RBAC, the gVisor runtimeClass,
 PodSecurity). It does **not** cover:
 
@@ -28,7 +28,7 @@ PodSecurity). It does **not** cover:
 
 ## Threat model (summary)
 
-open-sandbox targets **trusted internal users**. It provides strong *practical* sandboxing —
+open-websandbox targets **trusted internal users**. It provides strong *practical* sandboxing —
 gVisor (runsc), uid isolation, no service-account token, restricted NetworkPolicy egress,
 per-chat sandbox separation — and prevents accidental cross-session leakage. A **shared
 kernel is an accepted residual risk**; resisting a dedicated, hostile tenant is explicitly

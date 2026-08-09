@@ -1,15 +1,15 @@
-# Contributing to open-sandbox
+# Contributing to open-websandbox
 
-Thanks for helping! open-sandbox is a Kubernetes sandbox platform backing Open WebUI's
+Thanks for helping! open-websandbox is a Kubernetes sandbox platform backing Open WebUI's
 "Open Terminal": a Python/FastAPI **broker** + **runtime**, a Go **sandbox-router** (built
 from upstream `kubernetes-sigs/agent-sandbox`), and a **Helm chart** for deployment.
 
 ## Repo layout
 
-- `agent-sandbox-platform/broker/` — broker (Python, FastAPI): owns sandbox lifecycle
-- `agent-sandbox-platform/runtime/` — runtime (Python, FastAPI): runs inside each sandbox pod
-- `agent-sandbox-platform/chart/` — the Helm chart (the deployment mechanism)
-- `agent-sandbox-platform/deploy/base/` — the source manifests the chart reproduces (synced to live)
+- `open-websandbox-platform/broker/` — broker (Python, FastAPI): owns sandbox lifecycle
+- `open-websandbox-platform/runtime/` — runtime (Python, FastAPI): runs inside each sandbox pod
+- `open-websandbox-platform/chart/` — the Helm chart (the deployment mechanism)
+- `open-websandbox-platform/deploy/base/` — the source manifests the chart reproduces (synced to live)
 - `infra/gvisor/` — gVisor (runsc) node setup playbooks
 - `openspec/` — specs + change proposals (we plan with OpenSpec)
 - `research/` — prior-art / design notes
@@ -20,19 +20,19 @@ from upstream `kubernetes-sigs/agent-sandbox`), and a **Helm chart** for deploym
 
   ```bash
   pip install -r requirements-test.txt \
-              -r agent-sandbox-platform/runtime/requirements-app.txt \
-              -r agent-sandbox-platform/runtime/requirements-common.txt \
-              -r agent-sandbox-platform/broker/requirements.txt
+              -r open-websandbox-platform/runtime/requirements-app.txt \
+              -r open-websandbox-platform/runtime/requirements-common.txt \
+              -r open-websandbox-platform/broker/requirements.txt
   pytest tests/unit -q
   ```
 
   Runtime tests use a **real filesystem + PTY** (Linux) — no cluster needed.
-- **Lint:** `ruff check agent-sandbox-platform`.
+- **Lint:** `ruff check open-websandbox-platform`.
 - **Helm chart:** keep it reproducing `deploy/base/` exactly (parameterized only by values):
 
   ```bash
-  helm lint agent-sandbox-platform/chart
-  helm template agent-sandbox-platform/chart >/dev/null
+  helm lint open-websandbox-platform/chart
+  helm template open-websandbox-platform/chart >/dev/null
   ```
 
 - **End-to-end (KIND):** see `tests/e2e/`. Runs on **runc** — gVisor/runsc cannot nest in

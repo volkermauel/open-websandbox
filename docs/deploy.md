@@ -1,19 +1,19 @@
 # Deployment guide
 
-End-to-end install of **open-sandbox**: the gVisor nodes, the upstream
+End-to-end install of **open-websandbox**: the gVisor nodes, the upstream
 `agent-sandbox` controller + CRDs, the RWX storage, the three container images,
 and the platform itself — installed via the **Helm chart** at
-[`agent-sandbox-platform/chart/`](../agent-sandbox-platform/chart/). For the
+[`open-websandbox-platform/chart/`](../open-websandbox-platform/chart/). For the
 architecture behind these components see [`architecture.md`](architecture.md);
 for day-2 runbook steps see [`operations.md`](operations.md).
 
 > **Image name placeholder.** Container image references use
-> `ghcr.io/<owner>/open-sandbox-{broker,runtime,router}:<tag>`, where `<owner>`
+> `ghcr.io/<owner>/open-websandbox-{broker,runtime,router}:<tag>`, where `<owner>`
 > is the final GitHub Container Registry owner/namespace (not yet decided). In a
 > Helm install you set registry/owner/tag once via chart values
 > ([Configuration](#3-configuration-helm-values)) — never by hand-editing
 > templates. The base manifests shipped in
-> [`agent-sandbox-platform/deploy/base/`](../agent-sandbox-platform/deploy/base/)
+> [`open-websandbox-platform/deploy/base/`](../open-websandbox-platform/deploy/base/)
 > carry local/dev tags (`owui-broker:v2`, `code-standard:v5`,
 > `sandbox-router-go:dev`) with `imagePullPolicy: Never`, i.e. they expect the
 > images pre-loaded into containerd; the chart's values transform those to your
@@ -43,17 +43,17 @@ for day-2 runbook steps see [`operations.md`](operations.md).
 The chart assumes the controller + CRDs already exist — it does **not** install
 the upstream `agent-sandbox` project (a prerequisite, like gVisor and the RWX
 StorageClass). Install the **pinned v0.5.3** manifest vendored in
-[`agent-sandbox-platform/upstream/`](../agent-sandbox-platform/upstream/). It
+[`open-websandbox-platform/upstream/`](../open-websandbox-platform/upstream/). It
 carries the four CRDs (`agents.x-k8s.io/Sandbox`,
 `extensions.agents.x-k8s.io/{SandboxTemplate,SandboxWarmPool,SandboxClaim}`) and
 the controller Deployment into `agent-sandbox-system`. The vendored copy is
 SHA256-recorded in
-[`upstream/SHA256SUMS`](../agent-sandbox-platform/upstream/SHA256SUMS) — verify
+[`upstream/SHA256SUMS`](../open-websandbox-platform/upstream/SHA256SUMS) — verify
 before applying:
 
 ```bash
-sha256sum -c agent-sandbox-platform/upstream/SHA256SUMS
-kubectl apply -f agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
+sha256sum -c open-websandbox-platform/upstream/SHA256SUMS
+kubectl apply -f open-websandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
 kubectl -n agent-sandbox-system wait deploy/agent-sandbox-controller \
   --for=condition=Available --timeout=120s
 kubectl get crd | grep -E 'agents.x-k8s.io|extensions.agents.x-k8s.io'
@@ -71,20 +71,20 @@ that registry).
 
 ```bash
 # broker — Python FastAPI
-docker build -t ghcr.io/<owner>/open-sandbox-broker:<tag> agent-sandbox-platform/broker
+docker build -t ghcr.io/<owner>/open-websandbox-broker:<tag> open-websandbox-platform/broker
 
 # runtime — Python FastAPI + Node + toolchain + curated libs
-docker build -t ghcr.io/<owner>/open-sandbox-runtime:<tag> agent-sandbox-platform/runtime
+docker build -t ghcr.io/<owner>/open-websandbox-runtime:<tag> open-websandbox-platform/runtime
 
 # sandbox-router — Go (self-build; upstream publishes only :latest at v0.5.3,
 # so it is self-built and pinned by digest in production)
-docker build -t ghcr.io/<owner>/open-sandbox-router:<tag> <upstream-router-src>
+docker build -t ghcr.io/<owner>/open-websandbox-router:<tag> <upstream-router-src>
 ```
 
 Load each into every gVisor worker's containerd (MicroK8s):
 
 ```bash
-for img in open-sandbox-broker open-sandbox-runtime open-sandbox-router; do
+for img in open-websandbox-broker open-websandbox-runtime open-websandbox-router; do
   docker save ghcr.io/<owner>/$img:<tag> \
     | ssh ubuntu@<worker> 'sudo microk8s.ctr images import -'
 done
@@ -166,7 +166,7 @@ the shared RWX PVC, and the runtime-namespace ResourceQuota/LimitRange +
 NetworkPolicy. A representative `my-values.yaml`:
 
 ```yaml
-# agent-sandbox-platform/chart/values.yaml — override these in my-values.yaml
+# open-websandbox-platform/chart/values.yaml — override these in my-values.yaml
 global:
   imageRegistry: ghcr.io/<owner>      # registry + owner/namespace
   imagePullPolicy: Never              # Never = pre-loaded; IfNotPresent/Always if pushed
@@ -179,9 +179,9 @@ namespaces:
 runtimeClassName: gvisor              # runsc; installed cluster-wide (prereq)
 
 images:
-  broker: open-sandbox-broker:<tag>
-  runtime: open-sandbox-runtime:<tag>
-  router: open-sandbox-router:<tag>   # self-built (upstream ships only :latest)
+  broker: open-websandbox-broker:<tag>
+  runtime: open-websandbox-runtime:<tag>
+  router: open-websandbox-router:<tag>   # self-built (upstream ships only :latest)
 
 broker:
   sharedSecret: "<openssl rand -hex 32>"   # -> Secret owui-broker-secret/shared-secret
@@ -282,10 +282,10 @@ online-safely, the RuntimeClass, and a verify probe) is documented in
 ## 4. Install the chart
 
 ```bash
-helm install open-sandbox agent-sandbox-platform/chart/ -f my-values.yaml
+helm install open-websandbox open-websandbox-platform/chart/ -f my-values.yaml
 ```
 
-`helm upgrade open-sandbox agent-sandbox-platform/chart/ -f my-values.yaml` to
+`helm upgrade open-websandbox open-websandbox-platform/chart/ -f my-values.yaml` to
 re-apply after editing values (the chart handles namespace/secret/template
 reconciliation; CRDs/controller/gVisor/RWX class are untouched — they're
 prerequisites installed outside Helm).
@@ -325,7 +325,7 @@ kubectl -n agent-sandbox-runtime get sandboxwarmpools
 kubectl -n agent-sandbox-runtime get pods            # 2 warm pods once steady
 
 # sanity script (claims, warm pool, pods, quota, PVCs, node pressure):
-agent-sandbox-platform/scripts/sandbox-status.sh
+open-websandbox-platform/scripts/sandbox-status.sh
 ```
 
 A successful `GET /api/config` through your auth proxy returns the features
@@ -340,8 +340,8 @@ warm sandbox. You're live.
 
 The Helm chart's broker values render to these env vars on the `owui-broker`
 Deployment. Defaults match the values shipped in
-[`broker.yaml`](../agent-sandbox-platform/deploy/base/broker.yaml) and the
-fallbacks in [`broker/main.py`](../agent-sandbox-platform/broker/main.py); leave
+[`broker.yaml`](../open-websandbox-platform/deploy/base/broker.yaml) and the
+fallbacks in [`broker/main.py`](../open-websandbox-platform/broker/main.py); leave
 a Helm value unset to inherit the default.
 
 | Helm value path | Env var | Default | Purpose |
@@ -373,10 +373,10 @@ The Go router's behavior is also driven from chart values (`router.*`):
   `--proxy-timeout=180s`, `--upstream-max-retries=3`.
 - `--cache-enabled=true` (`router.cacheEnabled`) — Pod-IP cache fast path; needs
   the cluster-wide Pods `get/list/watch` in
-  [`router/rbac.yaml`](../agent-sandbox-platform/deploy/base/router/rbac.yaml).
+  [`router/rbac.yaml`](../open-websandbox-platform/deploy/base/router/rbac.yaml).
   Set false for a DNS-only, lower-privilege router.
 - `--authz-mode` (`router.authzMode`) — `allow-all` by default (the broker is the
   auth boundary). `tokenreview` makes the router validate caller tokens via
   `TokenReview`; the chart then applies
-  [`router/rbac-tokenreview.yaml`](../agent-sandbox-platform/deploy/base/router/rbac-tokenreview.yaml)
+  [`router/rbac-tokenreview.yaml`](../open-websandbox-platform/deploy/base/router/rbac-tokenreview.yaml)
   (`system:auth-delegator`).
