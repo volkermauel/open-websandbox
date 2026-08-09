@@ -13,9 +13,9 @@ Hardening over the reference:
   * per-request command timeout (default 120s, capped at MAX_TIMEOUT).
   * stdout/stderr truncated to MAX_OUTPUT_BYTES per stream.
   * all file ops are confined to WORKDIR (/workspace) via path normalization.
-  * fail-closed RUNTIME_API_KEY: refuses to boot on an unset/placeholder key and
-    authenticates the terminal surface (mirrors the broker's BROKER_SHARED_SECRET).
-
+ * fail-closed PER-SESSION API KEY: the broker injects a per-session Secret as a
+   projected volume (/etc/runtime-key/api-key); the runtime refuses to boot on an
+   unset/placeholder key and authenticates every hop per-session (issue #4).
 Runs as non-root uid 1000; WORKDIR=/workspace (an emptyDir at runtime).
 """
 import asyncio
@@ -179,46 +179,80 @@ def _request_base(subdir: str | None) -> str:
     return base
 
 
-# --- fail-closed inter-component auth (RUNTIME_API_KEY) -----------------------
+# --- fail-closed inter-component auth (per-session API key) -----------------
 # Defined here, ABOVE the first endpoint, because the gated routes reference
 # _auth_runtime in their decorator dependencies — FastAPI resolves Security(...) at
 # decorator-application time (import), so the guard must already exist.
 #
-# Mirrors the broker's BROKER_SHARED_SECRET story (main._auth + main._validate_config):
-# the runtime gates its whole request surface on RUNTIME_API_KEY.
+# PER-SESSION KEY (issue #4). Each sandbox pod gets its OWN broker<->runtime key,
+# delivered as a projected Secret volume mounted at /etc/runtime-key/api-key by the
+# broker (it mints the key, writes Secret owui-runtime-key-<sandbox>, and injects the
+# volume into the per-session Sandbox podTemplate — see chart + broker/main.py). The
+# runtime reads it from the FILE, NOT an env var / NOT the kube API: the runtime pod is
+# network-isolated from the API server (default-deny NetworkPolicy, no automounted
+# service-account token), so a projected volume is the only native, isolation-preserving
+# delivery. One pod sees exactly one key (true per-pod scoping).
+#
 # _validate_runtime_config() refuses to boot on an unset/placeholder key (fail-closed
 # startup guard); _auth_runtime DENIES ON UNSET/PLACEHOLDER too (503) so the request
 # path is fail-closed independently of the lifespan/boot guard — a process that skipped
 # the startup event still cannot serve a gated hop unauthenticated. A presented Bearer
-# must match (constant-time), else 401.
+# must match (constant-time), else 401. On a mismatch we reload the file once so
+# rotate-on-resume (a freshly synced Secret) is honored without a restart.
 #
 # Gated surface: POST /execute, the entire /files/* FS surface
 # (read/write/delete/archive/mkdir/move/replace/grep/glob/upload/view/cwd), and the
 # terminal management endpoints (POST/GET/DELETE /api/terminals[/{id}]). The broker
-# attaches Authorization: Bearer <RUNTIME_API_KEY> on every runtime hop (terminal +
+# attaches Authorization: Bearer <per-session key> on every runtime hop (terminal +
 # execute + files); without it these 401. The interactive WS (/api/terminals/{id}) is
 # frame-authed inline AND gated by the POST that creates its session. Health (/) and
 # /metrics stay open for kubelet / Prometheus scraping (no credential available).
-_PLACEHOLDER_API_KEYS = frozenset({
+RUNTIME_KEY_FILE = os.environ.get("RUNTIME_KEY_FILE", "/etc/runtime-key/api-key")
+_PLACEHOLDER_KEYS = frozenset({
     "", "dev-shared-secret-change-me", "change-me", "changeme", "placeholder",
 })
+# mtime-cached read so a rotated Secret (kubelet re-syncs the projected volume, giving
+# the file a new mtime) is picked up without a process restart; rotate-on-resume is a
+# fresh pod (fresh process) anyway, so this mainly bounds in-place rotation latency.
+_key_cache: dict[str, object] = {"mtime": -1.0, "value": ""}
 
 
-def _runtime_api_key() -> str:
-    """RUNTIME_API_KEY read at call time so env/test overrides take effect (cf. broker)."""
-    return os.environ.get("RUNTIME_API_KEY", "")
+def _load_session_key() -> str:
+    """Read the per-session API key from the mounted Secret volume (fail-closed).
+
+    Returns '' when the file is absent/empty/unreadable (a misconfiguration the boot
+    guard and the request guard both treat as fail-closed: a pod whose Secret/volume is
+    missing never serves an authenticated hop). mtime-cached so rotate-on-resume and any
+    in-place Secret rotation are reflected without a restart."""
+    try:
+        st = os.stat(RUNTIME_KEY_FILE)
+    except OSError:
+        if _key_cache["mtime"] != -2.0:  # cache the "missing" state too
+            _key_cache["mtime"] = -2.0
+            _key_cache["value"] = ""
+        return ""
+    if st.st_mtime != _key_cache["mtime"]:
+        try:
+            with open(RUNTIME_KEY_FILE, "r", encoding="utf-8", errors="replace") as f:
+                _key_cache["value"] = f.read().strip()
+        except OSError:
+            _key_cache["value"] = ""
+        _key_cache["mtime"] = st.st_mtime
+    return str(_key_cache["value"])
 
 
 def _validate_runtime_config() -> None:
-    """Fail-closed startup guard: refuse to run with an unset/placeholder RUNTIME_API_KEY.
+    """Fail-closed startup guard: refuse to run without a per-session key file.
 
-    An unset/placeholder key would leave the request surface unauthenticated, so we
-    refuse to start rather than run open. Mirrors the broker's _validate_config(); wired
-    into the startup event. Tested directly."""
-    if _runtime_api_key() in _PLACEHOLDER_API_KEYS:
+    The per-session key is delivered as a projected Secret volume at RUNTIME_KEY_FILE
+    by the broker (chart + broker/main.py). An absent/empty/placeholder file is a
+    misconfiguration (missing volume or bad Secret), so we refuse to start rather than
+    run open. Wired into the startup event; tested directly."""
+    if _load_session_key() in _PLACEHOLDER_KEYS:
         raise RuntimeError(
-            "RUNTIME_API_KEY is unset or a known placeholder — refusing to start. "
-            "Set a strong key (the Helm chart derives one from the broker shared secret)."
+            "per-session runtime API key is missing or a placeholder — refusing to "
+            "start. The broker must inject a per-session Secret as the projected volume "
+            f"at {RUNTIME_KEY_FILE} (volume 'runtime-key')."
         )
 
 
@@ -227,19 +261,26 @@ _runtime_bearer = HTTPBearer(auto_error=False)
 
 def _auth_runtime(
     credentials: HTTPAuthorizationCredentials | None = Security(_runtime_bearer),
+    _retried: bool = False,
 ) -> None:
-    """Validate the runtime API key (constant-time). Deny-on-unset (defense-in-depth).
+    """Validate the per-session API key (constant-time). Deny-on-unset (defense-in-depth).
 
-    An unset/placeholder RUNTIME_API_KEY is a misconfiguration, NOT a "disabled" mode:
-    we 503 here so the request path is fail-closed regardless of the startup boot guard
-    / lifespan (a process that skipped the startup event still cannot serve a gated hop
+    An unset/placeholder key is a misconfiguration, NOT a "disabled" mode: we 503 here
+    so the request path is fail-closed regardless of the startup boot guard / lifespan
+    (a process that skipped the startup event still cannot serve a gated hop
     unauthenticated). _validate_runtime_config() makes the same check at boot. A
-    presented Bearer must match the configured key (constant-time), else 401."""
-    key = _runtime_api_key()
-    if key in _PLACEHOLDER_API_KEYS:
-        raise HTTPException(status_code=503, detail="RUNTIME_API_KEY is not configured")
-    if not credentials or not hmac.compare_digest(credentials.credentials.encode(), key.encode()):
-        raise HTTPException(status_code=401, detail="invalid runtime api key")
+    presented Bearer must match the configured key (constant-time), else 401. On a
+    mismatch we invalidate the cache and re-read once so rotate-on-resume (a freshly
+    synced Secret) is honored without a restart."""
+    key = _load_session_key()
+    if key in _PLACEHOLDER_KEYS:
+        raise HTTPException(status_code=503, detail="per-session runtime API key is not configured")
+    if credentials and hmac.compare_digest(credentials.credentials.encode(), key.encode()):
+        return
+    if not _retried:  # reload once: a just-rotated key may not yet be cached
+        _key_cache["mtime"] = -1.0
+        return _auth_runtime(credentials, _retried=True)
+    raise HTTPException(status_code=401, detail="invalid runtime api key")
 
 @app.get("/")
 async def health():
@@ -729,7 +770,7 @@ async def files_view(path: str, subdir: str | None = Header(default=None, alias=
 # unchanged. POST forks a shell on a PTY scoped to the chat workspace folder; the WS
 # at /api/terminals/{id} streams BINARY stdin/stdout with TEXT
 # {"type":"resize","cols":N,"rows":N} control frames. Inter-component auth is
-# fail-closed: _validate_runtime_config() refuses to boot without RUNTIME_API_KEY,
+# fail-closed: _validate_runtime_config() refuses to boot without a per-session key,
 # POST /api/terminals requires a matching Bearer, and an optional first
 # {"type":"auth","token":...} WS frame is validated inline in _receiver (the broker
 # consumes OWUI's frame upstream and forwards raw bytes, so the frame is not required).
@@ -916,9 +957,9 @@ async def terminal_ws(ws: WebSocket, session_id: str):
                         # consumes OWUI's auth frame upstream and forwards raw bytes, so a
                         # direct client's auth frame is validated HERE, inline. A wrong
                         # token (or any token while the key is unset) tears the session
-                        # down (4001). RUNTIME_API_KEY is guaranteed set at boot by
+                        # down (4001). The per-session key is guaranteed set at boot
                         # _validate_runtime_config(); the unset case only arises in dev.
-                        if not hmac.compare_digest(str(payload.get("token", "")), _runtime_api_key()):
+                        if not hmac.compare_digest(str(payload.get("token", "")), _load_session_key()):
                             await ws.close(code=4001, reason="invalid api key")
                             break
                     elif ptype == "resize":
@@ -951,7 +992,7 @@ async def terminal_ws(ws: WebSocket, session_id: str):
 
 @app.on_event("startup")
 async def _validate_on_startup() -> None:
-    """Fail-closed boot guard: refuse to serve with an unset/placeholder RUNTIME_API_KEY.
+    """Fail-closed boot guard: refuse to serve without a per-session key file.
 
     Mirrors the broker's startup _validate_config(). Local dev/tests bypass this
     (uvicorn lifespan="off" / the in-process ASGI transport never fire startup events);

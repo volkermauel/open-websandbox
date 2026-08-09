@@ -67,10 +67,11 @@ async def _recv_until(ws, marker: bytes, timeout: float = 5.0) -> bytes:
 def _rt_headers() -> dict:
     """Inter-component Bearer for cleanup/readiness polls that must clear _auth_runtime.
 
-    Read from os.environ at CALL time so the WS auth tests (which monkeypatch
-    RUNTIME_API_KEY='s3cret-key') poll with the live key, not the conftest default.
+    Read from the live per-session key file (issue #4) at CALL time so the WS auth tests
+    (which rotate the key via the `runtime_key` fixture) poll with the current key, not a
+    stale default.
     """
-    return {"Authorization": f"Bearer {os.environ.get('RUNTIME_API_KEY', '')}"}
+    return {"Authorization": f"Bearer {server._load_session_key()}"}
 
 
 async def _wait_cleaned(http: httpx.AsyncClient, sid: str, timeout: float = 5.0) -> bool:
@@ -307,10 +308,10 @@ async def test_terminal_ws_background_job_heartbeat_death(live_base, rt_auth):
         await http.aclose()
 
 
-# --- WebSocket inter-component auth (RUNTIME_API_KEY set) -------------------
+# --- WebSocket inter-component auth (per-session key set) --------------------
 
-async def test_terminal_ws_auth_success(live_base, monkeypatch):
-    monkeypatch.setenv("RUNTIME_API_KEY", "s3cret-key")
+async def test_terminal_ws_auth_success(live_base, runtime_key):
+    runtime_key.set("s3cret-key")
     ws_base, http_base = live_base
     http = httpx.AsyncClient(base_url=http_base)
     try:
@@ -329,8 +330,8 @@ async def test_terminal_ws_auth_success(live_base, monkeypatch):
         server._term_cleanup("authok")
 
 
-async def test_terminal_ws_auth_wrong_token(live_base, monkeypatch):
-    monkeypatch.setenv("RUNTIME_API_KEY", "s3cret-key")
+async def test_terminal_ws_auth_wrong_token(live_base, runtime_key):
+    runtime_key.set("s3cret-key")
     ws_base, http_base = live_base
     http = httpx.AsyncClient(base_url=http_base)
     try:
@@ -346,13 +347,13 @@ async def test_terminal_ws_auth_wrong_token(live_base, monkeypatch):
         server._term_cleanup("authbad")
 
 
-async def test_terminal_ws_non_auth_first_frame_tolerated(live_base, monkeypatch):
-    # Broker-compat: with RUNTIME_API_KEY set, a non-auth FIRST frame must NOT close the
-    # session. The broker consumes OWUI's auth frame upstream and forwards raw bytes, so
-    # the runtime may receive terminal input (or a malformed control frame) before any
-    # auth frame. Auth is enforced only for an actual {"type":"auth",...} frame (see
+async def test_terminal_ws_non_auth_first_frame_tolerated(live_base, runtime_key):
+    # Broker-compat: with the per-session key set, a non-auth FIRST frame must NOT close
+    # the session. The broker consumes OWUI's auth frame upstream and forwards raw bytes,
+    # so the runtime may receive terminal input (or a malformed control frame) before
+    # any auth frame. Auth is enforced only for an actual {"type":"auth",...} frame (see
     # test_terminal_ws_auth_wrong_token); a non-JSON frame is ignored, input still flows.
-    monkeypatch.setenv("RUNTIME_API_KEY", "s3cret-key")
+    runtime_key.set("s3cret-key")
     ws_base, http_base = live_base
     http = httpx.AsyncClient(base_url=http_base)
     try:
