@@ -31,6 +31,7 @@ import mimetypes
 import os
 import pty
 import re
+import shlex
 import shutil
 import signal
 import struct
@@ -52,7 +53,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
 from pydantic import BaseModel, Field
@@ -78,6 +79,11 @@ WORKDIR = os.environ.get("WORKDIR", "/workspace")
 MAX_OUT = _env_int("MAX_OUTPUT_BYTES", 1 << 20)  # 1 MiB / stream
 DEFAULT_TIMEOUT = _env_int("DEFAULT_TIMEOUT", 120)
 MAX_TIMEOUT = _env_int("MAX_TIMEOUT", 600)
+# S3-tiered offload/restore (issue #52): the broker streams a zstd tar of the whole
+# workspace to/from S3. MAX_WORKSPACE_BYTES caps both directions (fail-on-exceed, D9) —
+# the snapshot pre-check refuses before streaming; the restore caps the incoming stream.
+# Default 2Gi matches broker.s3.sizeLimit (the emptyDir sizeLimit).
+SNAPSHOT_MAX_BYTES = _env_int("MAX_WORKSPACE_BYTES", 2 * 1024 ** 3)  # 2 GiB (D9)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("code-standard")
@@ -808,6 +814,116 @@ async def files_view(path: str, subdir: str | None = Header(default=None, alias=
         raise HTTPException(status_code=404, detail="File not found")
     mime, _ = mimetypes.guess_type(full)
     return FileResponse(full, media_type=mime or "application/octet-stream", filename=os.path.basename(full))
+
+# --- S3-tiered snapshot/restore (broker-orchestrated offload/restore, issue #52) ------
+# The broker is the sole S3 client (#50 network isolation preserved): it streams a
+# zstd-compressed tar of the WHOLE workspace off (GET /snapshot) and back on
+# (PUT /restore) over the same per-session key as /execute + /files/*. The broker
+# attaches the Bearer via its per-session auth header.
+
+
+def _workspace_size_bytes(base: str) -> int:
+    """Apparent bytes of everything under `base` (snapshot pre-check, fail-on-exceed D9)."""
+    total = 0
+    for root, _dirs, files in os.walk(base):
+        for fn in files:
+            try:
+                total += os.path.getsize(os.path.join(root, fn))
+            except OSError:
+                continue
+    return total
+
+
+async def _snapshot_chunks(base: str):
+    """Stream a zstd-compressed tar of `base` (arcroot '.') in ~1 MiB chunks.
+
+    Streams `tar -cf - -C <base> . | zstd -` so PUT /restore extracts straight back into
+    `base`. Honors SNAPSHOT_MAX_BYTES only via the pre-check (the pipeline itself is
+    unbounded; a truncated stream on disk error is logged, not re-statused)."""
+    cmd = f"tar -cf - -C {shlex.quote(base)} . | zstd -3 -q"
+    proc = await asyncio.create_subprocess_exec(
+        "sh", "-c", cmd,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    assert proc.stdout is not None
+    try:
+        while True:
+            chunk = await proc.stdout.read(1 << 20)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+        rc = await proc.wait()
+        if rc not in (0, None):
+            err = await proc.stderr.read() if proc.stderr else b""
+            log.warning("snapshot pipeline rc=%s err=%s", rc, err[:200].decode("utf-8", "replace"))
+
+
+@app.get("/snapshot", dependencies=[Security(_auth_runtime)])
+async def snapshot():
+    """Stream a zstd-compressed tar of the whole workspace for S3 offload (issue #52).
+
+    Pre-checks the logical workspace size against SNAPSHOT_MAX_BYTES (D9 fail-on-exceed,
+    413 BEFORE streaming) so the broker never uploads a workspace larger than the
+    configured hot-tier sizeLimit."""
+    base = _request_base(None)
+    if _workspace_size_bytes(base) > SNAPSHOT_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="workspace exceeds MAX_WORKSPACE_BYTES")
+    return StreamingResponse(
+        _snapshot_chunks(base),
+        media_type="application/zstd",
+        headers={"Content-Disposition": "attachment; filename=\"workspace.tar.zst\""},
+    )
+
+
+@app.put("/restore", dependencies=[Security(_auth_runtime)])
+async def restore(request: Request):
+    """Accept a zstd-compressed tar (from S3) streamed into the whole workspace.
+
+    Caps the incoming COMPRESSED stream at SNAPSHOT_MAX_BYTES (D9 fail-on-exceed, 413);
+    the emptyDir sizeLimit is the uncompressed backstop (kubelet eviction). Streams
+    `zstd -d | tar -xf - -C <base>` so it round-trips GET /snapshot."""
+    base = _request_base(None)
+    proc = await asyncio.create_subprocess_exec(
+        "sh", "-c", f"zstd -d -q | tar -xf - -C {shlex.quote(base)}",
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert proc.stdin is not None
+    received = 0
+    exceeded = False
+    try:
+        async for chunk in request.stream():
+            received += len(chunk)
+            if received > SNAPSHOT_MAX_BYTES:
+                exceeded = True
+                break
+            proc.stdin.write(chunk)
+            await proc.stdin.drain()
+    finally:
+        if exceeded:
+            if proc.returncode is None:
+                proc.kill()
+            await proc.wait()
+            raise HTTPException(
+                status_code=413,
+                detail=f"restore stream exceeds MAX_WORKSPACE_BYTES ({SNAPSHOT_MAX_BYTES})", 
+)
+        try:
+            proc.stdin.close()
+        except Exception:  # pragma: no cover - pipe already closed
+            pass
+        rc = await proc.wait()
+        if rc != 0:
+            err = await proc.stderr.read() if proc.stderr else b""
+            raise HTTPException(
+                status_code=500,
+                detail=f"restore pipeline failed rc={rc}: {err[:200].decode('utf-8', 'replace')}",
+            )
+    log.info("restore into %s: %d bytes", base, received)
+    return {"restored": True, "bytes": received}
 
 
 # --- interactive terminal (PTY) -------------------------------------------------
