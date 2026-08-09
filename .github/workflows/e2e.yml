@@ -27,7 +27,7 @@ jobs:
       matrix:
         runtime: [runc, gvisor]
     env:
-      KIND_CLUSTER: open-sandbox-e2e
+      KIND_CLUSTER: open-websandbox-e2e
       SYS_NS: agent-sandbox-system
       RUNTIME_NS: agent-sandbox-runtime
     steps:
@@ -93,22 +93,22 @@ jobs:
       - name: Build platform image (broker)
         uses: docker/build-push-action@v7
         with:
-          context: agent-sandbox-platform/broker
+          context: open-websandbox-platform/broker
           load: true
           provenance: false
-          tags: open-sandbox-broker:v0.1.0
-          cache-from: type=gha,scope=open-sandbox-broker
-          cache-to: type=gha,mode=max,scope=open-sandbox-broker
+          tags: open-websandbox-broker:v0.1.0
+          cache-from: type=gha,scope=open-websandbox-broker
+          cache-to: type=gha,mode=max,scope=open-websandbox-broker
 
       - name: Build platform image (runtime)
         uses: docker/build-push-action@v7
         with:
-          context: agent-sandbox-platform/runtime
+          context: open-websandbox-platform/runtime
           load: true
           provenance: false
-          tags: open-sandbox-runtime:v0.1.0
-          cache-from: type=gha,scope=open-sandbox-runtime
-          cache-to: type=gha,mode=max,scope=open-sandbox-runtime
+          tags: open-websandbox-runtime:v0.1.0
+          cache-from: type=gha,scope=open-websandbox-runtime
+          cache-to: type=gha,mode=max,scope=open-websandbox-runtime
 
       # Shallow-fetch upstream at the pinned tag into ./agent-sandbox so the router can be
       # self-built (no prebuilt image is published). Context = agent-sandbox/ because
@@ -127,13 +127,13 @@ jobs:
           file: agent-sandbox/sandbox-router/Dockerfile
           load: true
           provenance: false
-          tags: open-sandbox-router:v0.1.0
-          cache-from: type=gha,scope=open-sandbox-router
-          cache-to: type=gha,mode=max,scope=open-sandbox-router
+          tags: open-websandbox-router:v0.1.0
+          cache-from: type=gha,scope=open-websandbox-router
+          cache-to: type=gha,mode=max,scope=open-websandbox-router
 
       - name: Load images into KIND
         run: |
-          for img in open-sandbox-broker:v0.1.0 open-sandbox-runtime:v0.1.0 open-sandbox-router:v0.1.0; do
+          for img in open-websandbox-broker:v0.1.0 open-websandbox-runtime:v0.1.0 open-websandbox-router:v0.1.0; do
             kind load docker-image "$img" --name "$KIND_CLUSTER"
           done
 
@@ -144,7 +144,7 @@ jobs:
         run: |
           kubectl create namespace "$SYS_NS" --dry-run=client -o yaml | kubectl apply -f -
           kubectl create namespace "$RUNTIME_NS" --dry-run=client -o yaml | kubectl apply -f -
-          helm install open-sandbox agent-sandbox-platform/chart/ \
+          helm install open-websandbox open-websandbox-platform/chart/ \
             -f "$VALUES_FILE" -n "$SYS_NS"
           kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
           # Wait for the warm pool: >=1 Sandbox in RUNTIME_NS reaches Ready=True.
@@ -158,7 +158,7 @@ jobs:
           done
         env:
           # runc → values-kind.yaml; gvisor → values-kind-gvisor.yaml
-          VALUES_FILE: agent-sandbox-platform/chart/values-kind${{ matrix.runtime == 'gvisor' && '-gvisor' || '' }}.yaml
+          VALUES_FILE: open-websandbox-platform/chart/values-kind${{ matrix.runtime == 'gvisor' && '-gvisor' || '' }}.yaml
 
 
       - name: Diagnostics (on failure)

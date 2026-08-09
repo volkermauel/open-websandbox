@@ -1,6 +1,6 @@
 # Tasks — release v0.1.0
 
-Make open-sandbox releasable. Behavior unchanged. Cite `proposal.md` decisions (D#).
+Make open-websandbox releasable. Behavior unchanged. Cite `proposal.md` decisions (D#).
 Legend: `[ ]` todo · `[~]` in flight · `[x]` done.
 
 ## Tests (pytest + KIND)
@@ -16,7 +16,7 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` done.
 
 ## Packaging — Helm chart (D1, D2)
 
-- [~] `agent-sandbox-platform/chart/` (Chart.yaml + values.yaml + templates/) reproducing
+- [~] `open-websandbox-platform/chart/` (Chart.yaml + values.yaml + templates/) reproducing
       the live manifests exactly, with knobs: imageRegistry/owner/tag, broker env,
       runtimeClassName (gVisor/runc), warm pool, PVC/storageClass, idle TTLs
 - [ ] prod values: imageRegistry=ghcr.io, imageOwner=<owner>, imagePullPolicy=IfNotPresent
@@ -36,7 +36,7 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` done.
 
 ## Docs
 
-- [~] README rewrite (open-sandbox, quickstart) + `docs/architecture.md`, `docs/deploy.md`,
+- [~] README rewrite (open-websandbox, quickstart) + `docs/architecture.md`, `docs/deploy.md`,
       `docs/operations.md`, `docs/security.md`
 - [ ] `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`
 

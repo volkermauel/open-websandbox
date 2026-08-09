@@ -3,7 +3,7 @@
 
 """Shared fixtures for runtime server unit tests.
 
-The runtime server (``agent-sandbox-platform/runtime/server.py``) is a standalone
+The runtime server (``open-websandbox-platform/runtime/server.py``) is a standalone
 FastAPI app with no Kubernetes coupling, so it is fully unit-testable on a Linux
 box with a real filesystem and a real PTY — no cluster, no mocking of those.
 
@@ -50,7 +50,7 @@ os.environ.setdefault("RUNTIME_API_KEY", RUNTIME_KEY)
 RT_AUTH = {"Authorization": f"Bearer {RUNTIME_KEY}"}
 
 # --- make the runtime package importable as top-level `server` -----------------
-_RUNTIME_DIR = Path(__file__).resolve().parents[3] / "agent-sandbox-platform" / "runtime"
+_RUNTIME_DIR = Path(__file__).resolve().parents[3] / "open-websandbox-platform" / "runtime"
 if str(_RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(_RUNTIME_DIR))
 

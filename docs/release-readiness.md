@@ -1,4 +1,4 @@
-# open-sandbox — Release, Production & Battle-Readiness Gaps
+# open-websandbox — Release, Production & Battle-Readiness Gaps
 
 Synthesized from a 6-way parallel review (5 codebase lenses + an external benchmark
 vs Coder / Gitpod / Eclipse-Che / agent-sandbox norms — see

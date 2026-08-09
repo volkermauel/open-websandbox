@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 the open-websandbox contributors
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Curated OpenAPI 3.0 spec for the code-standard broker (open-sandbox runtime API).
+"""Curated OpenAPI 3.0 spec for the code-standard broker (open-websandbox runtime API).
 
 The broker is an authenticated reverse proxy in front of per-chat gVisor
 sandboxes. This module describes the **complete client-facing method surface**:
@@ -87,7 +87,7 @@ def _resolve_openapi_version(chart_path: Path | None = None) -> str:
 OPENAPI: dict = {
     "openapi": "3.0.3",
     "info": {
-        "title": "open-sandbox runtime API",
+        "title": "open-websandbox runtime API",
         "version": _resolve_openapi_version(),
         "description": (
             "Open-sandbox runtime API surface, served by the code-standard broker "

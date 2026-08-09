@@ -56,7 +56,7 @@ rollout onto our on-prem MicroK8s and records cluster-specific decisions.
 
 ### New Capabilities
 
-- `agent-sandbox-platform` — the integrated platform: gVisor sandboxes
+- `open-websandbox-platform` — the integrated platform: gVisor sandboxes
   provisioned one-per-active-session via the SIG controller + warm pool, fronted
   by a Go broker that owns authn/authz, quotas, claim lifecycle, and stateless
   recovery, with default-deny networking and admission policy.
@@ -75,7 +75,7 @@ rollout onto our on-prem MicroK8s and records cluster-specific decisions.
 - **Cluster:** on-prem MicroK8s (classic snap, containerd 2.2.3, Calico CNI).
   gVisor active on all three workers; no proprietary runtime dependencies. Coexists with
   CNPG, argocd, and existing workloads in isolated namespaces.
-- **Repo layout:** follows `AgentSandbox.md` §21 (`agent-sandbox-platform/`:
+- **Repo layout:** follows `AgentSandbox.md` §21 (`open-websandbox-platform/`:
   upstream/, images/, broker/, deploy/, scripts/). Build location decided at
   Phase 1 (this planning repo vs a new dedicated repo).
 - **Open WebUI:** the broker's `/v1` HTTP API (and optional MCP) replaces the

@@ -1,7 +1,7 @@
 schema: spec-driven
 
 context: |
-  Project: open-sandbox
+  Project: open-websandbox
   Goal: Back Open WebUI's "Open Terminal" integration with an isolated, multi-tenant
         sandbox runtime on PLAIN infrastructure (MicroK8s + containerd), with NO
         proprietary runtime dependencies.

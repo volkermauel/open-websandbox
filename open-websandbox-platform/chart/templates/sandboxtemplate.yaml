@@ -7,9 +7,9 @@ apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate
 metadata:
   name: {{ .Values.sandboxTemplate.name }}
-  namespace: {{ include "open-sandbox.runtimeNamespace" . }}
+  namespace: {{ include "open-websandbox.runtimeNamespace" . }}
   labels:
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 spec:
   volumeClaimTemplatesPolicy: Allowed
   podTemplate:
@@ -45,7 +45,7 @@ spec:
           type: RuntimeDefault
       containers:
       - name: runtime
-        image: {{ include "open-sandbox.image" (dict "Values" .Values "repo" .Values.sandboxTemplate.runtimeRepository) }}
+        image: {{ include "open-websandbox.image" (dict "Values" .Values "repo" .Values.sandboxTemplate.runtimeRepository) }}
         imagePullPolicy: {{ .Values.imagePullPolicy }}
         ports:
         - containerPort: 8888

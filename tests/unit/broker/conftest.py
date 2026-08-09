@@ -3,7 +3,7 @@
 
 """Shared fixtures for broker unit tests.
 
-The broker (``agent-sandbox-platform/broker/main.py``) has three import-time side
+The broker (``open-websandbox-platform/broker/main.py``) has three import-time side
 effects that must be neutralised *before* ``import main``:
 
 1. ``config.load_incluster_config()`` / ``load_kube_config()`` — fail outside a cluster.
@@ -55,7 +55,7 @@ _kc.CustomObjectsApi = lambda *a, **k: _api
 _kc.CoreV1Api = lambda *a, **k: _core
 
 # (3) make `import main` work -------------------------------------------------------
-_BROKER_DIR = Path(__file__).resolve().parents[3] / "agent-sandbox-platform" / "broker"
+_BROKER_DIR = Path(__file__).resolve().parents[3] / "open-websandbox-platform" / "broker"
 if str(_BROKER_DIR) not in sys.path:
     sys.path.insert(0, str(_BROKER_DIR))
 

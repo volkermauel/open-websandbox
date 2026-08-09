@@ -18,14 +18,14 @@ import yaml
 # ``openapi_spec`` is a flat module in the broker dir (imported as
 # ``from openapi_spec import OPENAPI`` by broker/main.py), not an installed
 # package — put its directory on sys.path the same way the broker conftest does.
-_BROKER_DIR = Path(__file__).resolve().parents[3] / "agent-sandbox-platform" / "broker"
+_BROKER_DIR = Path(__file__).resolve().parents[3] / "open-websandbox-platform" / "broker"
 if str(_BROKER_DIR) not in sys.path:
     sys.path.insert(0, str(_BROKER_DIR))
 
 import openapi_spec  # type: ignore[import-not-found]  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_CHART_YAML = _REPO_ROOT / "agent-sandbox-platform" / "chart" / "Chart.yaml"
+_CHART_YAML = _REPO_ROOT / "open-websandbox-platform" / "chart" / "Chart.yaml"
 
 
 def _read_appversion_independently() -> str:

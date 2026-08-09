@@ -14,7 +14,7 @@ default-deny networking keeps sandboxes off the rest of the cluster.
 
 > **Project name.** This repository is **open-websandbox** (licensed
 > [AGPL-3.0-only](./LICENSE)). Its container images and Helm chart still carry the
-> historical names `open-sandbox-*` / chart `open-sandbox`; a global rename is
+> historical names `open-websandbox-*` / chart `open-websandbox`; a global rename is
 > tracked in [#3](https://github.com/volkermauel/open-websandbox/issues/3). The
 > control plane rests on the upstream
 > [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox)
@@ -76,7 +76,7 @@ are applied before the chart's templates, so there is no separate manual
 `kubectl apply` step.
 
 > **Pre-release — the three platform images are not published yet.** No GitHub Release
-> has been cut, so `ghcr.io/volkermauel/open-sandbox-{broker,runtime,router}:v0.1.0` do
+> has been cut, so `ghcr.io/volkermauel/open-websandbox-{broker,runtime,router}:v0.1.0` do
 > not exist yet; an install that pulls them hits `ImagePullBackOff` until the first
 > `v0.1.0` tag. Until then **build the three images locally and install from your
 > checkout** (the chart defaults to `imagePullPolicy: Never`, so it uses your
@@ -90,12 +90,12 @@ kubectl create namespace agent-sandbox-system agent-sandbox-runtime
 
 # 3. (Optional) Verify the integrity of the vendored upstream manifest the chart
 #    renders from — the controller + CRDs are installed BY the chart itself:
-sha256sum -c agent-sandbox-platform/upstream/SHA256SUMS
+sha256sum -c open-websandbox-platform/upstream/SHA256SUMS
 
 # 4. Build + load the 3 images (broker, runtime, router), then install from the local
 #    chart (default values = pre-loaded images, imagePullPolicy: Never, no GHCR pull).
 #    Build/load commands: docs/deploy.md §2.
-helm install open-websandbox agent-sandbox-platform/chart
+helm install open-websandbox open-websandbox-platform/chart
 
 # 5. Wait for the control plane + warm pool:
 kubectl -n agent-sandbox-system wait deploy/owui-broker deploy/sandbox-router \

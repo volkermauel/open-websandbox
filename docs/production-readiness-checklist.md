@@ -1,4 +1,4 @@
-# open-sandbox v1.0 Production-Readiness Checklist
+# open-websandbox v1.0 Production-Readiness Checklist
 
 `[M]` = table-stakes for a credible v1.0 · `[A]` = advanced / beyond-v1.
 Diff this against actual state. Refs: agent-sandbox (kubernetes-sigs), Eclipse Che/Devfile, Coder, Gitpod, code-server, vcluster, CNCF release norms.

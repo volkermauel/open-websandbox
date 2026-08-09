@@ -1,6 +1,6 @@
 # sandbox-router: dials live sandbox PodIPs (KEP-NNNN fast path) and reverse-proxies.
-{{- $sysNs := include "open-sandbox.systemNamespace" . -}}
-{{- $runNs := include "open-sandbox.runtimeNamespace" . -}}
+{{- $sysNs := include "open-websandbox.systemNamespace" . -}}
+{{- $runNs := include "open-websandbox.runtimeNamespace" . -}}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -10,7 +10,7 @@ metadata:
   labels:
     app.kubernetes.io/name: sandbox-router
     app.kubernetes.io/component: sandbox-router
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 ---
 # Pod read access for the informer cache (server-side label selector narrows the
 # actual watch to sandbox-owned Pods; the API permission grant itself cannot be
@@ -22,7 +22,7 @@ metadata:
   labels:
     app.kubernetes.io/name: sandbox-router
     app.kubernetes.io/component: sandbox-router
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 rules:
 - apiGroups: [""]
   resources: ["pods"]
@@ -35,7 +35,7 @@ metadata:
   labels:
     app.kubernetes.io/name: sandbox-router
     app.kubernetes.io/component: sandbox-router
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -55,7 +55,7 @@ metadata:
   labels:
     app.kubernetes.io/name: sandbox-router
     app.kubernetes.io/component: sandbox-router
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -73,7 +73,7 @@ metadata:
   labels:
     app.kubernetes.io/name: sandbox-router
     app.kubernetes.io/component: sandbox-router
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 spec:
   type: ClusterIP
   selector:
@@ -93,7 +93,7 @@ metadata:
   labels:
     app.kubernetes.io/name: sandbox-router
     app.kubernetes.io/component: sandbox-router
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.router.replicas }}
   selector:
@@ -132,7 +132,7 @@ spec:
             app.kubernetes.io/name: sandbox-router
       containers:
       - name: sandbox-router
-        image: {{ include "open-sandbox.image" (dict "Values" .Values "repo" .Values.router.repository) }}
+        image: {{ include "open-websandbox.image" (dict "Values" .Values "repo" .Values.router.repository) }}
         imagePullPolicy: {{ .Values.imagePullPolicy }}
         args:
         - --http-bind-address=:8080
@@ -192,7 +192,7 @@ metadata:
   labels:
     app.kubernetes.io/name: sandbox-router
     app.kubernetes.io/component: sandbox-router
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
@@ -247,7 +247,7 @@ metadata:
   labels:
     app.kubernetes.io/name: sandbox-router
     app.kubernetes.io/component: sandbox-router
-    {{- include "open-sandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" . | nindent 4 }}
 spec:
   minAvailable: 1
   selector:

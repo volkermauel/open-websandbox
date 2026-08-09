@@ -1,6 +1,6 @@
 # Security model
 
-open-sandbox runs user-supplied code (shell commands, package installs) inside per-chat
+open-websandbox runs user-supplied code (shell commands, package installs) inside per-chat
 Linux sandboxes. This page documents the threat model, the isolation layers, and the
 residual risks accepted for v0.1.0.
 
@@ -66,9 +66,9 @@ GitHub OIDC)** and attaches a **per-image SBOM (SPDX-JSON, generated with [syft]
 to the GitHub Release for that tag. The signature is pushed to the registry as an
 OCI ref-tag (`<image>:sha256-<digest>.sig`).
 
-> The published images are `ghcr.io/volkermauel/open-sandbox-{broker,runtime,router}:<tag>`
+> The published images are `ghcr.io/volkermauel/open-websandbox-{broker,runtime,router}:<tag>`
 > (substitute the repo owner if you fork). Note the repo is `open-websandbox` but the
-> image names are `open-sandbox-*`.
+> image names are `open-websandbox-*`.
 
 ### Verify the image signature (keyless)
 
@@ -78,7 +78,7 @@ fails verification.
 
 ```bash
 TAG=v0.1.0                                                            # the tag you pulled
-IMAGE=ghcr.io/volkermauel/open-sandbox-broker                         # ...or -runtime / -router
+IMAGE=ghcr.io/volkermauel/open-websandbox-broker                         # ...or -runtime / -router
 
 cosign verify --yes \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -98,9 +98,9 @@ attestation), so fetch it from the Release:
 ```bash
 # Download all image SBOMs (broker/runtime/router) for a tag:
 gh release download "${TAG}" --repo volkermauel/open-websandbox \
-  --pattern 'open-sandbox-*.spdx.json'
+  --pattern 'open-websandbox-*.spdx.json'
 
-# List declared packages, e.g.: jq '.packages[].name' open-sandbox-broker-${TAG}.spdx.json | sort -u
+# List declared packages, e.g.: jq '.packages[].name' open-websandbox-broker-${TAG}.spdx.json | sort -u
 ```
 
 (Pushing the SBOM as a cosign attestation so `cosign verify-attestation` works

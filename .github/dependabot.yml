@@ -2,9 +2,9 @@
 #
 # Tracks every dependency ecosystem in use and groups updates per directory so
 # each ecosystem surfaces as a single reviewable PR per cycle:
-#   - pip ........ agent-sandbox-platform/{broker,runtime} + repo-root test deps
+#   - pip ........ open-websandbox-platform/{broker,runtime} + repo-root test deps
 #   - github-actions ... .github/workflows/*.yml (actions/* stay current)
-#   - docker ..... base images in agent-sandbox-platform/{broker,runtime}/Dockerfile
+#   - docker ..... base images in open-websandbox-platform/{broker,runtime}/Dockerfile
 #
 # Patch-level bumps are auto-merged once CI is green by
 # .github/workflows/dependabot-automerge.yml; minor/major bumps stay open for
@@ -27,7 +27,7 @@ updates:
 
   # Broker service: requirements.in -> requirements.txt
   - package-ecosystem: "pip"
-    directory: "/agent-sandbox-platform/broker"
+    directory: "/open-websandbox-platform/broker"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
@@ -41,7 +41,7 @@ updates:
   # Runtime server + curated agent-common libs:
   # requirements-app.in / requirements-common.in -> *.txt
   - package-ecosystem: "pip"
-    directory: "/agent-sandbox-platform/runtime"
+    directory: "/open-websandbox-platform/runtime"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
@@ -70,7 +70,7 @@ updates:
   # Tracks `FROM python:3.12-slim` so Dependabot opens PRs pinning/bumping it.
   # Broker image:
   - package-ecosystem: "docker"
-    directory: "/agent-sandbox-platform/broker"
+    directory: "/open-websandbox-platform/broker"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
@@ -82,7 +82,7 @@ updates:
       prefix: "deps"
   # Runtime image:
   - package-ecosystem: "docker"
-    directory: "/agent-sandbox-platform/runtime"
+    directory: "/open-websandbox-platform/runtime"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
