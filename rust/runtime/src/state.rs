@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::auth::SessionKeyStore;
 use crate::config::RuntimeConfig;
+use crate::terminals::TerminalRegistry;
 
 /// State shared across all request handlers.
 ///
@@ -15,6 +16,8 @@ use crate::config::RuntimeConfig;
 pub struct AppState {
     pub config: Arc<RuntimeConfig>,
     pub key_store: Arc<SessionKeyStore>,
+    /// In-process PTY terminal sessions (`/api/terminals`).
+    pub terminals: Arc<TerminalRegistry>,
 }
 
 impl AppState {
@@ -22,6 +25,7 @@ impl AppState {
         Self {
             config: Arc::new(config),
             key_store: Arc::new(key_store),
+            terminals: Arc::new(TerminalRegistry::new()),
         }
     }
 }

@@ -16,8 +16,10 @@ pub mod files;
 pub mod safe_path;
 pub mod snapshot;
 pub mod state;
+pub mod terminals;
 
 pub use app::build_router;
 pub use auth::SessionKeyStore;
 pub use config::RuntimeConfig;
 pub use state::AppState;
+pub use terminals::TerminalRegistry;
