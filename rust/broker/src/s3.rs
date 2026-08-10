@@ -58,25 +58,26 @@ const DEFAULT_OFFLOAD_BACKOFF: Duration = Duration::from_secs(10);
 // Object-key scheme (D3): `<prefix>/<sandbox>/workspace-<ts>.tar.zst`
 // ---------------------------------------------------------------------------
 
-/// Per-sandbox cold-tier namespace: `<prefix>/<sandbox>/` (Python
-/// `_s3_prefix`, but keyed by the sandbox name — already a PII-free hash —
-/// rather than re-hashing the user/session). The surrounding slashes of the
-/// configured prefix are stripped so the namespace is canonical regardless of
-/// env formatting.
+/// Per-session cold-tier namespace: `<prefix>/<user>/chats/<session>/` (Python
+/// `_s3_prefix`, keyed by user + session for D11 parity — a Rust broker reads
+/// objects a Python broker wrote, and the e2e inspects them by user/chat). The
+/// surrounding slashes of the configured prefix are stripped so the namespace is
+/// canonical regardless of env formatting.
 #[must_use]
-pub fn s3_namespace(prefix: &str, sandbox: &str) -> String {
+pub fn s3_namespace(prefix: &str, user: &str, session: &str) -> String {
     let prefix = prefix.trim_matches('/');
-    format!("{prefix}/{sandbox}/")
+    format!("{prefix}/{user}/chats/{session}/")
 }
 
-/// Versioned snapshot object key: `<prefix>/<sandbox>/workspace-<ts>.tar.zst`.
-/// The timestamp is zero-padded to 10 digits so **lexical order == chronological
-/// order** (Python D3) — [`ColdStore::latest_key`] is therefore a lexical max.
+/// Versioned snapshot object key:
+/// `<prefix>/<user>/chats/<session>/workspace-<ts>.tar.zst`. The timestamp is
+/// zero-padded to 10 digits so **lexical order == chronological order** (Python
+/// D3) — [`ColdStore::latest_key`] is therefore a lexical max.
 #[must_use]
-pub fn s3_object_key(prefix: &str, sandbox: &str, ts: i64) -> String {
+pub fn s3_object_key(prefix: &str, user: &str, session: &str, ts: i64) -> String {
     format!(
         "{}workspace-{ts:010}.tar.zst",
-        s3_namespace(prefix, sandbox)
+        s3_namespace(prefix, user, session)
     )
 }
 
@@ -502,7 +503,7 @@ impl S3Offload {
         session: &str,
     ) -> Result<(), OffloadError> {
         let ts = now_unix();
-        let key = s3_object_key(&self.prefix, name, ts);
+        let key = s3_object_key(&self.prefix, user, session, ts);
         let bearer = self.runtime_key(name).await;
 
         // GET /snapshot (the runtime streams the zstd tarball of /workspace).
@@ -532,7 +533,7 @@ impl S3Offload {
 
         // Then delete OLD under the namespace, skipping the just-uploaded key
         // (keep-latest; per-object delete; prefix never empty mid-offload).
-        let ns = s3_namespace(&self.prefix, name);
+        let ns = s3_namespace(&self.prefix, user, session);
         if let Err(e) = self.cold.delete_prefix_except(&ns, Some(&key)).await {
             // A keep-latest delete failure does NOT lose the snapshot (the new
             // object is already durably stored); surface it so the reaper can
@@ -556,8 +557,10 @@ impl S3Offload {
         &self,
         name: &str,
         pod_ip: &str,
+        user: &str,
+        session: &str,
     ) -> Result<RestoreOutcome, RestoreError> {
-        let ns = s3_namespace(&self.prefix, name);
+        let ns = s3_namespace(&self.prefix, user, session);
         let bearer = self.runtime_key(name).await;
         let Some(latest) = self
             .cold
@@ -681,20 +684,23 @@ mod tests {
     // --- object-key scheme (D3) -------------------------------------------
 
     #[test]
-    fn namespace_is_prefix_slash_sandbox_slash() {
-        assert_eq!(s3_namespace("users", "owui-c-abc"), "users/owui-c-abc/");
+    fn namespace_is_prefix_user_chats_session() {
+        assert_eq!(s3_namespace("users", "alice", "chat1"), "users/alice/chats/chat1/");
         // Surrounding slashes on the prefix are canonicalised away.
-        assert_eq!(s3_namespace("//prod/users//", "sbx"), "prod/users/sbx/");
+        assert_eq!(
+            s3_namespace("//prod/users//", "bob", "s2"),
+            "prod/users/bob/chats/s2/"
+        );
     }
 
     #[test]
     fn object_key_is_namespaced_versioned_and_zero_padded() {
-        let key = s3_object_key("users", "owui-c-abc", 1_700_000_000);
-        assert_eq!(key, "users/owui-c-abc/workspace-1700000000.tar.zst");
+        let key = s3_object_key("users", "alice", "chat1", 1_700_000_000);
+        assert_eq!(key, "users/alice/chats/chat1/workspace-1700000000.tar.zst");
         // A small ts is still 10 digits so lexical order == chronological.
-        let early = s3_object_key("users", "owui-c-abc", 5);
+        let early = s3_object_key("users", "alice", "chat1", 5);
         assert_eq!(
-            early, "users/owui-c-abc/workspace-0000000005.tar.zst",
+            early, "users/alice/chats/chat1/workspace-0000000005.tar.zst",
             "zero-padded ts keeps lexical == chronological"
         );
     }
@@ -703,17 +709,17 @@ mod tests {
     fn lexical_order_of_keys_is_chronological() {
         let mut keys: Vec<String> = [5i64, 1_700_000_000, 999, 1_699_999_999]
             .iter()
-            .map(|t| s3_object_key("users", "sbx", *t))
+            .map(|t| s3_object_key("users", "bob", "s2", *t))
             .collect();
         keys.sort();
         // Sorted ascending == chronological ascending.
         assert_eq!(
             keys.iter().map(String::as_str).collect::<Vec<_>>(),
             [
-                "users/sbx/workspace-0000000005.tar.zst",
-                "users/sbx/workspace-0000000999.tar.zst",
-                "users/sbx/workspace-1699999999.tar.zst",
-                "users/sbx/workspace-1700000000.tar.zst",
+                "users/bob/chats/s2/workspace-0000000005.tar.zst",
+                "users/bob/chats/s2/workspace-0000000999.tar.zst",
+                "users/bob/chats/s2/workspace-1699999999.tar.zst",
+                "users/bob/chats/s2/workspace-1700000000.tar.zst",
             ]
         );
     }
@@ -723,14 +729,14 @@ mod tests {
     #[tokio::test]
     async fn latest_key_returns_lexical_max_under_prefix() {
         let store = InMemoryColdStore::new();
-        let ns = s3_namespace("users", "sbx");
+        let ns = s3_namespace("users", "sbx", "s1");
         store.seed(&format!("{ns}workspace-0000000005.tar.zst"), &b"old"[..]);
         store.seed(&format!("{ns}workspace-1700000000.tar.zst"), &b"new"[..]);
         store.seed("users/other-sbx/workspace-0000000001.tar.zst", &b"x"[..]);
         let latest = store.latest_key(&ns).await.unwrap();
         assert_eq!(
             latest.as_deref(),
-            Some("users/sbx/workspace-1700000000.tar.zst"),
+            Some("users/sbx/chats/s1/workspace-1700000000.tar.zst"),
             "latest_key ignores other sandboxes + picks the newest ts"
         );
     }
@@ -738,7 +744,7 @@ mod tests {
     #[tokio::test]
     async fn delete_prefix_except_keeps_skip_and_removes_the_rest() {
         let store = InMemoryColdStore::new();
-        let ns = s3_namespace("users", "sbx");
+        let ns = s3_namespace("users", "sbx", "s1");
         let keep = format!("{ns}workspace-1700000000.tar.zst");
         let old1 = format!("{ns}workspace-1699000000.tar.zst");
         let old2 = format!("{ns}workspace-0000000005.tar.zst");
@@ -839,7 +845,7 @@ mod tests {
         let store = Arc::new(InMemoryColdStore::new());
         let offload = S3Offload::new(&BrokerConfig::default(), store, reqwest::Client::new());
         let outcome = offload
-            .restore_on_resume("owui-c-abc", "10.0.0.1")
+            .restore_on_resume("owui-c-abc", "10.0.0.1", "alice", "chat1")
             .await
             .unwrap();
         assert_eq!(outcome, RestoreOutcome::NoObject);

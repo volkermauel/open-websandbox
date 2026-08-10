@@ -202,7 +202,7 @@ pub async fn resolve_sandbox(
     if profile == Profile::Persistent {
         if let Some(tier) = state.s3_restore.clone() {
             match tier
-                .restore_on_resume(&resolved.name, &resolved.pod_ip)
+                .restore_on_resume(&resolved.name, &resolved.pod_ip, user_id, session_id)
                 .await
             {
                 Ok(crate::s3::RestoreOutcome::Restored(key)) => {
