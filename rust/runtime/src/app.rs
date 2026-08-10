@@ -12,6 +12,7 @@ use crate::files::{
 };
 use crate::snapshot::{restore, snapshot};
 use crate::state::AppState;
+use crate::terminals::{create_terminal, kill_terminal, list_terminals, terminal_get_or_ws};
 
 /// Health/info payload returned by `GET /`. Field order matches the Python
 /// runtime byte-for-byte (`status` first).
@@ -53,7 +54,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/files/delete", delete(delete_entry))
         // S3-tiered workspace offload/restore (#52): stream native tar+zstd.
         .route("/snapshot", get(snapshot))
-        .route("/restore", put(restore));
+        .route("/restore", put(restore))
+        // Interactive PTY terminals (D5): HTTP CRUD + WebSocket relay.
+        .route("/api/terminals", post(create_terminal).get(list_terminals))
+        .route(
+            "/api/terminals/{id}",
+            get(terminal_get_or_ws).delete(kill_terminal),
+        );
 
     open.merge(gated.with_state(state))
 }

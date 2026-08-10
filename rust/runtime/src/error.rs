@@ -27,6 +27,9 @@ pub enum ApiError {
     /// 409 — move destination already exists.
     #[error("{0}")]
     Conflict(String),
+    /// 429 — `MAX_TERMINAL_SESSIONS` concurrent PTY sessions reached.
+    #[error("{0}")]
+    TooManyRequests(String),
     /// 413 — snapshot/restore stream exceeds `MAX_WORKSPACE_BYTES`.
     #[error("{0}")]
     PayloadTooLarge(String),
@@ -45,6 +48,7 @@ impl ApiError {
             ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
             ApiError::Conflict(_) => StatusCode::CONFLICT,
+            ApiError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             ApiError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             ApiError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
