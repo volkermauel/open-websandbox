@@ -70,11 +70,11 @@ the image (or you set a registry owner/tag + `IfNotPresent` in values and push t
 that registry).
 
 ```bash
-# broker — Python FastAPI
-docker build -t ghcr.io/<owner>/open-websandbox-broker:<tag> open-websandbox-platform/broker
+# broker — Rust (axum/tokio), distroless nonroot
+docker build -t ghcr.io/<owner>/open-websandbox-broker:<tag> -f rust/broker/Dockerfile rust
 
-# runtime — Python FastAPI + Node + toolchain + curated libs
-docker build -t ghcr.io/<owner>/open-websandbox-runtime:<tag> open-websandbox-platform/runtime
+# runtime — Rust (axum/tokio), debian-slim + shell toolchain
+docker build -t ghcr.io/<owner>/open-websandbox-runtime:<tag> -f rust/runtime/Dockerfile rust
 
 # sandbox-router — Go (self-build; upstream publishes only :latest at v0.5.3,
 # so it is self-built and pinned by digest in production)
@@ -341,7 +341,7 @@ warm sandbox. You're live.
 The Helm chart's broker values render to these env vars on the `owui-broker`
 Deployment. Defaults match the values shipped in
 [`broker.yaml`](../open-websandbox-platform/deploy/base/broker.yaml) and the
-fallbacks in [`broker/main.py`](../open-websandbox-platform/broker/main.py); leave
+fallbacks in [`BrokerConfig`](../rust/shared/src/config.rs); leave
 a Helm value unset to inherit the default.
 
 | Helm value path | Env var | Default | Purpose |

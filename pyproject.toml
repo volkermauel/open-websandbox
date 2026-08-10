@@ -10,20 +10,8 @@ select = ["E4", "E7", "E9", "F", "I"]
 # pytest-asyncio: every async test/fixture is auto-collected, no markers needed.
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-testpaths = ["tests/unit"]
+testpaths = ["tests/e2e"]
 filterwarnings = [
-    # uvicorn (in the live-server fixture) is noisy on stdout; silence its access logs.
+    # Silence noisy deprecation warnings from the e2e harness deps (httpx/pytest-asyncio).
     "ignore::DeprecationWarning",
 ]
-
-[tool.coverage.run]
-branch = true
-# measured by module name (tests import `server` and `main` directly via sys.path)
-source = ["server", "main"]
-
-[tool.coverage.report]
-fail_under = 95
-show_missing = true
-skip_covered = false
-# keep the report focused on the two production modules
-include = ["*/server.py", "*/main.py"]
