@@ -26,16 +26,16 @@ axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
 k8s-openapi.workspace = true
 kube.workspace = true
-rand = "0.9"
+rand = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 serde.workspace = true
 serde_json.workspace = true
 bytes = "1"
 shared = { version = "0.1.0", path = "../shared" }
-sha2 = "0.10"
+sha2 = "0.11"
 thiserror.workspace = true
 tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = "0.27"
+tokio-tungstenite = "0.29"
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
