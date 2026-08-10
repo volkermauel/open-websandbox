@@ -85,8 +85,11 @@ ENV WORKDIR=/workspace \
     MAX_OUTPUT_BYTES=1048576 \
     DEFAULT_TIMEOUT=120 \
     MAX_TIMEOUT=600 \
-    MAX_PROCS=256 \
-    RUNTIME_KEY_FILE=/etc/runtime-key/api-key
+    MAX_PROCS=256
+# RUNTIME_KEY_FILE is intentionally NOT set as an env var: it would surface in
+# /proc/1/environ (the isolation e2e flags KEY-named env vars). The Rust runtime's
+# built-in default (/etc/runtime-key/api-key) is used instead — same as the Python
+# runtime, which also omits this env (issue #50: no credential-ish env leaks).
 
 WORKDIR /workspace
 USER 1000

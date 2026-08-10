@@ -207,7 +207,11 @@ async fn proxy_forwards_method_path_body_and_injects_runtime_bearer() {
         .mount(&server)
         .await;
 
-    let state = proxy_env(&server.uri(), store_with_template()).await;
+    let store = store_with_template();
+    // PR-C-5 / #4: seed the per-session runtime key so the proxy injects RT_KEY
+    // (otherwise ensure_runtime_key mints a random one the mock wouldn't match).
+    store.set_runtime_key(&sandbox_name("user-1", "chat-1", Profile::Persistent), RT_KEY);
+    let state = proxy_env(&server.uri(), store).await;
     let app = build_router(state);
     let resp = app
         .oneshot(authed_req("POST", "/execute", br#"{"command":"ls"}"#))

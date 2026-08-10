@@ -25,6 +25,7 @@ pub mod leaser;
 pub mod proxy;
 pub mod reaper;
 pub mod resolve;
+pub mod runtime_key;
 pub mod s3;
 pub mod sandbox;
 pub mod state;

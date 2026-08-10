@@ -93,6 +93,23 @@ pub trait SandboxStore: Send + Sync {
 
     /// Is the apiserver reachable? Backs `GET /readyz` (503 when not).
     async fn apiserver_reachable(&self) -> bool;
+
+    /// Get-or-create the per-session runtime API-key Secret
+    /// (`owui-runtime-key-<sandbox>`) in the runtime namespace (PR-C-5 / #4).
+    /// Idempotent — does NOT rotate an existing key (a stable key across a
+    /// session's life is what the runtime caches + the broker re-sends each
+    /// hop). Called before [`SandboxStore::create_sandbox`] so the non-optional
+    /// runtime-key volume is satisfiable at pod-creation.
+    async fn ensure_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError>;
+
+    /// Stateless per-hop lookup of the per-session runtime API key. `Ok(None)`
+    /// when the Secret is missing (misconfig / reaped session) so the hop goes
+    /// out unauthenticated and the runtime fails closed (401/503). (PR-C-5 / #4)
+    async fn read_runtime_key(&self, sandbox_name: &str) -> Result<Option<String>, StoreError>;
+
+    /// Best-effort reap of the per-session key Secret with the sandbox
+    /// (404-tolerant, mirrors the Python `_delete_runtime_key`).
+    async fn delete_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError>;
 }
 
 /// Real Kubernetes backend: typed [`Api`]s over a [`kube::Client`].
@@ -158,6 +175,56 @@ impl SandboxStore for KubeSandboxStore {
             Ok(_) => Ok(true),
             Err(err) => match StoreError::classify(err) {
                 StoreError::NotFound => Ok(false),
+                other => Err(other),
+            },
+        }
+    }
+
+    async fn ensure_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError> {
+        use k8s_openapi::api::core::v1::Secret;
+        let secrets: Api<Secret> = Api::namespaced(self.client.clone(), &self.namespace);
+        let name = crate::runtime_key::secret_name(sandbox_name);
+        match secrets.get(&name).await {
+            Ok(_) => Ok(()), // exists — never rotate on the create/resolve path
+            Err(kube::Error::Api(e)) if e.code == 404 => {
+                let sec = crate::runtime_key::build_secret(
+                    sandbox_name,
+                    &self.namespace,
+                    &crate::runtime_key::mint_key(),
+                );
+                match secrets.create(&PostParams::default(), &sec).await {
+                    Ok(_) => Ok(()),
+                    Err(kube::Error::Api(e)) if e.code == 409 => Ok(()), // concurrent ensure won
+                    Err(err) => Err(StoreError::classify(err)),
+                }
+            }
+            Err(err) => Err(StoreError::classify(err)),
+        }
+    }
+
+    async fn read_runtime_key(&self, sandbox_name: &str) -> Result<Option<String>, StoreError> {
+        use k8s_openapi::api::core::v1::Secret;
+        let secrets: Api<Secret> = Api::namespaced(self.client.clone(), &self.namespace);
+        match secrets.get(&crate::runtime_key::secret_name(sandbox_name)).await {
+            Ok(sec) => Ok(sec
+                .data
+                .and_then(|d| d.get(crate::runtime_key::DATA_KEY).cloned())
+                .and_then(|b| String::from_utf8(b.0).ok())),
+            Err(kube::Error::Api(e)) if e.code == 404 => Ok(None),
+            Err(err) => Err(StoreError::classify(err)),
+        }
+    }
+
+    async fn delete_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError> {
+        use k8s_openapi::api::core::v1::Secret;
+        let secrets: Api<Secret> = Api::namespaced(self.client.clone(), &self.namespace);
+        match secrets
+            .delete(&crate::runtime_key::secret_name(sandbox_name), &DeleteParams::default())
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(err) => match StoreError::classify(err) {
+                StoreError::NotFound => Ok(()), // best-effort / already gone
                 other => Err(other),
             },
         }
@@ -236,6 +303,10 @@ pub struct StubSandboxStore {
     /// (default) ⇒ created sandboxes have no status, so a resolve poll will time
     /// out unless the test later calls [`Self::mark_ready`].
     auto_ready_on_create: Mutex<Option<String>>,
+    /// Per-session runtime API keys (PR-C-5 / #4): keyed by sandbox name (the
+    /// stub mimics the Secret the kube impl stores as
+    /// `owui-runtime-key-<sandbox>`).
+    runtime_keys: Mutex<HashMap<String, String>>,
 }
 
 impl StubSandboxStore {
@@ -246,6 +317,7 @@ impl StubSandboxStore {
             templates: Mutex::new(HashMap::new()),
             reachable: AtomicBool::new(true),
             auto_ready_on_create: Mutex::new(None),
+            runtime_keys: Mutex::new(HashMap::new()),
         }
     }
 
@@ -262,6 +334,16 @@ impl StubSandboxStore {
             .lock()
             .expect("stub templates")
             .insert(name, template);
+    }
+
+    /// Test seam: seed a known per-session runtime key for `sandbox_name` so a
+    /// test can assert the exact Bearer the proxy injects (otherwise
+    /// `ensure_runtime_key` mints a random one). (PR-C-5 / #4)
+    pub fn set_runtime_key(&self, sandbox_name: &str, key: &str) {
+        self.runtime_keys
+            .lock()
+            .expect("stub runtime_keys")
+            .insert(sandbox_name.to_string(), key.to_string());
     }
 
     /// Insert (or replace) a sandbox, e.g. to pre-seed a get/list scenario.
@@ -425,6 +507,30 @@ impl SandboxStore for StubSandboxStore {
             None => Err(StoreError::NotFound),
         }
     }
+    async fn ensure_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError> {
+        let mut keys = self.runtime_keys.lock().expect("stub runtime_keys");
+        keys.entry(sandbox_name.to_string())
+            .or_insert_with(crate::runtime_key::mint_key);
+        Ok(())
+    }
+
+    async fn read_runtime_key(&self, sandbox_name: &str) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .runtime_keys
+            .lock()
+            .expect("stub runtime_keys")
+            .get(sandbox_name)
+            .cloned())
+    }
+
+    async fn delete_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError> {
+        self.runtime_keys
+            .lock()
+            .expect("stub runtime_keys")
+            .remove(sandbox_name);
+        Ok(())
+    }
+
 }
 
 /// Build a Ready `SandboxStatus` for the stub (a controller would populate this

@@ -80,6 +80,12 @@ pub fn build_sandbox(
         }
     }
 
+    // PR-C-5 / #4: inject the per-session runtime-key Secret volume + a
+    // read-only mount at /etc/runtime-key. The Secret (owui-runtime-key-<name>)
+    // is ensured by the caller before the Sandbox is created, so the
+    // non-optional volume is satisfiable when the controller schedules the pod.
+    crate::runtime_key::inject_volume(&mut pod_template, name);
+
     let mut labels = BTreeMap::new();
     labels.insert(MANAGED_BY_KEY.to_string(), MANAGED_BY_VALUE.to_string());
     labels.insert(PROFILE_LABEL_KEY.to_string(), profile.as_str().to_string());
