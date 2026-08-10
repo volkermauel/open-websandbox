@@ -9,7 +9,8 @@ use axum::Router;
 use crate::execute::execute;
 use crate::files::{
     delete_entry, get_cwd, glob_search, grep, list_dir, list_ports, mkdir, move_entry,
-    read_file, replace, set_cwd, tool_download, tool_exists, tool_list, view_file, write_file,
+    read_file, replace, set_cwd, tool_download, tool_exists, tool_list, tool_list_root, view_file,
+    write_file,
 };
 use crate::snapshot::{restore, snapshot};
 use crate::state::AppState;
@@ -60,6 +61,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/files/glob", get(glob_search))
         // LLM-tool surface (catch-all path params): download / list / exists.
         .route("/download/{*file_path}", get(tool_download))
+        .route("/list", get(tool_list_root))
+        .route("/list/", get(tool_list_root))
         .route("/list/{*file_path}", get(tool_list))
         .route("/exists/{*file_path}", get(tool_exists))
         // Restricted runtime: no host-port introspection (empty ports list).

@@ -384,7 +384,27 @@ pub async fn tool_list(
     headers: HeaderMap,
     axum::extract::Path(file_path): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let base = base_of(&state, &headers)?;
+    list_impl(&state, &headers, &file_path).await
+}
+
+/// `GET /list` + `GET /list/` — list the workspace root. Python's FastAPI route
+/// `/list/{file_path:path}` matches the empty path (lists root); axum's
+/// `/list/{*file_path}` catch-all requires ≥1 segment, so these explicit routes
+/// cover the empty-path case (parity, D11).
+pub async fn tool_list_root(
+    _auth: Authed,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    list_impl(&state, &headers, ".").await
+}
+
+async fn list_impl(
+    state: &AppState,
+    headers: &HeaderMap,
+    file_path: &str,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let base = base_of(state, headers)?;
     let fp = file_path.trim();
     let fp = if fp.is_empty() { "." } else { fp };
     let resolved = safe_path(fp, &base)?;
@@ -532,7 +552,7 @@ pub struct GrepQuery {
     path: Option<String>,
     regex: Option<bool>,
     case_insensitive: Option<bool>,
-    include: Option<Vec<String>>,
+    include: Option<String>,
     max_results: Option<usize>,
 }
 
@@ -560,7 +580,8 @@ pub async fn grep(
         .build()
         .map_err(|e| ApiError::BadRequest(format!("Invalid regex: {e}")))?;
     let mut matches_arr: Vec<serde_json::Value> = Vec::new();
-    for fpath in walk_files(&resolved, q.include.as_deref()) {
+    let include = q.include.as_deref().map(|s| vec![s.to_string()]);
+    for fpath in walk_files(&resolved, include.as_deref()) {
         // Python opens with errors="replace"; a read failure (unreadable) is skipped.
         let Ok(fbytes) = std::fs::read(&fpath) else { continue };
         let content = String::from_utf8_lossy(&fbytes);
