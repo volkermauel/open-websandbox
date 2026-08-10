@@ -93,7 +93,8 @@ jobs:
       - name: Build platform image (broker)
         uses: docker/build-push-action@v7
         with:
-          context: open-websandbox-platform/broker
+          context: rust
+          file: rust/broker/Dockerfile
           load: true
           provenance: false
           tags: open-websandbox-broker:v0.1.0
@@ -103,7 +104,8 @@ jobs:
       - name: Build platform image (runtime)
         uses: docker/build-push-action@v7
         with:
-          context: open-websandbox-platform/runtime
+          context: rust
+          file: rust/runtime/Dockerfile
           load: true
           provenance: false
           tags: open-websandbox-runtime:v0.1.0
@@ -250,7 +252,8 @@ jobs:
       - name: Build platform image (broker)
         uses: docker/build-push-action@v7
         with:
-          context: open-websandbox-platform/broker
+          context: rust
+          file: rust/broker/Dockerfile
           load: true
           provenance: false
           tags: open-websandbox-broker:v0.1.0
@@ -259,7 +262,8 @@ jobs:
       - name: Build platform image (runtime)
         uses: docker/build-push-action@v7
         with:
-          context: open-websandbox-platform/runtime
+          context: rust
+          file: rust/runtime/Dockerfile
           load: true
           provenance: false
           tags: open-websandbox-runtime:v0.1.0
