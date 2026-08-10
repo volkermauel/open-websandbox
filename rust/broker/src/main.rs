@@ -2,16 +2,25 @@
 //!
 //! Boots the tokio runtime, loads the env-driven config (D12), refuses to start
 //! without a configured shared secret (fail-closed, mirroring the Python
-//! `_validate_config`), builds the kube-rs client, and serves the axum router
-//! on `0.0.0.0:8080`.
+//! `_validate_config`), builds the kube-rs client, serves the axum router on
+//! `0.0.0.0:8080`, and spawns the PR-C-3 background tasks: leader election
+//! (`run_leader_loop`, maintains [`LeaderGate`] + releases the lease on shutdown)
+//! and the leader-gated idle reaper (`run_reaper_loop`, no-ops while not leader).
+//! Graceful shutdown (SIGTERM/SIGINT) drains the HTTP server, then cancels both
+//! tasks so the leader steps down (releases the lease) cleanly.
 
 #![forbid(unsafe_code)]
 
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::Duration;
 
-use broker::{build_client, build_router, AppState, KubeSandboxStore, ServerConfig};
+use broker::leaser::{run_leader_loop, KubeLease, LeaderGate, LeaseClient};
+use broker::reaper::{run_reaper_loop, NoopOffload, ReapOffload};
+use broker::{build_client, build_router, AppState, KubeSandboxStore, SandboxStore, ServerConfig};
 use shared::{is_placeholder_secret, BrokerConfig};
+use tokio::signal;
+use tokio::sync::watch;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -51,25 +60,113 @@ async fn main() -> ExitCode {
         namespace = %cfg.runtime_ns,
         base_template = %cfg.base_template,
         default_profile = cfg.default_profile.as_str(),
+        leader_lease = %cfg.leader_lease,
         "broker booting"
     );
 
-    let store = Arc::new(KubeSandboxStore::new(kube_client, cfg.runtime_ns.clone()));
-    let state = AppState::new(cfg, store);
+    // cfg_arc backs the background tasks (the request path gets its own clone
+    // inside AppState); store is shared by the request path + the reaper.
+    let cfg_arc = Arc::new(cfg.clone());
+    let store: Arc<dyn SandboxStore> = Arc::new(KubeSandboxStore::new(
+        kube_client.clone(),
+        cfg_arc.runtime_ns.clone(),
+    ));
+    let state = AppState::new(cfg, store.clone());
     let app = build_router(state);
     let server = ServerConfig::from_env();
+
+    // --- PR-C-3 background: leader election + leader-gated idle reaper --------
+    let gate = Arc::new(LeaderGate::new());
+    let lease: Arc<dyn LeaseClient> = Arc::new(KubeLease::new(kube_client, &cfg_arc));
+    let offload: Arc<dyn ReapOffload> = Arc::new(NoopOffload);
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    let leader_handle = {
+        let lease = lease.clone();
+        let gate = gate.clone();
+        let rx = shutdown_rx.clone();
+        let renew_interval = Duration::from_secs(cfg_arc.leader_renew_seconds.max(1));
+        tokio::spawn(async move {
+            run_leader_loop(lease, gate, renew_interval, rx).await;
+        })
+    };
+    let reaper_handle = {
+        let store = store.clone();
+        let offload = offload.clone();
+        let cfg = cfg_arc.clone();
+        let gate = gate.clone();
+        let rx = shutdown_rx.clone();
+        tokio::spawn(async move {
+            run_reaper_loop(gate, store, offload, cfg, rx).await;
+        })
+    };
 
     let listener = match tokio::net::TcpListener::bind(server.addr).await {
         Ok(l) => l,
         Err(e) => {
             tracing::error!("bind {}: {e}", server.addr);
+            // Release the lease so a peer can take over immediately.
+            let _ = shutdown_tx.send(true);
+            let _ = leader_handle.await;
+            let _ = reaper_handle.await;
             return ExitCode::FAILURE;
         }
     };
     tracing::info!("broker listening on {}", server.addr);
-    if let Err(e) = axum::serve(listener, app).await {
+
+    // Serve until a shutdown signal arrives, then drain in-flight requests.
+    let serve = {
+        let shutdown_tx = shutdown_tx.clone();
+        axum::serve(listener, app).with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            // Signal the background tasks to step down before we await them.
+            let _ = shutdown_tx.send(true);
+        })
+    };
+    if let Err(e) = serve.await {
         tracing::error!("serve failed: {e}");
+        let _ = shutdown_tx.send(true);
+        let _ = leader_handle.await;
+        let _ = reaper_handle.await;
         return ExitCode::FAILURE;
     }
+
+    // HTTP server drained: wait for the reaper to stop + the leader to release
+    // its lease (clean step-down — a peer wins the next election without waiting
+    // for `leader_duration_seconds` to elapse).
+    tracing::info!("broker draining background tasks");
+    let _ = reaper_handle.await;
+    let _ = leader_handle.await;
+    tracing::info!("broker shutdown complete");
     ExitCode::SUCCESS
+}
+
+/// Wait for SIGTERM (k8s pod termination) or SIGINT (ctrl-c). Standard axum
+/// graceful-shutdown signal future.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(e) = signal::ctrl_c().await {
+            tracing::error!(error = %e, "failed to install CTRL-C handler");
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "failed to install SIGTERM handler");
+            }
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => { tracing::info!("shutdown signal: ctrl-c"); }
+        _ = terminate => { tracing::info!("shutdown signal: SIGTERM"); }
+    }
 }

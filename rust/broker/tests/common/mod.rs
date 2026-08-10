@@ -106,6 +106,7 @@ fn broker_test_config() -> BrokerConfig {
         runtime_api_key: "rt-test-key".to_string(),
         claim_timeout_seconds: 60,
         proxy_timeout_seconds: 660,
+        ..Default::default()
     }
 }
 

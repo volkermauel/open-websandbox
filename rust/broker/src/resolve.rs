@@ -161,7 +161,19 @@ pub async fn resolve_sandbox(
     }
     // (C-3) rotate-on-resume when Suspended; (C-4) S3 restore — deferred.
 
-    wait_for_ready(state, &name).await
+    let resolved = wait_for_ready(state, &name).await?;
+    // Activity bump (Python `_touch_sandbox`): refresh `broker-last-used` so the
+    // leader's reaper doesn't park/reap a sandbox mid-session. Best-effort — the
+    // resolve already succeeded, so a patch failure is logged, never fatal
+    // (mirrors the Python `except ... log.debug` swallow).
+    if let Err(e) = state
+        .store
+        .touch_last_used(&resolved.name, now_unix())
+        .await
+    {
+        tracing::debug!(sandbox = %resolved.name, error = %e, "non-fatal last-used touch");
+    }
+    Ok(resolved)
 }
 
 /// Poll the store until the named Sandbox is Ready with a pod IP, or the deadline.
