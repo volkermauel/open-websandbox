@@ -9,7 +9,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -74,6 +74,22 @@ pub trait SandboxStore: Send + Sync {
         &self,
         label_selector: Option<&str>,
     ) -> Result<Vec<Sandbox>, StoreError>;
+
+    /// Park (`Suspended`) or resume (`Running`) a sandbox by patching
+    /// `spec.operatingMode` (mirrors the Python `_set_sandbox_operating_mode`).
+    /// [`StoreError::NotFound`] when the object is absent.
+    async fn patch_operating_mode(
+        &self,
+        name: &str,
+        mode: shared::OperatingMode,
+    ) -> Result<(), StoreError>;
+
+    /// Refresh the `broker-last-used` annotation to `now` (epoch seconds) on the
+    /// named sandbox (mirrors the Python `_touch_sandbox`). Active resolves call
+    /// this so the reaper doesn't park/reap a sandbox mid-session. Best-effort
+    /// at the call site: a failure is logged, never fatal. [`StoreError::NotFound`]
+    /// when the object is absent.
+    async fn touch_last_used(&self, name: &str, now: i64) -> Result<(), StoreError>;
 
     /// Is the apiserver reachable? Backs `GET /readyz` (503 when not).
     async fn apiserver_reachable(&self) -> bool;
@@ -160,6 +176,35 @@ impl SandboxStore for KubeSandboxStore {
             .await
             .map(|list| list.items)
             .map_err(StoreError::classify)
+    }
+
+    async fn patch_operating_mode(
+        &self,
+        name: &str,
+        mode: shared::OperatingMode,
+    ) -> Result<(), StoreError> {
+        // application/merge-patch+json over `spec.operatingMode` — the upstream
+        // controller honours the Running/Suspended string literals.
+        let patch = kube::api::Patch::Merge(serde_json::json!({
+            "spec": { "operatingMode": mode }
+        }));
+        let params = kube::api::PatchParams::default();
+        match self.sandbox_api().patch(name, &params, &patch).await {
+            Ok(_) => Ok(()),
+            Err(err) => Err(StoreError::classify(err)),
+        }
+    }
+
+    async fn touch_last_used(&self, name: &str, now: i64) -> Result<(), StoreError> {
+        // Merge-patch the single annotation key; k8s preserves the others.
+        let patch = kube::api::Patch::Merge(serde_json::json!({
+            "metadata": { "annotations": { "broker-last-used": now.to_string() } }
+        }));
+        let params = kube::api::PatchParams::default();
+        match self.sandbox_api().patch(name, &params, &patch).await {
+            Ok(_) => Ok(()),
+            Err(err) => Err(StoreError::classify(err)),
+        }
     }
 
     async fn apiserver_reachable(&self) -> bool {
@@ -351,6 +396,34 @@ impl SandboxStore for StubSandboxStore {
 
     async fn apiserver_reachable(&self) -> bool {
         self.reachable.load(Ordering::SeqCst)
+    }
+
+    async fn patch_operating_mode(
+        &self,
+        name: &str,
+        mode: shared::OperatingMode,
+    ) -> Result<(), StoreError> {
+        let mut map = self.sandboxes.lock().expect("stub sandboxes");
+        match map.get_mut(name) {
+            Some(sbx) => {
+                sbx.spec.operating_mode = Some(mode);
+                Ok(())
+            }
+            None => Err(StoreError::NotFound),
+        }
+    }
+
+    async fn touch_last_used(&self, name: &str, now: i64) -> Result<(), StoreError> {
+        use crate::sandbox::LAST_USED_KEY;
+        let mut map = self.sandboxes.lock().expect("stub sandboxes");
+        match map.get_mut(name) {
+            Some(sbx) => {
+                let annots = sbx.metadata.annotations.get_or_insert_with(BTreeMap::new);
+                annots.insert(LAST_USED_KEY.to_string(), now.to_string());
+                Ok(())
+            }
+            None => Err(StoreError::NotFound),
+        }
     }
 }
 

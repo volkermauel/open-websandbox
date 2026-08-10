@@ -3,9 +3,11 @@
 //! The Python components today read their behaviour from environment variables
 //! with fixed names; the Rust rewrite keeps those names and values identical so
 //! the chart's env blocks are unchanged. PR-A surfaced two representative
-//! fields; PR-C-1 fills in the broker knobs needed for the HTTP surface and
-//! Sandbox lifecycle: the shared Bearer secret, the namespace sandboxes live
-//! in, the base template to clone, and the default persistence profile.
+//! fields; PR-C-1 filled in the broker knobs needed for the HTTP surface and
+//! Sandbox lifecycle; PR-C-3 (this pass) adds the idle-reaper TTLs + the leader-
+//! election lease parameters the reaper loop + lease loop read (Python
+//! `IDLE_TTL` / `PARK_TTL` / `REAP_TTL` / `REAPER_POLL_SECONDS` +
+//! `_LEADER_*`).
 //!
 //! Note on testing: [`BrokerConfig::from_env`] reads the process environment
 //! directly, and [`std::env::set_var`]/[`remove_var`](std::env::remove_var) are
@@ -102,8 +104,8 @@ impl FromStr for Profile {
 /// Broker configuration loaded from the environment.
 ///
 /// Field names mirror the env-var names the Python broker already honours
-/// (D12 — drop-in). Later PRs add the remaining knobs (warm-pool sizing, leader
-/// election, TTLs, storage tiering, ...).
+/// (D12 — drop-in). Later PRs add the remaining knobs (warm-pool sizing,
+/// storage tiering, ...).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct BrokerConfig {
     /// Maximum concurrent terminal (PTY) sessions per runtime before new ones
@@ -158,6 +160,58 @@ pub struct BrokerConfig {
     /// `PROXY_TIMEOUT`; applied to the shared `reqwest` client.
     #[serde(default = "default_proxy_timeout_seconds")]
     pub proxy_timeout_seconds: u64,
+
+    /// Idle seconds after which an **ephemeral** (emptyDir) Sandbox is reaped
+    /// (env `BROKER_IDLE_TTL_SECONDS`, default `120`). Mirrors the Python
+    /// `IDLE_TTL` — the time a session's sandbox stays warm with no activity
+    /// before the reaper deletes it and returns its capacity to the pool.
+    #[serde(default = "default_idle_ttl_seconds")]
+    pub idle_ttl_seconds: u64,
+
+    /// Idle seconds after which a **persistent** Sandbox is parked — pod deleted,
+    /// node freed, `Sandbox` object + PVC retained for resume (env
+    /// `BROKER_PARK_IDLE_SECONDS`, default `120`). Mirrors the Python `PARK_TTL`.
+    #[serde(default = "default_park_idle_seconds")]
+    pub park_idle_seconds: u64,
+
+    /// Idle seconds after which a **persistent** Sandbox is fully reaped — the
+    /// `Sandbox` object (and its released PVC claim) is deleted (env
+    /// `BROKER_REAP_SECONDS`, default `604_800` = 7 days). Mirrors the Python
+    /// `REAP_TTL`. Always greater than [`Self::park_idle_seconds`].
+    #[serde(default = "default_reap_seconds")]
+    pub reap_seconds: u64,
+
+    /// Interval between idle-reaper sweeps (env `BROKER_REAPER_POLL_SECONDS`,
+    /// default `60`). Mirrors the Python `REAPER_POLL_SECONDS`. Only the elected
+    /// leader runs the loop; non-leaders skip reaping entirely.
+    #[serde(default = "default_reaper_poll_seconds")]
+    pub reaper_poll_seconds: u64,
+
+    /// Namespace holding the broker leader-election `Lease` (env
+    /// `BROKER_LEADER_NAMESPACE`). Defaults to [`Self::runtime_ns`] when unset,
+    /// matching the Python `_LEADER_LOCK_NS = os.environ.get(..., RUNTIME_NS)`.
+    #[serde(default = "default_runtime_ns")]
+    pub leader_namespace: String,
+
+    /// Name of the `coordination.k8s.io/v1` `Lease` only the elected broker holds
+    /// (env `BROKER_LEADER_LEASE`, default `owui-broker-leader`). Mirrors the
+    /// Python `_LEADER_LEASE_NAME`.
+    #[serde(default = "default_leader_lease")]
+    pub leader_lease: String,
+
+    /// `Lease.spec.leaseDurationSeconds` — how long a holder's claim stays valid
+    /// without a renew (env `BROKER_LEADER_DURATION_SECONDS`, default `15`).
+    /// Mirrors the Python `_LEADER_DURATION`; a holder whose `renewTime` is older
+    /// than this is considered expired and another broker may take over.
+    #[serde(default = "default_leader_duration_seconds")]
+    pub leader_duration_seconds: u64,
+
+    /// How often the leader loop renews (or re-attempts) the lease (env
+    /// `BROKER_LEADER_RENEW_SECONDS`, default `5`). Mirrors the Python
+    /// `_LEADER_RENEW_SECONDS`; kept well under [`Self::leader_duration_seconds`]
+    /// so a holder stays ahead of its own expiry.
+    #[serde(default = "default_leader_renew_seconds")]
+    pub leader_renew_seconds: u64,
 }
 
 const fn default_max_terminal_sessions() -> u32 {
@@ -184,6 +238,34 @@ const fn default_proxy_timeout_seconds() -> u64 {
     660
 }
 
+const fn default_idle_ttl_seconds() -> u64 {
+    120
+}
+
+const fn default_park_idle_seconds() -> u64 {
+    120
+}
+
+const fn default_reap_seconds() -> u64 {
+    7 * 24 * 3600 // 7 days
+}
+
+const fn default_reaper_poll_seconds() -> u64 {
+    60
+}
+
+fn default_leader_lease() -> String {
+    "owui-broker-leader".to_string()
+}
+
+const fn default_leader_duration_seconds() -> u64 {
+    15
+}
+
+const fn default_leader_renew_seconds() -> u64 {
+    5
+}
+
 /// The all-defaults broker config (the same value `BrokerConfig::from_map(|_| None)`
 /// yields), exposed as [`Default`] so tests can override single fields with
 /// `BrokerConfig { shared_secret: "...", ..Default::default() }`.
@@ -199,6 +281,14 @@ impl Default for BrokerConfig {
             runtime_api_key: String::new(),
             claim_timeout_seconds: default_claim_timeout_seconds(),
             proxy_timeout_seconds: default_proxy_timeout_seconds(),
+            idle_ttl_seconds: default_idle_ttl_seconds(),
+            park_idle_seconds: default_park_idle_seconds(),
+            reap_seconds: default_reap_seconds(),
+            reaper_poll_seconds: default_reaper_poll_seconds(),
+            leader_namespace: default_runtime_ns(),
+            leader_lease: default_leader_lease(),
+            leader_duration_seconds: default_leader_duration_seconds(),
+            leader_renew_seconds: default_leader_renew_seconds(),
         }
     }
 }
@@ -224,13 +314,17 @@ impl BrokerConfig {
     where
         G: Fn(&str) -> Option<String>,
     {
+        let runtime_ns = get("BROKER_RUNTIME_NS").unwrap_or_else(default_runtime_ns);
+        // BROKER_LEADER_NAMESPACE defaults to the resolved runtime_ns
+        // (Python: _LEADER_LOCK_NS = os.environ.get(..., RUNTIME_NS)).
+        let leader_namespace = get("BROKER_LEADER_NAMESPACE").unwrap_or_else(|| runtime_ns.clone());
         Ok(Self {
             max_terminal_sessions: env_value("MAX_TERMINAL_SESSIONS", &get)?
                 .unwrap_or_else(default_max_terminal_sessions),
             max_output_bytes: env_value("MAX_OUTPUT_BYTES", &get)?
                 .unwrap_or_else(default_max_output_bytes),
             shared_secret: get("BROKER_SHARED_SECRET").unwrap_or_default(),
-            runtime_ns: get("BROKER_RUNTIME_NS").unwrap_or_else(default_runtime_ns),
+            runtime_ns,
             base_template: get("BROKER_BASE_TEMPLATE").unwrap_or_else(default_base_template),
             default_profile: get("BROKER_DEFAULT_PROFILE")
                 .and_then(|raw| raw.parse().ok())
@@ -240,6 +334,20 @@ impl BrokerConfig {
                 .unwrap_or_else(default_claim_timeout_seconds),
             proxy_timeout_seconds: env_value("BROKER_PROXY_TIMEOUT_SECONDS", &get)?
                 .unwrap_or_else(default_proxy_timeout_seconds),
+            idle_ttl_seconds: env_value("BROKER_IDLE_TTL_SECONDS", &get)?
+                .unwrap_or_else(default_idle_ttl_seconds),
+            park_idle_seconds: env_value("BROKER_PARK_IDLE_SECONDS", &get)?
+                .unwrap_or_else(default_park_idle_seconds),
+            reap_seconds: env_value("BROKER_REAP_SECONDS", &get)?
+                .unwrap_or_else(default_reap_seconds),
+            reaper_poll_seconds: env_value("BROKER_REAPER_POLL_SECONDS", &get)?
+                .unwrap_or_else(default_reaper_poll_seconds),
+            leader_namespace,
+            leader_lease: get("BROKER_LEADER_LEASE").unwrap_or_else(default_leader_lease),
+            leader_duration_seconds: env_value("BROKER_LEADER_DURATION_SECONDS", &get)?
+                .unwrap_or_else(default_leader_duration_seconds),
+            leader_renew_seconds: env_value("BROKER_LEADER_RENEW_SECONDS", &get)?
+                .unwrap_or_else(default_leader_renew_seconds),
         })
     }
 }
@@ -340,6 +448,21 @@ mod tests {
     }
 
     #[test]
+    fn serde_defaults_cover_reaper_and_leader_fields() {
+        let cfg: BrokerConfig = serde_json::from_str("{}").expect("empty object");
+        // Reaper TTLs mirror Python IDLE_TTL / PARK_TTL / REAP_TTL / REAPER_POLL.
+        assert_eq!(cfg.idle_ttl_seconds, 120);
+        assert_eq!(cfg.park_idle_seconds, 120);
+        assert_eq!(cfg.reap_seconds, 7 * 24 * 3600);
+        assert_eq!(cfg.reaper_poll_seconds, 60);
+        // Leader-lease params mirror Python _LEADER_*.
+        assert_eq!(cfg.leader_namespace, "agent-sandbox-runtime");
+        assert_eq!(cfg.leader_lease, "owui-broker-leader");
+        assert_eq!(cfg.leader_duration_seconds, 15);
+        assert_eq!(cfg.leader_renew_seconds, 5);
+    }
+
+    #[test]
     fn serde_round_trips_explicit_values() {
         let cfg = BrokerConfig {
             max_terminal_sessions: 2,
@@ -351,6 +474,14 @@ mod tests {
             runtime_api_key: "rt-key".into(),
             claim_timeout_seconds: 30,
             proxy_timeout_seconds: 99,
+            idle_ttl_seconds: 90,
+            park_idle_seconds: 91,
+            reap_seconds: 99_999,
+            reaper_poll_seconds: 5,
+            leader_namespace: "lead-ns".into(),
+            leader_lease: "custom-lease".into(),
+            leader_duration_seconds: 30,
+            leader_renew_seconds: 10,
         };
         let json = serde_json::to_string(&cfg).expect("serialize");
         assert!(json.contains("\"max_terminal_sessions\":2"), "{json}");
@@ -372,6 +503,14 @@ mod tests {
             ("BROKER_CLAIM_TIMEOUT_SECONDS", "42"),
             ("BROKER_PROXY_TIMEOUT_SECONDS", "300"),
             ("MAX_TERMINAL_SESSIONS", "4"),
+            ("BROKER_IDLE_TTL_SECONDS", "7"),
+            ("BROKER_PARK_IDLE_SECONDS", "8"),
+            ("BROKER_REAP_SECONDS", "9"),
+            ("BROKER_REAPER_POLL_SECONDS", "1"),
+            ("BROKER_LEADER_NAMESPACE", "lead-ns"),
+            ("BROKER_LEADER_LEASE", "custom-lease"),
+            ("BROKER_LEADER_DURATION_SECONDS", "30"),
+            ("BROKER_LEADER_RENEW_SECONDS", "10"),
         ]))
         .expect("ok");
         assert_eq!(cfg.shared_secret, "hunter2");
@@ -382,6 +521,14 @@ mod tests {
         assert_eq!(cfg.claim_timeout_seconds, 42);
         assert_eq!(cfg.proxy_timeout_seconds, 300);
         assert_eq!(cfg.max_terminal_sessions, 4);
+        assert_eq!(cfg.idle_ttl_seconds, 7);
+        assert_eq!(cfg.park_idle_seconds, 8);
+        assert_eq!(cfg.reap_seconds, 9);
+        assert_eq!(cfg.reaper_poll_seconds, 1);
+        assert_eq!(cfg.leader_namespace, "lead-ns");
+        assert_eq!(cfg.leader_lease, "custom-lease");
+        assert_eq!(cfg.leader_duration_seconds, 30);
+        assert_eq!(cfg.leader_renew_seconds, 10);
     }
 
     #[test]
@@ -394,6 +541,25 @@ mod tests {
         assert_eq!(cfg.runtime_api_key, "");
         assert_eq!(cfg.claim_timeout_seconds, 60);
         assert_eq!(cfg.proxy_timeout_seconds, 660);
+        assert_eq!(cfg.idle_ttl_seconds, 120);
+        assert_eq!(cfg.park_idle_seconds, 120);
+        assert_eq!(cfg.reap_seconds, 7 * 24 * 3600);
+        assert_eq!(cfg.reaper_poll_seconds, 60);
+        // Leader namespace defaults to runtime_ns when unset (Python behaviour).
+        assert_eq!(cfg.leader_namespace, cfg.runtime_ns);
+        assert_eq!(cfg.leader_lease, "owui-broker-leader");
+        assert_eq!(cfg.leader_duration_seconds, 15);
+        assert_eq!(cfg.leader_renew_seconds, 5);
+    }
+
+    #[test]
+    fn leader_namespace_defaults_to_runtime_ns_when_overridden() {
+        // When the runtime namespace is overridden but the leader namespace is
+        // left unset, the leader namespace follows the override — matching the
+        // Python `_LEADER_LOCK_NS = os.environ.get(..., RUNTIME_NS)` binding.
+        let cfg = BrokerConfig::from_map(map(&[("BROKER_RUNTIME_NS", "custom-rt")])).expect("ok");
+        assert_eq!(cfg.runtime_ns, "custom-rt");
+        assert_eq!(cfg.leader_namespace, "custom-rt");
     }
 
     #[test]
