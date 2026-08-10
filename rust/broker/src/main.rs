@@ -17,7 +17,10 @@ use std::time::Duration;
 
 use broker::leaser::{run_leader_loop, KubeLease, LeaderGate, LeaseClient};
 use broker::reaper::{run_reaper_loop, NoopOffload, ReapOffload};
-use broker::{build_client, build_router, AppState, KubeSandboxStore, SandboxStore, ServerConfig};
+use broker::{
+    build_client, build_router, AppState, AwsColdStore, KubeSandboxStore, S3Offload, SandboxStore,
+    ServerConfig,
+};
 use shared::{is_placeholder_secret, BrokerConfig};
 use tokio::signal;
 use tokio::sync::watch;
@@ -72,13 +75,25 @@ async fn main() -> ExitCode {
         cfg_arc.runtime_ns.clone(),
     ));
     let state = AppState::new(cfg, store.clone());
-    let app = build_router(state);
+    // C-4 cold tier: build the S3 driver once when `broker.s3.enabled`; the
+    // SAME instance offloads on reap (leader-gated reaper) and restores on
+    // resume (resolve). When disabled the reaper keeps [`NoopOffload`] and
+    // resolve skips the restore hop (state.s3_restore == None).
+    let (offload, state) = if cfg_arc.s3_enabled {
+        let cold = Arc::new(AwsColdStore::new(&cfg_arc));
+        let s3 = Arc::new(S3Offload::new(&cfg_arc, cold, state.http.clone()));
+        let restore = Arc::clone(&s3);
+        (s3 as Arc<dyn ReapOffload>, state.with_s3_restore(restore))
+    } else {
+        (Arc::new(NoopOffload) as Arc<dyn ReapOffload>, state)
+    };
+
     let server = ServerConfig::from_env();
 
     // --- PR-C-3 background: leader election + leader-gated idle reaper --------
     let gate = Arc::new(LeaderGate::new());
     let lease: Arc<dyn LeaseClient> = Arc::new(KubeLease::new(kube_client, &cfg_arc));
-    let offload: Arc<dyn ReapOffload> = Arc::new(NoopOffload);
+    let app = build_router(state);
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let leader_handle = {

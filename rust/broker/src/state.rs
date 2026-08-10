@@ -5,6 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::s3::S3Offload;
 use crate::store::SandboxStore;
 
 /// State shared across all request handlers.
@@ -15,13 +16,20 @@ use crate::store::SandboxStore;
 /// in-memory store without a live cluster. The [`reqwest::Client`] is the shared
 /// reverse-proxy upstream client (built once, reused per hop), and
 /// [`Self::runtime_upstream_override`] is a test/dev seam that repoints the proxy
-/// at a local mock server.
+/// at a local mock server. [`Self::s3_restore`] is the optional C-4 cold-tier
+/// driver wired in when `broker.s3.enabled` so resolve can restore a sandbox's
+/// workspace on resume (it is `None` when the cold tier is off, in which case
+/// resolve skips the restore hop).
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<shared::BrokerConfig>,
     pub store: Arc<dyn SandboxStore>,
     pub http: reqwest::Client,
     pub runtime_upstream_override: Arc<Option<String>>,
+    /// C-4 cold-tier restore driver. `Some` only when `broker.s3.enabled` (the
+    /// same [`S3Offload`] the leader-gated reaper offloads through); `None`
+    /// otherwise, in which case resolve never attempts an S3 restore.
+    pub s3_restore: Option<Arc<S3Offload>>,
 }
 
 impl AppState {
@@ -35,6 +43,7 @@ impl AppState {
             store,
             http,
             runtime_upstream_override: Arc::new(None),
+            s3_restore: None,
         }
     }
 
@@ -49,6 +58,7 @@ impl AppState {
             store: Arc::new(crate::store::StubSandboxStore::new()),
             http,
             runtime_upstream_override: Arc::new(None),
+            s3_restore: None,
         }
     }
 
@@ -58,6 +68,15 @@ impl AppState {
     #[must_use]
     pub fn with_runtime_upstream_override(mut self, base: impl Into<String>) -> Self {
         self.runtime_upstream_override = Arc::new(Some(base.into()));
+        self
+    }
+
+    /// Test seam: wire in a C-4 cold-tier restore driver (the same
+    /// [`S3Offload`] the reaper offloads through) so resolve's restore-on-resume
+    /// branch can be exercised in-process.
+    #[must_use]
+    pub fn with_s3_restore(mut self, restore: Arc<S3Offload>) -> Self {
+        self.s3_restore = Some(restore);
         self
     }
 }
