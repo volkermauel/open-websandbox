@@ -7,6 +7,9 @@
 # directly into the node via `kind load docker-image` / `docker buildx --load`.
 sandboxTemplate:
   runtimeClassName: ""            # runc (drop gVisor for KIND)
+  maxProcs: 100000               # KIND shares the host kernel; RLIMIT_NPROC is per-uid-GLOBAL, so
+                                  # uid 1000 (sandbox) collides with the host user + 256 is hit.
+                                  # gVisor (prod) scopes NPROC per-sandbox, so values.yaml keeps 256.
 router:
   kubeApiServerCidr: "10.96.0.1/32"   # KIND service CIDR (kubeadm default)
   kubeDnsCidr: "10.96.0.10/32"

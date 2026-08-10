@@ -231,12 +231,23 @@ pub async fn proxy_catch_all(
         identity.profile,
     )
     .await?;
+
+    // PR-C-5 / #4: per-session runtime key for this sandbox; fall back to the
+    // shared BROKER_RUNTIME_API_KEY only when the per-session Secret is absent.
+    let runtime_api_key = match state.store.read_runtime_key(&resolved.name).await {
+        Ok(Some(k)) => k,
+        Ok(None) => state.config.runtime_api_key.clone(),
+        Err(e) => {
+            tracing::warn!(sandbox = %resolved.name, error = %e, "read runtime key failed; using shared");
+            state.config.runtime_api_key.clone()
+        }
+    };
     let fwd = build_forward_headers(
         &headers,
         &resolved,
         &state.config.runtime_ns,
         &identity.session_id,
-        &state.config.runtime_api_key,
+        &runtime_api_key,
     );
 
     let body = to_bytes(req.into_body(), MAX_FORWARD_BODY)

@@ -229,6 +229,10 @@ pub async fn reap_once(
                         Ok(true) => {
                             stats.reaped += 1;
                             tracing::info!(%name, idle, "reaped idle sandbox (deleted)");
+                            // PR-C-5 / #4: best-effort reap the per-session key Secret.
+                            if let Err(e) = store.delete_runtime_key(&name).await {
+                                tracing::warn!(%name, error = %e, "reap runtime key failed");
+                            }
                         }
                         Ok(false) => stats.skipped += 1, // already gone (404)
                         Err(e) => {

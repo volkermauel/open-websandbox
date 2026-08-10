@@ -143,6 +143,12 @@ pub async fn resolve_sandbox(
                 ))
             })?;
         let pod_template = extract_pod_template(&template)?;
+
+        // PR-C-5 / #4: ensure the per-session runtime-key Secret exists BEFORE
+        // the Sandbox is created, so the non-optional runtime-key volume is
+        // satisfiable when the controller schedules the pod. Fail-fast: a missing
+        // key would CrashLoop the runtime (fail-closed boot guard).
+        state.store.ensure_runtime_key(&name).await.map_err(map_store_err)?;
         let sandbox = build_sandbox(
             &name,
             Some(user_id),
