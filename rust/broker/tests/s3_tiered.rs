@@ -94,8 +94,8 @@ async fn offload_streams_snapshot_then_uploads_new_then_deletes_old() {
 
     let store = Arc::new(InMemoryColdStore::new());
     // A prior snapshot already under the namespace (keep-latest must remove it).
-    let ns = s3_namespace("users", "owui-c-abc");
-    let old_key = s3_object_key("users", "owui-c-abc", 1_699_000_000);
+    let ns = s3_namespace("users", "u", "s");
+    let old_key = s3_object_key("users", "u", "s", 1_699_000_000);
     store.seed(&old_key, &b"old-snapshot"[..]);
 
     let offload = offload(store.clone(), server.uri());
@@ -162,12 +162,12 @@ async fn restore_streams_latest_object_to_restore_endpoint() {
         .await;
 
     let store = Arc::new(InMemoryColdStore::new());
-    let latest = s3_object_key("users", "owui-c-abc", 1_700_000_000);
+    let latest = s3_object_key("users", "u", "s", 1_700_000_000);
     store.seed(&latest, &b"workspace-tar-zst"[..]);
 
     let offload = offload(store.clone(), server.uri());
     let outcome = offload
-        .restore_on_resume("owui-c-abc", "10.0.0.5")
+        .restore_on_resume("owui-c-abc", "10.0.0.5", "u", "s")
         .await
         .expect("restore succeeds");
     assert_eq!(outcome, RestoreOutcome::Restored(latest));
@@ -193,7 +193,7 @@ async fn restore_skips_when_no_object_and_never_hits_restore() {
     let offload = offload(store.clone(), server.uri());
 
     let outcome = offload
-        .restore_on_resume("owui-c-abc", "10.0.0.5")
+        .restore_on_resume("owui-c-abc", "10.0.0.5", "u", "s")
         .await
         .expect("no-object is not an error");
     assert_eq!(outcome, RestoreOutcome::NoObject);
@@ -214,13 +214,13 @@ async fn restore_failure_surfaces_so_resolve_can_fail_the_resume() {
 
     let store = Arc::new(InMemoryColdStore::new());
     store.seed(
-        &s3_object_key("users", "owui-c-abc", 1_700_000_000),
+        &s3_object_key("users", "u", "s", 1_700_000_000),
         &b"workspace-tar-zst"[..],
     );
     let offload = offload(store.clone(), server.uri());
 
     let err = offload
-        .restore_on_resume("owui-c-abc", "10.0.0.5")
+        .restore_on_resume("owui-c-abc", "10.0.0.5", "u", "s")
         .await
         .expect_err("a failing restore must surface as Err");
     let msg = err.to_string();
@@ -285,7 +285,7 @@ async fn resolve_resumes_suspended_sandbox_and_restores_from_s3() {
     // Cold tier already holds a prior snapshot for this sandbox (offloaded on
     // a previous reap).
     let cold = Arc::new(InMemoryColdStore::new());
-    let key = s3_object_key("users", &name, 1_700_000_000);
+    let key = s3_object_key("users", "user-1", "chat-1", 1_700_000_000);
     cold.seed(&key, &b"workspace-tar-zst"[..]);
 
     let s3 = S3Offload::new(

@@ -119,60 +119,97 @@ def second_broker(second_session) -> Iterator[httpx.Client]:
 
 
 # --- S3-tiered e2e (issue #52) ------------------------------------------------
-# The s3-tiered e2e is opt-in: it only runs when E2E_S3=1 is set (the default runc/
-# gvisor matrix is unaffected). It stands up an in-cluster MinIO (tests/e2e/fixtures/
-# minio.yaml), points the broker at it, and inspects objects by exec'ing the broker's
-# own boto3 + projected creds (no extra test deps, no mc image).
-import json  # noqa: E402
+# The s3-tiered e2e is opt-in (E2E_S3=1; the default runc/gvisor matrix is
+# unaffected). It stands up an in-cluster MinIO (tests/e2e/fixtures/minio.yaml),
+# points the broker at it, and inspects objects with boto3 run LOCALLY against a
+# port-forwarded MinIO. The Rust broker image is distroless (no Python/shell), so
+# the original "exec boto3 inside the broker pod" trick no longer applies;
+# instead the test host runs boto3 + reads the same creds the broker uses.
+import base64  # noqa: E402
 import subprocess  # noqa: E402
+import urllib.request  # noqa: E402
 
 S3_SYS_NS = os.environ.get("E2E_SYS_NS", "agent-sandbox-system")
 S3_BUCKET = os.environ.get("E2E_S3_BUCKET", "owsb-e2e")
+# MinIO is reached from the test host via port-forward (in-cluster DNS does not
+# resolve on the host). 9000 matches the s3 port in fixtures/minio.yaml.
+S3_PF_PORT = int(os.environ.get("E2E_S3_PF_PORT", "9000"))
 
 
-def _kubectl_exec_broker(script: str) -> str:
-    """Run a Python snippet inside the broker pod (has boto3 + /etc/s3-creds)."""
-    r = subprocess.run(
-        ["kubectl", "-n", S3_SYS_NS, "exec", "-i", "deploy/owui-broker", "--", "python3", "-"],
-        input=script, capture_output=True, text=True, timeout=60,
+def _s3_creds() -> tuple[str, str]:
+    """Read the MinIO root creds from the owui-s3-creds Secret."""
+    def _val(key: str) -> str:
+        r = subprocess.run(
+            ["kubectl", "-n", S3_SYS_NS, "get", "secret", "owui-s3-creds",
+             "-o", f"jsonpath={{.data.{key}}}"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if r.returncode != 0 or not r.stdout:
+            raise RuntimeError(f"owui-s3-creds missing key {key}: {r.stderr[-200:]}")
+        return base64.b64decode(r.stdout).decode().strip()
+    return _val("access-key-id"), _val("secret-access-key")
+
+
+def _s3_client():
+    """A boto3 S3 client pointed at the port-forwarded MinIO (path-style)."""
+    import boto3
+    from botocore.config import Config
+    ak, sk = _s3_creds()
+    return boto3.client(
+        "s3",
+        endpoint_url=f"http://localhost:{S3_PF_PORT}",
+        aws_access_key_id=ak,
+        aws_secret_access_key=sk,
+        region_name="us-east-1",
+        config=Config(s3={"addressing_style": "path"}, signature_version="s3v4"),
     )
-    if r.returncode != 0:
-        raise RuntimeError(f"kubectl exec broker failed: {r.stderr[-500:]}")
-    return r.stdout
-
-
-def minio_list_objects(prefix: str = "users/") -> list[str]:
-    """List object keys under `prefix` in the e2e MinIO bucket (via the broker's boto3)."""
-    script = f"""
-import boto3, os, json
-from botocore.config import Config
-c = boto3.client('s3', endpoint_url=os.environ['BROKER_S3_ENDPOINT'],
-   aws_access_key_id=open('/etc/s3-creds/access-key-id').read().strip(),
-   aws_secret_access_key=open('/etc/s3-creds/secret-access-key').read().strip(),
-   config=Config(s3={{'addressing_style':'path'}}))
-r = c.list_objects_v2(Bucket=os.environ['BROKER_S3_BUCKET'], Prefix={prefix!r})
-print(json.dumps([o['Key'] for o in r.get('Contents', [])]))
-"""
-    out = _kubectl_exec_broker(script)
-    return json.loads(out.strip().splitlines()[-1])
 
 
 @pytest.fixture(scope="session")
-def require_s3() -> None:
-    """Gate the s3-tiered e2e: skip unless E2E_S3=1. Also ensures the bucket exists."""
+def minio_port_forward():
+    """Port-forward svc/minio to localhost for the s3-tiered session."""
+    pf = subprocess.Popen(
+        ["kubectl", "-n", S3_SYS_NS, "port-forward", "svc/minio",
+         f"{S3_PF_PORT}:9000"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        for _ in range(30):
+            try:
+                with urllib.request.urlopen(
+                    f"http://localhost:{S3_PF_PORT}/minio/health/live", timeout=2,
+                ):
+                    break
+            except Exception:
+                time.sleep(1)
+        else:
+            raise RuntimeError(f"MinIO port-forward :{S3_PF_PORT} never became healthy")
+        yield
+    finally:
+        pf.terminate()
+        try:
+            pf.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pf.kill()
+
+
+@pytest.fixture(scope="session")
+def require_s3(minio_port_forward) -> None:
+    """Gate the s3-tiered e2e: skip unless E2E_S3=1. Ensures the bucket exists."""
     if not os.environ.get("E2E_S3"):
         pytest.skip("S3-tiered e2e is opt-in (set E2E_S3=1)")
-    _kubectl_exec_broker("""
-import boto3, os
-from botocore.config import Config
-from botocore.exceptions import ClientError
-c = boto3.client('s3', endpoint_url=os.environ['BROKER_S3_ENDPOINT'],
-   aws_access_key_id=open('/etc/s3-creds/access-key-id').read().strip(),
-   aws_secret_access_key=open('/etc/s3-creds/secret-access-key').read().strip(),
-   config=Config(s3={'addressing_style':'path'}))
-try:
-    c.create_bucket(Bucket=os.environ['BROKER_S3_BUCKET']); print('bucket created')
-except ClientError as e:
-    print('bucket present:', e.response.get('Error', {}).get('Code'))
-""")
+    from botocore.exceptions import ClientError
+    c = _s3_client()
+    try:
+        c.create_bucket(Bucket=S3_BUCKET)
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code not in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists"):
+            raise
+
+
+def minio_list_objects(prefix: str = "users/") -> list[str]:
+    """List object keys under `prefix` in the e2e MinIO bucket (local boto3)."""
+    r = _s3_client().list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
+    return [o["Key"] for o in r.get("Contents", [])]
 

@@ -7,6 +7,7 @@
 # timeout. Default e2e (values-kind.yaml) is unaffected — this is a separate profile.
 sandboxTemplate:
   runtimeClassName: ""            # runc (KIND can't nest gVisor)
+  maxProcs: 100000               # KIND shared-kernel NPROC collision (see values-kind.yaml)
 router:
   kubeApiServerCidr: "10.96.0.1/32"   # KIND service CIDR (kubeadm default)
   kubeDnsCidr: "10.96.0.10/32"

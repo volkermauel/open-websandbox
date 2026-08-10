@@ -258,6 +258,11 @@ pub struct BrokerConfig {
     /// default `true`, matching the Python broker's hard-coded path-style).
     #[serde(default = "default_s3_path_style")]
     pub s3_path_style: bool,
+    /// Server-side encryption mode (env `BROKER_S3_SSE`; e.g. `"AES256"` for
+    /// SSE-S3). Empty or `"none"` disables SSE — required for stores without a
+    /// KMS/SSE backend (dev MinIO). Matches the Python `S3_SSE` knob (D12).
+    #[serde(default)]
+    pub s3_sse: String,
 }
 
 const fn default_max_terminal_sessions() -> u32 {
@@ -355,6 +360,7 @@ impl Default for BrokerConfig {
             s3_access_key_id: String::new(),
             s3_secret_access_key: String::new(),
             s3_path_style: default_s3_path_style(),
+            s3_sse: String::new(),
         }
     }
 }
@@ -384,6 +390,15 @@ impl BrokerConfig {
         // BROKER_LEADER_NAMESPACE defaults to the resolved runtime_ns
         // (Python: _LEADER_LOCK_NS = os.environ.get(..., RUNTIME_NS)).
         let leader_namespace = get("BROKER_LEADER_NAMESPACE").unwrap_or_else(|| runtime_ns.clone());
+        // S3 static credentials: prefer explicit env (BROKER_S3_ACCESS_KEY_ID/_SECRET),
+        // else read the projected Secret volume at $BROKER_S3_CREDS_DIR (default
+        // /etc/s3-creds) the Helm chart mounts (#48: no secret in env), matching
+        // the Python broker. Empty => SDK default credential chain.
+        let (s3_access_key_id, s3_secret_access_key) = resolve_s3_creds(
+            &get,
+            &get("BROKER_S3_ACCESS_KEY_ID").unwrap_or_default(),
+            &get("BROKER_S3_SECRET_ACCESS_KEY").unwrap_or_default(),
+        );
         Ok(Self {
             max_terminal_sessions: env_value("MAX_TERMINAL_SESSIONS", &get)?
                 .unwrap_or_else(default_max_terminal_sessions),
@@ -423,13 +438,39 @@ impl BrokerConfig {
             s3_prefix: get("BROKER_S3_PREFIX")
                 .map(|raw| trim_prefix(&raw))
                 .unwrap_or_else(default_s3_prefix),
-            s3_access_key_id: get("BROKER_S3_ACCESS_KEY_ID").unwrap_or_default(),
-            s3_secret_access_key: get("BROKER_S3_SECRET_ACCESS_KEY").unwrap_or_default(),
+            s3_sse: get("BROKER_S3_SSE").unwrap_or_default(),
+            s3_access_key_id,
+            s3_secret_access_key,
             s3_path_style: get("BROKER_S3_PATH_STYLE")
                 .map(|raw| parse_bool(&raw))
                 .unwrap_or(true),
         })
     }
+}
+
+/// Resolve S3 static credentials for [`BrokerConfig::from_map`].
+///
+/// Prefers explicit env vars (`BROKER_S3_ACCESS_KEY_ID` / `_SECRET`); when the access
+/// key id is absent, reads the projected Secret volume the Helm chart mounts at
+/// `$BROKER_S3_CREDS_DIR` (default `/etc/s3-creds`) — the `access-key-id` and
+/// `secret-access-key` files — so the broker authenticates without a secret in env
+/// (#48), matching the Python broker. Returns `("", "")` when neither source is
+/// set, leaving authentication to the SDK default chain (env, IMDS, …).
+fn resolve_s3_creds<G>(get: &G, env_access: &str, env_secret: &str) -> (String, String)
+where
+    G: Fn(&str) -> Option<String>,
+{
+    if !env_access.is_empty() {
+        return (env_access.to_string(), env_secret.to_string());
+    }
+    let dir = get("BROKER_S3_CREDS_DIR").unwrap_or_else(|| "/etc/s3-creds".to_string());
+    let read = |name: &str| {
+        std::fs::read_to_string(format!("{dir}/{name}"))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default()
+    };
+    (read("access-key-id"), read("secret-access-key"))
 }
 
 /// Read an optional typed value from one environment variable.
@@ -602,6 +643,7 @@ mod tests {
             s3_access_key_id: "AKIAEXAMPLE".into(),
             s3_secret_access_key: "secret".into(),
             s3_path_style: true,
+            s3_sse: "AES256".into(),
         };
         let json = serde_json::to_string(&cfg).expect("serialize");
         assert!(json.contains("\"max_terminal_sessions\":2"), "{json}");
@@ -738,5 +780,42 @@ mod tests {
             assert!(is_placeholder_secret(p), "{p:?} should be placeholder");
         }
         assert!(!is_placeholder_secret("a-strong-shared-secret-123456"));
+    }
+
+    #[test]
+    fn s3_creds_read_from_files_when_env_absent() {
+        // The Helm chart projects the Secret at /etc/s3-creds as files (#48: no
+        // secret in env). When the env creds are absent the broker must read them
+        // from there, matching the Python runtime.
+        let dir = std::env::temp_dir().join(format!("owsb-s3-creds-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("access-key-id"), "  file-akid  \n").unwrap();
+        std::fs::write(dir.join("secret-access-key"), "file-secret\n").unwrap();
+        let dir_str = dir.to_string_lossy().into_owned();
+        let get = |k: &str| match k {
+            "BROKER_S3_CREDS_DIR" => Some(dir_str.clone()),
+            _ => None,
+        };
+        // Empty env => fall back to the projected files (whitespace trimmed).
+        let (ak, sk) = resolve_s3_creds(&get, "", "");
+        assert_eq!(ak, "file-akid");
+        assert_eq!(sk, "file-secret");
+        // Explicit env always wins over the files.
+        let (ak2, sk2) = resolve_s3_creds(&get, "env-akid", "env-secret");
+        assert_eq!((ak2.as_str(), sk2.as_str()), ("env-akid", "env-secret"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn s3_sse_read_from_env() {
+        let cfg = BrokerConfig::from_map(|k: &str| match k {
+            "BROKER_S3_ENABLED" => Some("true".to_string()),
+            "BROKER_S3_SSE" => Some("AES256".to_string()),
+            "BROKER_S3_BUCKET" => Some("b".to_string()),
+            _ => None,
+        })
+        .expect("config");
+        assert_eq!(cfg.s3_sse, "AES256");
+        assert!(cfg.s3_enabled);
     }
 }
