@@ -10,11 +10,13 @@
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::body::Body;
+use axum::extract::{Multipart, Query, State};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 
 use crate::auth::Authed;
 use crate::error::ApiError;
@@ -330,8 +332,9 @@ fn file_response(full: &Path) -> Result<Response, ApiError> {
         .to_string();
     let ct = axum::http::HeaderValue::from_str(mime.as_ref())
         .unwrap_or_else(|_| axum::http::HeaderValue::from_static("application/octet-stream"));
-    let cd = axum::http::HeaderValue::from_str(format!("attachment; filename=\"{filename}\"").as_str())
-        .unwrap_or_else(|_| axum::http::HeaderValue::from_static("attachment"));
+    let cd =
+        axum::http::HeaderValue::from_str(format!("attachment; filename=\"{filename}\"").as_str())
+            .unwrap_or_else(|_| axum::http::HeaderValue::from_static("attachment"));
     let resp = (
         StatusCode::OK,
         [
@@ -433,7 +436,9 @@ async fn list_impl(
             Err(_) => continue,
         }
     }
-    Ok(Json(serde_json::json!({ "path": resolved, "entries": entries })))
+    Ok(Json(
+        serde_json::json!({ "path": resolved, "entries": entries }),
+    ))
 }
 
 // --- /exists/{*file_path} ---------------------------------------------------
@@ -492,7 +497,9 @@ pub async fn replace(
     }
     let data = content.into_bytes();
     std::fs::write(&full, &data).map_err(|e| ApiError::BadRequest(format!("{e}")))?;
-    Ok(Json(serde_json::json!({ "path": full, "size": data.len() })))
+    Ok(Json(
+        serde_json::json!({ "path": full, "size": data.len() }),
+    ))
 }
 
 /// Count non-overlapping occurrences of `target` in `segment` (Python str.count).
@@ -507,7 +514,10 @@ fn count_occurrences(segment: &str, target: &str) -> usize {
 fn replace_target(segment: &str, chunk: &ReplacementChunk) -> Result<String, ApiError> {
     let count = count_occurrences(segment, &chunk.target);
     if count == 0 {
-        return Err(ApiError::BadRequest(format!("Target string not found: {}", chunk.target)));
+        return Err(ApiError::BadRequest(format!(
+            "Target string not found: {}",
+            chunk.target
+        )));
     }
     if count > 1 && !chunk.allow_multiple {
         return Err(ApiError::BadRequest(format!(
@@ -583,7 +593,9 @@ pub async fn grep(
     let include = q.include.as_deref().map(|s| vec![s.to_string()]);
     for fpath in walk_files(&resolved, include.as_deref()) {
         // Python opens with errors="replace"; a read failure (unreadable) is skipped.
-        let Ok(fbytes) = std::fs::read(&fpath) else { continue };
+        let Ok(fbytes) = std::fs::read(&fpath) else {
+            continue;
+        };
         let content = String::from_utf8_lossy(&fbytes);
         for (idx, line) in content.lines().enumerate() {
             if re.is_match(line) {
@@ -636,7 +648,9 @@ fn collect_files(dir: &Path, include: Option<&[String]>, out: &mut Vec<PathBuf>)
     for e in rd.flatten() {
         let path = e.path();
         // os.path.isdir follows symlinks; metadata failure → treat as non-dir.
-        let is_dir = std::fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false);
+        let is_dir = std::fs::metadata(&path)
+            .map(|m| m.is_dir())
+            .unwrap_or(false);
         if is_dir {
             collect_files(&path, include, out);
         } else {
@@ -716,7 +730,9 @@ fn glob_collect(
     let mut subdirs: Vec<PathBuf> = Vec::new();
     for e in rd.flatten() {
         let path = e.path();
-        let is_dir = std::fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false);
+        let is_dir = std::fs::metadata(&path)
+            .map(|m| m.is_dir())
+            .unwrap_or(false);
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -752,7 +768,9 @@ fn fnmatch(name: &str, pattern: &str) -> bool {
     let Some(re_src) = fnmatch_translate(pattern) else {
         return false;
     };
-    regex::Regex::new(&re_src).map(|re| re.is_match(name)).unwrap_or(false)
+    regex::Regex::new(&re_src)
+        .map(|re| re.is_match(name))
+        .unwrap_or(false)
 }
 
 /// Translate a shell glob into an anchored regex, mirroring Python's
@@ -816,4 +834,228 @@ fn fnmatch_translate(pat: &str) -> Option<String> {
         }
     }
     Some(format!("^{res}$"))
+}
+
+// --- PR-B-5: /files/archive (zip) + /files/upload + /upload (multipart) ------
+
+#[derive(Deserialize)]
+pub struct ArchiveRequest {
+    pub paths: Vec<String>,
+}
+
+#[derive(Deserialize)]
+pub struct UploadQuery {
+    pub directory: Option<String>,
+}
+
+/// Basename of an uploaded filename, never the dir component (defense-in-depth:
+/// a multipart field whose `filename` is `../evil` is reduced to `evil` before
+/// join, exactly like Python's `os.path.basename`).
+fn upload_basename(name: Option<&str>) -> &str {
+    name.and_then(|n| Path::new(n).file_name())
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("upload")
+}
+
+/// `directory` query param for `/files/upload`: the workspace base when absent,
+/// empty, or the literal `"null"`; otherwise a safe_path-resolved subdir.
+fn upload_target_dir(directory: Option<&str>, base: &Path) -> Result<PathBuf, ApiError> {
+    let d = directory.map(str::trim).unwrap_or("");
+    if d.is_empty() || d.eq_ignore_ascii_case("null") {
+        Ok(base.to_path_buf())
+    } else {
+        safe_path(d, base)
+    }
+}
+
+/// `POST /files/upload` — multipart `file` field written to `directory/<basename>`
+/// (default the workspace base). The runtime streams the body straight to disk;
+/// `X-Workspace-Subdir` selects the base, like every other `/files/*` handler.
+pub async fn upload(
+    _auth: Authed,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<UploadQuery>,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let base = base_of(&state, &headers)?;
+    let target_dir = upload_target_dir(q.directory.as_deref(), &base)?;
+    while let Some(mut field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("multipart: {e}")))?
+    {
+        if field.name() == Some("file") {
+            let name = upload_basename(field.file_name()).to_string();
+            if !target_dir.is_dir() {
+                std::fs::create_dir_all(&target_dir)
+                    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            }
+            let full = target_dir.join(&name);
+            // defense-in-depth: target_dir is already under base, but re-check.
+            if !full.starts_with(&base) {
+                return Err(ApiError::BadRequest("path escapes workspace".into()));
+            }
+            let mut file = tokio::fs::File::create(&full)
+                .await
+                .map_err(|e| ApiError::BadRequest(format!("create: {e}")))?;
+            let mut size = 0u64;
+            while let Some(chunk) = field
+                .chunk()
+                .await
+                .map_err(|e| ApiError::BadRequest(format!("read: {e}")))?
+            {
+                size += chunk.len() as u64;
+                file.write_all(&chunk)
+                    .await
+                    .map_err(|e| ApiError::BadRequest(format!("write: {e}")))?;
+            }
+            let canon = std::fs::canonicalize(&full).unwrap_or_else(|_| full.clone());
+            return Ok(Json(serde_json::json!({ "path": canon, "size": size })));
+        }
+    }
+    Err(ApiError::BadRequest("no 'file' field".into()))
+}
+
+/// `POST /upload` — the LLM-tool upload alias (multipart `file` to the workspace
+/// base). Returns `{"saved": path, "bytes": n}`, the shape the broker's curated
+/// `upload_file` tool resolves against.
+pub async fn tool_upload(
+    _auth: Authed,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let base = base_of(&state, &headers)?;
+    while let Some(mut field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("multipart: {e}")))?
+    {
+        if field.name() == Some("file") {
+            let name = upload_basename(field.file_name()).to_string();
+            let full = base.join(&name);
+            if !full.starts_with(&base) {
+                return Err(ApiError::BadRequest("path escapes workspace".into()));
+            }
+            let mut file = tokio::fs::File::create(&full)
+                .await
+                .map_err(|e| ApiError::BadRequest(format!("create: {e}")))?;
+            let mut bytes = 0u64;
+            while let Some(chunk) = field
+                .chunk()
+                .await
+                .map_err(|e| ApiError::BadRequest(format!("read: {e}")))?
+            {
+                bytes += chunk.len() as u64;
+                file.write_all(&chunk)
+                    .await
+                    .map_err(|e| ApiError::BadRequest(format!("write: {e}")))?;
+            }
+            let canon = std::fs::canonicalize(&full).unwrap_or_else(|_| full.clone());
+            return Ok(Json(serde_json::json!({ "saved": canon, "bytes": bytes })));
+        }
+    }
+    Err(ApiError::BadRequest("no 'file' field".into()))
+}
+
+/// `POST /files/archive` — zip the listed paths and stream the archive back.
+/// Dirs recurse (files archived as `<basename>/<rel>`); a single file archives
+/// as its basename. `application/zip` + `Content-Disposition: attachment`.
+pub async fn archive(
+    _auth: Authed,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ArchiveRequest>,
+) -> Result<Response, ApiError> {
+    let base = base_of(&state, &headers)?;
+    if req.paths.is_empty() {
+        return Err(ApiError::BadRequest("No paths provided".into()));
+    }
+    let resolved: Vec<PathBuf> = req
+        .paths
+        .iter()
+        .map(|p| {
+            let f = safe_path(p, &base)?;
+            if !f.exists() {
+                return Err(ApiError::NotFound(format!("Path not found: {p}")));
+            }
+            Ok(f)
+        })
+        .collect::<Result<_, _>>()?;
+    let name = if resolved.len() == 1 {
+        resolved[0]
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("download")
+            .to_string()
+    } else {
+        "download".to_string()
+    };
+    let for_task = resolved.clone();
+    let buf = tokio::task::spawn_blocking(move || build_zip(&for_task))
+        .await
+        .map_err(|e| ApiError::Internal(format!("zip join: {e}")))?
+        .map_err(|e| ApiError::Internal(format!("zip build: {e}")))?;
+    let cd = format!("attachment; filename=\"{name}.zip\"");
+    let mut resp = Response::new(Body::from(buf));
+    *resp.status_mut() = StatusCode::OK;
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        "application/zip".parse().expect("static header"),
+    );
+    resp.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        cd.parse().expect("valid header"),
+    );
+    Ok(resp)
+}
+
+/// Build an in-memory DEFLATE zip of the resolved paths (sorted, deterministic).
+fn build_zip(paths: &[PathBuf]) -> std::io::Result<Vec<u8>> {
+    use zip::write::SimpleFileOptions;
+    use zip::CompressionMethod;
+    use zip::ZipWriter;
+
+    let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    let mut zw = ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for full in paths {
+        let arcroot = full
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("file")
+            .to_string();
+        if full.is_dir() {
+            let mut files: Vec<PathBuf> = Vec::new();
+            collect_files_for_zip(full, &mut files)?;
+            for fp in files {
+                let rel = fp.strip_prefix(full).unwrap_or(&fp);
+                let zname = format!("{arcroot}/{}", rel.to_string_lossy());
+                zw.start_file(zname, opts)?;
+                let mut fh = std::fs::File::open(&fp)?;
+                std::io::copy(&mut fh, &mut zw)?;
+            }
+        } else {
+            zw.start_file(&arcroot, opts)?;
+            let mut fh = std::fs::File::open(full)?;
+            std::io::copy(&mut fh, &mut zw)?;
+        }
+    }
+    Ok(zw.finish()?.into_inner())
+}
+
+/// Recursively collect regular files under `root` (depth-first, name-sorted).
+fn collect_files_for_zip(root: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    let mut entries: Vec<_> = std::fs::read_dir(root)?.collect::<Result<_, _>>()?;
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let p = entry.path();
+        if entry.file_type()?.is_dir() {
+            collect_files_for_zip(&p, out)?;
+        } else {
+            out.push(p);
+        }
+    }
+    Ok(())
 }

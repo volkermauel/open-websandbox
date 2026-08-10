@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-axum = { version = "0.8", features = ["ws"] }
+axum = { version = "0.8", features = ["ws", "multipart"] }
 # `http-body-util` is already a transitive dep of axum; the `channel` feature adds
 # only `tokio` (also present), so this introduces NO new crates into the audited
 # tree. Used for restore (`BodyExt::frame` on the inbound request body) and
@@ -37,9 +37,16 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = "0.6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# `zip` builds the in-memory ZIP returned by `POST /files/archive` (the Python
+# runtime used stdlib `zipfile`). `default-features = false` + `deflate` keeps
+# the audited tree lean (no bzip2/zstd/time deps).
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 futures-util = "0.3"
 http = "1"
 tempfile = "3"
+# `zip` is already a runtime dependency; re-declared here so the
+# upload/archive contract tests can read archives back + assert their entries.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }

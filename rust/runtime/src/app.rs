@@ -8,9 +8,9 @@ use axum::Router;
 
 use crate::execute::execute;
 use crate::files::{
-    delete_entry, get_cwd, glob_search, grep, list_dir, list_ports, mkdir, move_entry,
-    read_file, replace, set_cwd, tool_download, tool_exists, tool_list, tool_list_root, view_file,
-    write_file,
+    archive, delete_entry, get_cwd, glob_search, grep, list_dir, list_ports, mkdir, move_entry,
+    read_file, replace, set_cwd, tool_download, tool_exists, tool_list, tool_list_root,
+    tool_upload, upload, view_file, write_file,
 };
 use crate::snapshot::{restore, snapshot};
 use crate::state::AppState;
@@ -59,12 +59,17 @@ pub fn build_router(state: AppState) -> Router {
         .route("/files/replace", post(replace))
         .route("/files/grep", get(grep))
         .route("/files/glob", get(glob_search))
+        // PR-B-5: archive (zip) + multipart upload (open-terminal + LLM-tool).
+        .route("/files/archive", post(archive))
+        .route("/files/upload", post(upload))
         // LLM-tool surface (catch-all path params): download / list / exists.
         .route("/download/{*file_path}", get(tool_download))
         .route("/list", get(tool_list_root))
         .route("/list/", get(tool_list_root))
         .route("/list/{*file_path}", get(tool_list))
         .route("/exists/{*file_path}", get(tool_exists))
+        // LLM-tool upload (multipart) — writes the file to the workspace base.
+        .route("/upload", post(tool_upload))
         // Restricted runtime: no host-port introspection (empty ports list).
         .route("/ports", get(list_ports))
         // S3-tiered workspace offload/restore (#52): stream native tar+zstd.

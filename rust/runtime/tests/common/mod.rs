@@ -126,6 +126,37 @@ impl Env {
         self.router.clone().oneshot(req).await.expect("oneshot")
     }
 
+    /// Send a raw byte body with an explicit content type (e.g. `multipart/form-data`
+    /// with a boundary) + optional subdir. Used by the PR-B-5 upload/archive tests.
+    pub async fn send_typed(
+        &self,
+        method: Method,
+        uri: &str,
+        bearer: Bearer<'_>,
+        subdir: Option<&str>,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> Response<Body> {
+        let mut builder = Request::builder().method(method).uri(uri);
+        match bearer {
+            Bearer::Default => {
+                builder = builder.header("authorization", format!("Bearer {}", self.bearer));
+            }
+            Bearer::Explicit(v) => {
+                builder = builder.header("authorization", format!("Bearer {v}"));
+            }
+            Bearer::None => {}
+        }
+        if let Some(s) = subdir {
+            builder = builder.header("x-workspace-subdir", s);
+        }
+        let req = builder
+            .header("content-type", content_type)
+            .body(Body::from(body))
+            .unwrap();
+        self.router.clone().oneshot(req).await.expect("oneshot")
+    }
+
     /// Send a request with a raw (non-JSON) byte body and no subdir, used for
     /// `/restore` which streams a zstd tarball as the request body.
     pub async fn send_bytes(
