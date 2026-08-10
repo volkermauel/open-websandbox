@@ -636,7 +636,7 @@ fn now_unix() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shared::{PodIpEntry, SandboxCondition, SandboxSpec, SandboxStatus};
+    use shared::{SandboxCondition, SandboxSpec, SandboxStatus};
 
     // --- object-key scheme (D3) -------------------------------------------
 
@@ -748,7 +748,7 @@ mod tests {
         if let Some(ip) = pod_ip {
             sbx.status = Some(SandboxStatus {
                 phase: Some("Running".into()),
-                pod_i_ps: Some(vec![PodIpEntry { ip: ip.to_string() }]),
+                pod_i_ps: Some(vec![ip.to_string()]),
                 conditions: Some(vec![SandboxCondition {
                     r#type: "Ready".into(),
                     status: "True".into(),
