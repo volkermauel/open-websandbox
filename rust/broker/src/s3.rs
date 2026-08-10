@@ -131,6 +131,9 @@ pub trait ColdStore: Send + Sync {
 pub struct AwsColdStore {
     client: aws_sdk_s3::Client,
     bucket: String,
+    /// Whether to request SSE-S3 (AES256) at rest. Disabled for stores without a
+    /// KMS/SSE backend (dev MinIO) — driven by `BrokerConfig::s3_sse`.
+    sse_enabled: bool,
 }
 
 impl AwsColdStore {
@@ -160,6 +163,10 @@ impl AwsColdStore {
         Self {
             client: aws_sdk_s3::Client::from_conf(builder.build()),
             bucket: cfg.s3_bucket.clone(),
+            // SSE-S3 only when the operator opted in (BROKER_S3_SSE non-empty / not
+            // "none"); empty is required for dev MinIO (no SSE backend).
+            sse_enabled: !cfg.s3_sse.is_empty()
+                && !cfg.s3_sse.eq_ignore_ascii_case("none"),
         }
     }
 }
@@ -173,18 +180,23 @@ impl ColdStore for AwsColdStore {
         retention_days: u32,
     ) -> Result<(), ColdError> {
         use aws_sdk_s3::types::ServerSideEncryption;
-        // SSE-S3 (AES256) at rest (D9) — the Python default `S3_SSE="AES256"`.
+        // Object metadata (session-snapshot marker + retention-days, scanned on restore).
         let mut metadata = std::collections::HashMap::new();
         metadata.insert("session-snapshot".to_string(), "1".to_string());
         metadata.insert("retention-days".to_string(), retention_days.to_string());
-        self.client
+        let mut req = self
+            .client
             .put_object()
             .bucket(&self.bucket)
             .key(key)
             .body(aws_sdk_s3::primitives::ByteStream::from(body))
-            .server_side_encryption(ServerSideEncryption::Aes256)
-            .set_metadata(Some(metadata))
-            .send()
+            .set_metadata(Some(metadata));
+        // SSE-S3 (AES256) at rest (D9) — only when the operator opted in via
+        // BROKER_S3_SSE (dev MinIO has no SSE backend and rejects the header).
+        if self.sse_enabled {
+            req = req.server_side_encryption(ServerSideEncryption::Aes256);
+        }
+        req.send()
             .await
             .map_err(|e| ColdError::S3(e.to_string()))?;
         Ok(())
