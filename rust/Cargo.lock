@@ -2594,6 +2594,7 @@ dependencies = [
  "nix 0.29.0",
  "percent-encoding",
  "portable-pty",
+ "regex",
  "serde",
  "serde_json",
  "shared",

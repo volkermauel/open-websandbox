@@ -24,6 +24,7 @@ axum = { version = "0.8", features = ["ws"] }
 # from a producer task).
 http-body-util = { version = "0.1", features = ["channel"] }
 mime_guess = "2"
+regex = "1"
 nix = { version = "0.29", features = ["resource", "signal", "process"] }
 percent-encoding = "2"
 portable-pty = "0.9"
