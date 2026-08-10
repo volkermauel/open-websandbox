@@ -8,7 +8,8 @@ use axum::Router;
 
 use crate::execute::execute;
 use crate::files::{
-    delete_entry, get_cwd, list_dir, mkdir, move_entry, read_file, set_cwd, write_file,
+    delete_entry, get_cwd, glob_search, grep, list_dir, list_ports, mkdir, move_entry,
+    read_file, replace, set_cwd, tool_download, tool_exists, tool_list, view_file, write_file,
 };
 use crate::snapshot::{restore, snapshot};
 use crate::state::AppState;
@@ -52,6 +53,17 @@ pub fn build_router(state: AppState) -> Router {
         .route("/files/mkdir", post(mkdir))
         .route("/files/move", post(move_entry))
         .route("/files/delete", delete(delete_entry))
+        // PR-B-4 remaining file-operation surface (open-terminal + LLM-tool):
+        .route("/files/view", get(view_file))
+        .route("/files/replace", post(replace))
+        .route("/files/grep", get(grep))
+        .route("/files/glob", get(glob_search))
+        // LLM-tool surface (catch-all path params): download / list / exists.
+        .route("/download/{*file_path}", get(tool_download))
+        .route("/list/{*file_path}", get(tool_list))
+        .route("/exists/{*file_path}", get(tool_exists))
+        // Restricted runtime: no host-port introspection (empty ports list).
+        .route("/ports", get(list_ports))
         // S3-tiered workspace offload/restore (#52): stream native tar+zstd.
         .route("/snapshot", get(snapshot))
         .route("/restore", put(restore))
