@@ -1,0 +1,16 @@
+# Keep the Docker build context tiny. The multi-stage Dockerfiles copy ONLY the
+# manifests + real sources (never target/), but without this file `docker build`
+# would still UPLOAD the whole context to the daemon — including a multi-GB
+# `target/` — on every build. Excluding it keeps `kind load`/buildx sends instant.
+target/
+**/target/
+**/*.rs.bk
+
+# Editor/OS cruft.
+**/.DS_Store
+**/*.swp
+**/*~
+
+# Local cargo registry caches that may live under the workspace in dev.
+**/.cargo/registry/
+**/.cargo/git/
