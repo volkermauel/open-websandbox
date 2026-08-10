@@ -399,7 +399,13 @@ async fn grep_basic_and_include_filter() {
         .iter()
         .map(|m| split_name(m["file"].as_str().unwrap()))
         .collect();
-    assert_eq!(files, ["a.txt", "b.txt"].into_iter().map(String::from).collect::<std::collections::HashSet<_>>());
+    assert_eq!(
+        files,
+        ["a.txt", "b.txt"]
+            .into_iter()
+            .map(String::from)
+            .collect::<std::collections::HashSet<_>>()
+    );
 }
 
 #[tokio::test]
@@ -514,7 +520,13 @@ async fn grep_single_file_path() {
         .iter()
         .map(|m| split_name(m["file"].as_str().unwrap()))
         .collect();
-    assert_eq!(files, ["only.txt"].into_iter().map(String::from).collect::<std::collections::HashSet<_>>());
+    assert_eq!(
+        files,
+        ["only.txt"]
+            .into_iter()
+            .map(String::from)
+            .collect::<std::collections::HashSet<_>>()
+    );
 }
 
 // --- /files/glob -------------------------------------------------------------
@@ -621,7 +633,13 @@ async fn write_file(env: &common::Env, path: &str, content: &str) {
 async fn mkdir(env: &common::Env, path: &str) {
     let body = serde_json::json!({ "path": path }).to_string();
     let resp = env
-        .send(Method::POST, "/files/mkdir", Bearer::Default, None, Some(body))
+        .send(
+            Method::POST,
+            "/files/mkdir",
+            Bearer::Default,
+            None,
+            Some(body),
+        )
         .await;
     assert_eq!(resp.status(), StatusCode::OK);
 }
