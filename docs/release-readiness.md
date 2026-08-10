@@ -44,6 +44,11 @@ tenants) · 🔵 P2 = battle-test / advanced. Effort: **S** ≤½ day · **M** �
 >
 > **Still open:** **#18** (per-tenant OIDC — the single shared secret lets any holder impersonate any user; deferred in D5, a v1.0-scale feature),
 > plus the minor P1 (IPv6 DNS egress, `RUNTIME_API_KEY` inter-component auth, prod quotas).
+>
+> **Rust rewrite (#18, merged):** the broker + runtime are now Rust (`rust/{broker,runtime}/`);
+> every ✅ above was ported + re-verified by the e2e suite (13/13 green). The
+> `broker/main.py` / `runtime/server.py` locations cited in the table are historical
+> (pre-rewrite); their Rust equivalents live in `rust/broker/` + `rust/runtime/`.
 
 | # | Gap | Area / file | Fix | Effort |
 |---|-----|-------------|-----|--------|

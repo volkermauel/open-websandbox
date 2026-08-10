@@ -40,7 +40,8 @@ jobs:
       - id: build
         uses: docker/build-push-action@v7
         with:
-          context: open-websandbox-platform/broker
+          context: rust
+          file: rust/broker/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -85,7 +86,8 @@ jobs:
       - id: build
         uses: docker/build-push-action@v7
         with:
-          context: open-websandbox-platform/runtime
+          context: rust
+          file: rust/runtime/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
