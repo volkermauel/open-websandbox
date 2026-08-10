@@ -159,7 +159,22 @@ pub async fn resolve_sandbox(
             Err(e) => return Err(map_store_err(e)),
         }
     }
-    // (C-3) rotate-on-resume when Suspended; (C-4) S3 restore — deferred.
+    // Resume a parked sandbox (Python `_resume_if_suspended` on every watch
+    // event): flip a `Suspended` sandbox back to `Running` so its pod schedules
+    // before the Ready poll. C-3's rotate-on-resume (per-session key) stays
+    // deferred to the per-session-key PR; C-4 only needs the operatingMode flip
+    // + the restore below.
+    let needs_resume = existing.as_ref().and_then(|s| s.spec.operating_mode)
+        == Some(shared::OperatingMode::Suspended);
+    if needs_resume {
+        if let Err(e) = state
+            .store
+            .patch_operating_mode(&name, shared::OperatingMode::Running)
+            .await
+        {
+            tracing::warn!(sandbox = %name, error = %e, "resume operatingMode patch failed");
+        }
+    }
 
     let resolved = wait_for_ready(state, &name).await?;
     // Activity bump (Python `_touch_sandbox`): refresh `broker-last-used` so the
@@ -172,6 +187,35 @@ pub async fn resolve_sandbox(
         .await
     {
         tracing::debug!(sandbox = %resolved.name, error = %e, "non-fatal last-used touch");
+    }
+    // C-4 restore-on-resume (Python `_restore_from_s3`, gated on S3 tiering +
+    // persistent profile): block readiness until S3 → /workspace is present.
+    // No-op on first creation (no object under the namespace); on restore
+    // failure we FAIL the resume (502) so the user never gets an empty
+    // workspace (D7).
+    if profile == Profile::Persistent {
+        if let Some(tier) = state.s3_restore.clone() {
+            match tier
+                .restore_on_resume(&resolved.name, &resolved.pod_ip)
+                .await
+            {
+                Ok(crate::s3::RestoreOutcome::Restored(key)) => {
+                    tracing::info!(
+                        sandbox = %resolved.name, key = %key,
+                        "s3 restore-on-resume complete"
+                    );
+                }
+                Ok(crate::s3::RestoreOutcome::NoObject) => {
+                    tracing::debug!(
+                        sandbox = %resolved.name,
+                        "s3 restore skipped (no object — first creation)"
+                    );
+                }
+                Err(e) => {
+                    return Err(ApiError::BadGateway(format!("s3 restore failed: {e}")));
+                }
+            }
+        }
     }
     Ok(resolved)
 }

@@ -212,6 +212,52 @@ pub struct BrokerConfig {
     /// so a holder stays ahead of its own expiry.
     #[serde(default = "default_leader_renew_seconds")]
     pub leader_renew_seconds: u64,
+
+    // --- S3 cold tier (issue #52; PR-C-4) ---------------------------------
+    // The broker is the SOLE S3 client (#50): it streams a sandbox's /workspace
+    // off to S3 on reap and back on resume. Fully behind `s3_enabled` (default
+    // off); the real `aws-sdk-s3` client is only constructed when enabled. Env
+    // names mirror the Python broker's `BROKER_S3_*` knobs (D12 drop-in).
+    /// Gate the whole S3 cold tier (env `BROKER_S3_ENABLED`; `1`/`true`/`yes`/
+    /// `on`). When false the reaper uses [`NoopOffload`](../../broker/reaper
+    /// /struct.NoopOffload.html) and resolve skips restore (no cold tier).
+    #[serde(default)]
+    pub s3_enabled: bool,
+
+    /// S3-compatible endpoint URL (env `BROKER_S3_ENDPOINT`). Empty ⇒ the AWS
+    /// default (https://s3.<region>.amazonaws.com). Set for MinIO/R2/Proxmox
+    /// (e.g. `http://minio:9000`).
+    #[serde(default)]
+    pub s3_endpoint: String,
+
+    /// AWS region (env `BROKER_S3_REGION`, default `us-east-1`).
+    #[serde(default = "default_s3_region")]
+    pub s3_region: String,
+
+    /// Bucket name (env `BROKER_S3_BUCKET`).
+    #[serde(default)]
+    pub s3_bucket: String,
+
+    /// Object-key prefix (env `BROKER_S3_PREFIX`, default `users`); leading/
+    /// trailing slashes are stripped. Each sandbox's snapshots live under
+    /// `<prefix>/<sandbox>/` (the namespace).
+    #[serde(default = "default_s3_prefix")]
+    pub s3_prefix: String,
+
+    /// Static access key id (env `BROKER_S3_ACCESS_KEY_ID`). Empty ⇒ rely on
+    /// the SDK's default credential chain.
+    #[serde(default)]
+    pub s3_access_key_id: String,
+
+    /// Static secret access key (env `BROKER_S3_SECRET_ACCESS_KEY`).
+    #[serde(default)]
+    pub s3_secret_access_key: String,
+
+    /// Force path-style addressing (`<endpoint>/<bucket>/<key>`) — required by
+    /// MinIO/R2/Proxmox and works on AWS S3 too (env `BROKER_S3_PATH_STYLE`,
+    /// default `true`, matching the Python broker's hard-coded path-style).
+    #[serde(default = "default_s3_path_style")]
+    pub s3_path_style: bool,
 }
 
 const fn default_max_terminal_sessions() -> u32 {
@@ -262,8 +308,20 @@ const fn default_leader_duration_seconds() -> u64 {
     15
 }
 
-const fn default_leader_renew_seconds() -> u64 {
+fn default_leader_renew_seconds() -> u64 {
     5
+}
+
+fn default_s3_region() -> String {
+    "us-east-1".to_string()
+}
+
+fn default_s3_prefix() -> String {
+    "users".to_string()
+}
+
+const fn default_s3_path_style() -> bool {
+    true
 }
 
 /// The all-defaults broker config (the same value `BrokerConfig::from_map(|_| None)`
@@ -289,6 +347,14 @@ impl Default for BrokerConfig {
             leader_lease: default_leader_lease(),
             leader_duration_seconds: default_leader_duration_seconds(),
             leader_renew_seconds: default_leader_renew_seconds(),
+            s3_enabled: false,
+            s3_endpoint: String::new(),
+            s3_region: default_s3_region(),
+            s3_bucket: String::new(),
+            s3_prefix: default_s3_prefix(),
+            s3_access_key_id: String::new(),
+            s3_secret_access_key: String::new(),
+            s3_path_style: default_s3_path_style(),
         }
     }
 }
@@ -348,6 +414,20 @@ impl BrokerConfig {
                 .unwrap_or_else(default_leader_duration_seconds),
             leader_renew_seconds: env_value("BROKER_LEADER_RENEW_SECONDS", &get)?
                 .unwrap_or_else(default_leader_renew_seconds),
+            s3_enabled: get("BROKER_S3_ENABLED")
+                .map(|raw| parse_bool(&raw))
+                .unwrap_or(false),
+            s3_endpoint: get("BROKER_S3_ENDPOINT").unwrap_or_default(),
+            s3_region: get("BROKER_S3_REGION").unwrap_or_else(default_s3_region),
+            s3_bucket: get("BROKER_S3_BUCKET").unwrap_or_default(),
+            s3_prefix: get("BROKER_S3_PREFIX")
+                .map(|raw| trim_prefix(&raw))
+                .unwrap_or_else(default_s3_prefix),
+            s3_access_key_id: get("BROKER_S3_ACCESS_KEY_ID").unwrap_or_default(),
+            s3_secret_access_key: get("BROKER_S3_SECRET_ACCESS_KEY").unwrap_or_default(),
+            s3_path_style: get("BROKER_S3_PATH_STYLE")
+                .map(|raw| parse_bool(&raw))
+                .unwrap_or(true),
         })
     }
 }
@@ -366,6 +446,23 @@ where
         Some(raw) => parse_value(var, &raw).map(Some),
         None => Ok(None),
     }
+}
+
+/// Parse a Python-style boolean: case-insensitive `1`/`true`/`yes`/`on` ⇒
+/// `true`, anything else ⇒ `false` (mirrors the Python broker's S3/PROFILE
+/// parsing).
+fn parse_bool(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+/// Strip leading/trailing `/` from an S3 prefix segment (Python
+/// `S3_PREFIX.strip("/")`); collapses the object-key namespace so
+/// `<prefix>/<sandbox>/` is canonical regardless of trailing slashes in env.
+fn trim_prefix(raw: &str) -> String {
+    raw.trim_matches('/').to_string()
 }
 
 /// Parse a raw string into `T`, attributing failures to `var`.
@@ -463,6 +560,21 @@ mod tests {
     }
 
     #[test]
+    fn serde_defaults_cover_s3_fields() {
+        let cfg: BrokerConfig = serde_json::from_str("{}").expect("empty object");
+        // S3 cold tier defaults off; path-style on (matches Python's
+        // hard-coded `addressing_style: "path"`); prefix defaults to `users`.
+        assert!(!cfg.s3_enabled);
+        assert_eq!(cfg.s3_endpoint, "");
+        assert_eq!(cfg.s3_region, "us-east-1");
+        assert_eq!(cfg.s3_bucket, "");
+        assert_eq!(cfg.s3_prefix, "users");
+        assert_eq!(cfg.s3_access_key_id, "");
+        assert_eq!(cfg.s3_secret_access_key, "");
+        assert!(cfg.s3_path_style);
+    }
+
+    #[test]
     fn serde_round_trips_explicit_values() {
         let cfg = BrokerConfig {
             max_terminal_sessions: 2,
@@ -482,12 +594,22 @@ mod tests {
             leader_lease: "custom-lease".into(),
             leader_duration_seconds: 30,
             leader_renew_seconds: 10,
+            s3_enabled: true,
+            s3_endpoint: "http://minio:9000".into(),
+            s3_region: "us-east-1".into(),
+            s3_bucket: "owui-cold".into(),
+            s3_prefix: "users".into(),
+            s3_access_key_id: "AKIAEXAMPLE".into(),
+            s3_secret_access_key: "secret".into(),
+            s3_path_style: true,
         };
         let json = serde_json::to_string(&cfg).expect("serialize");
         assert!(json.contains("\"max_terminal_sessions\":2"), "{json}");
         assert!(json.contains("\"default_profile\":\"ephemeral\""), "{json}");
         assert!(json.contains("\"runtime_api_key\":\"rt-key\""), "{json}");
         assert!(json.contains("\"claim_timeout_seconds\":30"), "{json}");
+        assert!(json.contains("\"s3_enabled\":true"), "{json}");
+        assert!(json.contains("\"s3_bucket\":\"owui-cold\""), "{json}");
         let back: BrokerConfig = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, cfg);
     }
@@ -511,6 +633,14 @@ mod tests {
             ("BROKER_LEADER_LEASE", "custom-lease"),
             ("BROKER_LEADER_DURATION_SECONDS", "30"),
             ("BROKER_LEADER_RENEW_SECONDS", "10"),
+            ("BROKER_S3_ENABLED", "yes"),
+            ("BROKER_S3_ENDPOINT", "http://minio:9000"),
+            ("BROKER_S3_REGION", "eu-west-1"),
+            ("BROKER_S3_BUCKET", "owui-cold"),
+            ("BROKER_S3_PREFIX", "//prod/users//"),
+            ("BROKER_S3_ACCESS_KEY_ID", "AKIAEXAMPLE"),
+            ("BROKER_S3_SECRET_ACCESS_KEY", "shh"),
+            ("BROKER_S3_PATH_STYLE", "off"),
         ]))
         .expect("ok");
         assert_eq!(cfg.shared_secret, "hunter2");
@@ -529,6 +659,14 @@ mod tests {
         assert_eq!(cfg.leader_lease, "custom-lease");
         assert_eq!(cfg.leader_duration_seconds, 30);
         assert_eq!(cfg.leader_renew_seconds, 10);
+        assert!(cfg.s3_enabled, "BROKER_S3_ENABLED=yes => true");
+        assert_eq!(cfg.s3_endpoint, "http://minio:9000");
+        assert_eq!(cfg.s3_region, "eu-west-1");
+        assert_eq!(cfg.s3_bucket, "owui-cold");
+        assert_eq!(cfg.s3_prefix, "prod/users", "surrounding slashes stripped");
+        assert_eq!(cfg.s3_access_key_id, "AKIAEXAMPLE");
+        assert_eq!(cfg.s3_secret_access_key, "shh");
+        assert!(!cfg.s3_path_style, "BROKER_S3_PATH_STYLE=off => false");
     }
 
     #[test]
@@ -550,6 +688,15 @@ mod tests {
         assert_eq!(cfg.leader_lease, "owui-broker-leader");
         assert_eq!(cfg.leader_duration_seconds, 15);
         assert_eq!(cfg.leader_renew_seconds, 5);
+        // S3 cold tier defaults: disabled, empty endpoint/creds, AWS default
+        // region, `users` prefix, path-style on (matches Python's hard-coded
+        // addressing_style="path").
+        assert!(!cfg.s3_enabled);
+        assert_eq!(cfg.s3_endpoint, "");
+        assert_eq!(cfg.s3_region, "us-east-1");
+        assert_eq!(cfg.s3_bucket, "");
+        assert_eq!(cfg.s3_prefix, "users");
+        assert!(cfg.s3_path_style);
     }
 
     #[test]

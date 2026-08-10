@@ -25,6 +25,7 @@ pub mod leaser;
 pub mod proxy;
 pub mod reaper;
 pub mod resolve;
+pub mod s3;
 pub mod sandbox;
 pub mod state;
 pub mod store;
@@ -37,6 +38,10 @@ pub use error::ApiError;
 pub use leaser::{InMemoryLease, InMemoryLeaseClient, KubeLease, LeaderGate, LeaseClient};
 pub use reaper::{NoopOffload, OffloadError, ReapOffload};
 pub use resolve::{resolve_sandbox, sandbox_name, ResolvedSandbox};
+pub use s3::{
+    s3_namespace, s3_object_key, AwsColdStore, ColdError, ColdStore, InMemoryColdStore,
+    RestoreError, RestoreOutcome, S3Offload,
+};
 pub use sandbox::{build_sandbox, extract_pod_template};
 pub use shared;
 pub use state::AppState;

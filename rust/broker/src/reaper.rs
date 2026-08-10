@@ -80,6 +80,15 @@ fn decide(
     cfg: &shared::BrokerConfig,
 ) -> ReaperAction {
     match profile {
+        // Python: s3-tiered persistent — reap at IDLE_TTL (like ephemeral) so
+        // the cold tier (S3) captures state before the emptyDir is destroyed.
+        // The reaper offloads first (C-4 ReapOffload); never parks (the pod
+        // must be alive to snapshot). Gated on `s3_enabled` (Python's global
+        // `S3_TIERED = PERSISTENT_MODE == "s3-tiered"`).
+        Profile::Persistent if cfg.s3_enabled && idle_secs > cfg.idle_ttl_seconds => {
+            ReaperAction::Reap
+        }
+        Profile::Persistent if cfg.s3_enabled => ReaperAction::Skip,
         // Python: persistent (non-s3-tiered) — park at PARK_TTL, reap at REAP_TTL.
         // Reap takes precedence; an already-Suspended sandbox is never re-parked.
         Profile::Persistent if idle_secs > cfg.reap_seconds => ReaperAction::Reap,
@@ -385,6 +394,77 @@ mod tests {
         let c = cfg(120, 300, 604_800);
         assert_eq!(
             decide(Profile::Persistent, 700_000, OperatingMode::Running, &c),
+            ReaperAction::Reap
+        );
+    }
+
+    // --- decide(): the S3-tiered persistent branch (C-4, issue #52) ----------
+
+    fn cfg_s3(idle: u64, park: u64, reap: u64) -> shared::BrokerConfig {
+        shared::BrokerConfig {
+            idle_ttl_seconds: idle,
+            park_idle_seconds: park,
+            reap_seconds: reap,
+            s3_enabled: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn s3_tiered_persistent_reaps_at_idle_ttl_like_ephemeral() {
+        // Python: s3-tiered reaps at IDLE_TTL (cold tier is S3) — never waits
+        // for PARK/REAP_TTL — so the emptyDir state is captured before destroy.
+        let c = cfg_s3(120, 300, 604_800);
+        assert_eq!(
+            decide(Profile::Persistent, 121, OperatingMode::Running, &c),
+            ReaperAction::Reap
+        );
+        assert_eq!(
+            decide(Profile::Persistent, 604_801, OperatingMode::Suspended, &c),
+            ReaperAction::Reap
+        );
+    }
+
+    #[test]
+    fn s3_tiered_persistent_is_never_parked() {
+        // The s3-tiered branch only ever returns Reap (over IDLE_TTL) or Skip
+        // (under) — never Park — so the pod stays alive to snapshot. The
+        // PARK_TTL threshold is never consulted (the cold tier is S3).
+        let c = cfg_s3(120, 300, 604_800);
+        assert_eq!(
+            decide(Profile::Persistent, 60, OperatingMode::Running, &c),
+            ReaperAction::Skip
+        );
+        assert_eq!(
+            decide(Profile::Persistent, 400, OperatingMode::Running, &c),
+            ReaperAction::Reap
+        );
+        assert_eq!(
+            decide(Profile::Persistent, 400, OperatingMode::Suspended, &c),
+            ReaperAction::Reap
+        );
+    }
+
+    #[test]
+    fn s3_tiered_persistent_under_idle_ttl_is_skipped() {
+        let c = cfg_s3(120, 300, 604_800);
+        assert_eq!(
+            decide(Profile::Persistent, 120, OperatingMode::Running, &c),
+            ReaperAction::Skip
+        );
+    }
+
+    #[test]
+    fn s3_disabled_persistent_still_parks_and_reaps_normally() {
+        // The s3-tiered branch only applies when s3_enabled (cfg() defaults it
+        // off): a PVC-persistent sandbox parks at PARK_TTL, reaps at REAP_TTL.
+        let c = cfg(120, 300, 604_800);
+        assert_eq!(
+            decide(Profile::Persistent, 400, OperatingMode::Running, &c),
+            ReaperAction::Park
+        );
+        assert_eq!(
+            decide(Profile::Persistent, 604_801, OperatingMode::Running, &c),
             ReaperAction::Reap
         );
     }
