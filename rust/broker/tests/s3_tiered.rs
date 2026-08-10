@@ -23,7 +23,7 @@ use broker::{
     InMemoryColdStore, RestoreOutcome, S3Offload, StubSandboxStore,
 };
 use shared::{
-    OperatingMode, PodIpEntry, Profile, Sandbox, SandboxSpec, SandboxStatus, SandboxTemplate,
+    OperatingMode, Profile, Sandbox, SandboxSpec, SandboxStatus, SandboxTemplate,
     SandboxTemplateSpec,
 };
 use wiremock::matchers::{method, path};
@@ -51,9 +51,7 @@ fn persistent_sandbox(name: &str, pod_ip: &str) -> Sandbox {
     sbx.metadata.annotations = Some(annots);
     sbx.status = Some(SandboxStatus {
         phase: Some("Running".into()),
-        pod_i_ps: Some(vec![PodIpEntry {
-            ip: pod_ip.to_string(),
-        }]),
+        pod_i_ps: Some(vec![pod_ip.to_string()]),
         ready: Some(true),
         message: None,
         conditions: None,

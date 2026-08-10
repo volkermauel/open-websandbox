@@ -328,7 +328,7 @@ mod tests {
     fn ready_status(ip: &str) -> SandboxStatus {
         SandboxStatus {
             phase: Some("Running".into()),
-            pod_i_ps: Some(vec![shared::PodIpEntry { ip: ip.to_string() }]),
+            pod_i_ps: Some(vec![ip.to_string()]),
             conditions: Some(vec![shared::SandboxCondition {
                 r#type: "Ready".into(),
                 status: "True".into(),

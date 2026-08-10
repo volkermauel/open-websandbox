@@ -147,7 +147,7 @@ pub struct SandboxStatus {
 
     /// Pod IPs assigned to the sandbox; `[0]` is the address the broker proxies to.
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "podIPs")]
-    pub pod_i_ps: Option<Vec<PodIpEntry>>,
+    pub pod_i_ps: Option<Vec<String>>,
 
     /// Status conditions; a `Ready`/`True` entry means the sandbox is serving.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -179,7 +179,7 @@ impl SandboxStatus {
         self.pod_i_ps
             .as_ref()
             .and_then(|ips| ips.first())
-            .map(|e| e.ip.as_str())
+            .map(String::as_str)
     }
 }
 
@@ -293,7 +293,7 @@ mod tests {
             },
             "status": {
                 "phase": "Running",
-                "podIPs": [{"ip": "10.0.0.5"}],
+                "podIPs": ["10.0.0.5"],
                 "conditions": [
                     {"type": "Ready", "status": "True"},
                     {"type": "PodScheduled", "status": "True"}
@@ -344,9 +344,7 @@ mod tests {
                 message: None,
                 last_transition_time: None,
             }]),
-            pod_i_ps: Some(vec![PodIpEntry {
-                ip: "10.0.0.6".into(),
-            }]),
+            pod_i_ps: Some(vec!["10.0.0.6".into()]),
             ..Default::default()
         };
         assert!(ready.is_ready());

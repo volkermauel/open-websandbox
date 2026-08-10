@@ -10,7 +10,7 @@ use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use broker::{build_router, resolve_sandbox, sandbox_name, ApiError, AppState, StubSandboxStore};
 use shared::{
-    BrokerConfig, PodIpEntry, Profile, Sandbox, SandboxCondition, SandboxSpec, SandboxStatus,
+    BrokerConfig, Profile, Sandbox, SandboxCondition, SandboxSpec, SandboxStatus,
     SandboxTemplate, SandboxTemplateSpec,
 };
 use tower::ServiceExt;
@@ -43,7 +43,7 @@ fn template() -> SandboxTemplate {
 fn ready_status(ip: &str) -> SandboxStatus {
     SandboxStatus {
         phase: Some("Running".into()),
-        pod_i_ps: Some(vec![PodIpEntry { ip: ip.into() }]),
+        pod_i_ps: Some(vec![ip.into()]),
         conditions: Some(vec![SandboxCondition {
             r#type: "Ready".into(),
             status: "True".into(),

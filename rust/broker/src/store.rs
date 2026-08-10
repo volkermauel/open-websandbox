@@ -430,12 +430,10 @@ impl SandboxStore for StubSandboxStore {
 /// Build a Ready `SandboxStatus` for the stub (a controller would populate this
 /// as it scheduled the pod).
 fn make_ready_status(pod_ip: &str) -> shared::SandboxStatus {
-    use shared::{PodIpEntry, SandboxCondition, SandboxStatus};
+    use shared::{SandboxCondition, SandboxStatus};
     SandboxStatus {
         phase: Some("Running".to_string()),
-        pod_i_ps: Some(vec![PodIpEntry {
-            ip: pod_ip.to_string(),
-        }]),
+        pod_i_ps: Some(vec![pod_ip.to_string()]),
         conditions: Some(vec![SandboxCondition {
             r#type: "Ready".to_string(),
             status: "True".to_string(),
