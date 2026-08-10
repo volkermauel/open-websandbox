@@ -44,6 +44,7 @@ use shared::{BrokerConfig, Profile, Sandbox};
 use crate::proxy::RUNTIME_PORT;
 use crate::reaper::{OffloadError, ReapOffload};
 use crate::sandbox::{PROFILE_LABEL_KEY, SESSION_KEY, USER_KEY};
+use crate::store::SandboxStore;
 
 /// Object-expiry/retention metadata + retry defaults match the Python broker
 /// (`S3_RETENTION_DAYS=30`, `S3_OFFLOAD_MAX_ATTEMPTS=5`,
@@ -419,6 +420,8 @@ pub struct S3Offload {
     /// `{base}/restore` instead of `http://<pod-ip>:8888/...` (used by the
     /// `wiremock`-backed integration tests). `None` in production.
     runtime_upstream_override: Option<String>,
+    /// Per-session runtime-key resolver (PR-C-5); `None` in tests => shared-key fallback.
+    store: Option<Arc<dyn SandboxStore>>,
 }
 
 impl S3Offload {
@@ -437,7 +440,30 @@ impl S3Offload {
             max_attempts: DEFAULT_OFFLOAD_MAX_ATTEMPTS,
             backoff_base: DEFAULT_OFFLOAD_BACKOFF,
             runtime_upstream_override: None,
+            store: None,
         }
+    }
+
+    /// Wire the live [`SandboxStore`] so offload/restore authenticate to the runtime
+    /// with the per-session key (PR-C-5), matching the proxy path. Without it the
+    /// driver falls back to the shared `BROKER_RUNTIME_API_KEY` (dev/tests only).
+    #[must_use]
+    pub fn with_store(mut self, store: Arc<dyn SandboxStore>) -> Self {
+        self.store = Some(store);
+        self
+    }
+
+    /// Resolve the runtime Bearer for `name`: the per-session key (PR-C-5) when a
+    /// store is wired and the key exists, else the shared config key (dev/fallback).
+    async fn runtime_key(&self, name: &str) -> String {
+        if let Some(store) = &self.store {
+            match store.read_runtime_key(name).await {
+                Ok(Some(k)) => return k,
+                Ok(None) => {}
+                Err(e) => tracing::warn!(sandbox = %name, %e, "read_runtime_key failed; falling back to shared key"),
+            }
+        }
+        self.runtime_api_key.clone()
     }
 
     /// Test seam: point runtime hops at a local mock server (e.g.
@@ -477,12 +503,13 @@ impl S3Offload {
     ) -> Result<(), OffloadError> {
         let ts = now_unix();
         let key = s3_object_key(&self.prefix, name, ts);
+        let bearer = self.runtime_key(name).await;
 
         // GET /snapshot (the runtime streams the zstd tarball of /workspace).
         let snapshot = self
             .http
             .get(self.runtime_url(pod_ip, "/snapshot"))
-            .bearer_auth(&self.runtime_api_key)
+            .bearer_auth(&bearer)
             .send()
             .await
             .map_err(|e| OffloadError::Failed(format!("snapshot GET {name}: {e}")))?;
@@ -531,6 +558,7 @@ impl S3Offload {
         pod_ip: &str,
     ) -> Result<RestoreOutcome, RestoreError> {
         let ns = s3_namespace(&self.prefix, name);
+        let bearer = self.runtime_key(name).await;
         let Some(latest) = self
             .cold
             .latest_key(&ns)
@@ -549,7 +577,7 @@ impl S3Offload {
         let resp = self
             .http
             .put(self.runtime_url(pod_ip, "/restore"))
-            .bearer_auth(&self.runtime_api_key)
+            .bearer_auth(&bearer)
             .header(reqwest::header::CONTENT_TYPE, "application/zstd")
             .body(body)
             .send()

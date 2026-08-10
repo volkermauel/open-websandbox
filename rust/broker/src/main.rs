@@ -89,7 +89,9 @@ async fn main() -> ExitCode {
     // resolve skips the restore hop (state.s3_restore == None).
     let (offload, state) = if cfg_arc.s3_enabled {
         let cold = Arc::new(AwsColdStore::new(&cfg_arc));
-        let s3 = Arc::new(S3Offload::new(&cfg_arc, cold, state.http.clone()));
+        let s3 = Arc::new(
+            S3Offload::new(&cfg_arc, cold, state.http.clone()).with_store(store.clone()),
+        );
         let restore = Arc::clone(&s3);
         (s3 as Arc<dyn ReapOffload>, state.with_s3_restore(restore))
     } else {
