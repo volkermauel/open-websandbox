@@ -31,17 +31,17 @@ pub fn secret_name(sandbox_name: &str) -> String {
 }
 
 /// A fresh 256-bit per-session key, hex-encoded (64 chars). CSPRNG-sourced via
-/// `OsRng` — never a placeholder the runtime's `is_placeholder_secret` rejects.
+/// `rand::rng()` (ThreadRng / ChaCha12) — never a placeholder the runtime's
 /// (Python: `secrets.token_urlsafe(32)`; the encoding differs but the entropy +
 /// the contract — an opaque bearer string the runtime compares in constant
 /// time — are identical.)
 #[must_use]
 pub fn mint_key() -> String {
-    use rand::TryRngCore;
+    use rand::Rng;
     let mut buf = [0u8; 32];
-    rand::rngs::OsRng
-        .try_fill_bytes(&mut buf)
-        .expect("OsRng: system entropy source unavailable");
+    // rand 0.10: `rand::rng()` -> ThreadRng (ChaCha12 CSPRNG, infallible). Was
+    // `OsRng.try_fill_bytes(..)` on 0.9; the entropy contract is unchanged.
+    rand::rng().fill_bytes(&mut buf);
     // Hex (no `base64` dep); 64 chars, 256 bits.
     let mut out = String::with_capacity(64);
     for b in buf {

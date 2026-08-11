@@ -25,7 +25,7 @@ axum = { version = "0.8", features = ["ws", "multipart"] }
 http-body-util = { version = "0.1", features = ["channel"] }
 mime_guess = "2"
 regex = "1"
-nix = { version = "0.29", features = ["resource", "signal", "process"] }
+nix = { version = "0.31", features = ["resource", "signal", "process"] }
 percent-encoding = "2"
 portable-pty = "0.9"
 serde.workspace = true
@@ -34,13 +34,13 @@ shared = { version = "0.1.0", path = "../shared" }
 thiserror.workspace = true
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = "0.6"
+tower-http = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # `zip` builds the in-memory ZIP returned by `POST /files/archive` (the Python
 # runtime used stdlib `zipfile`). `default-features = false` + `deflate` keeps
 # the audited tree lean (no bzip2/zstd/time deps).
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 futures-util = "0.3"
@@ -48,5 +48,5 @@ http = "1"
 tempfile = "3"
 # `zip` is already a runtime dependency; re-declared here so the
 # upload/archive contract tests can read archives back + assert their entries.
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
