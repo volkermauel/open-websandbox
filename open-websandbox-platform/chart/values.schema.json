@@ -233,7 +233,9 @@
           "properties": {
             "enabled": { "type": "boolean", "description": "Render ServiceMonitor (broker) + PodMonitor (runtime). Off by default so CRD-less clusters install cleanly." },
             "interval": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$", "description": "Scrape interval (Prometheus duration). Default 60s." },
-            "scrapeTimeout": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$", "description": "Scrape timeout (Prometheus duration). Must be < interval to avoid flapping. Default 30s." }
+            "scrapeTimeout": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$", "description": "Scrape timeout (Prometheus duration). Must be < interval to avoid flapping. Default 30s." },
+            "scrapeNamespace": { "type": "string", "minLength": 1, "description": "Namespace allowed to ingress the runtime :8888 metrics port when monitoring is enabled. Rendered as a kubernetes.io/metadata.name=<ns> namespaceSelector (auto-set by kube >=1.21). Default 'monitoring' (kube-prometheus-stack convention)." },
+            "scrapePodLabels": { "type": "object", "description": "Optional pod label selector (matchLabels) within scrapeNamespace to restrict ingress to specific Prometheus pods. Empty {} = all pods in the namespace. Example: {\"app.kubernetes.io/name\": \"prometheus\"}.", "additionalProperties": { "type": "string" } }
           }
         },
         "otlp": {
