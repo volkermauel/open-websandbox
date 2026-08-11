@@ -144,7 +144,7 @@ async fn resolve_creates_and_waits_for_ready_when_absent() {
 }
 
 #[tokio::test]
-async fn resolve_deterministic_name_matches_python_scheme() {
+async fn resolve_name_scheme_is_deterministic() {
     let store = store_with_template();
     store.set_auto_ready_on_create(Some("10.0.0.2".into()));
     let state = state(store.clone(), config(5));

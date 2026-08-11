@@ -341,7 +341,7 @@ mod tests {
         assert_eq!(
             decide(Profile::Ephemeral, 120, OperatingMode::Running, &c),
             ReaperAction::Skip,
-            "Python uses strict > (not >=): exactly at TTL is still warm"
+            "strict-greater (not >=): exactly at TTL is still warm"
         );
     }
 
@@ -378,7 +378,7 @@ mod tests {
         assert_eq!(
             decide(Profile::Persistent, 301, OperatingMode::Suspended, &c),
             ReaperAction::Skip,
-            "never re-park an already-parked sandbox (Python mode != Suspended guard)"
+            "never re-park an already-parked sandbox (mode != Suspended guard)"
         );
     }
 

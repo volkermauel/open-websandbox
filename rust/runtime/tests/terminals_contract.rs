@@ -210,7 +210,7 @@ async fn poll_cleaned(srv: &Server, id: &str, timeout: f64) -> bool {
 // --- HTTP contract -----------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
-async fn post_creates_session_with_python_shape() {
+async fn post_creates_session_with_expected_shape() {
     let srv = Server::start().await;
     let (status, body) = http(
         srv.port,

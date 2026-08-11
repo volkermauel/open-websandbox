@@ -175,7 +175,7 @@ async fn teardown_one(session: Arc<Mutex<Session>>) {
     tag = "terminals",
     security(("brokerBearer" = [])),
     responses(
-        (status = 200, description = "PTY session spawned (or recreated) — 200 per the Python contract", body = CreateResponse),
+        (status = 200, description = "PTY session spawned (or recreated) — idempotent, returns 200 on create-or-recreate", body = CreateResponse),
         (status = 401, description = "Missing/invalid per-session Bearer", body = shared::ErrorResponse),
         (status = 429, description = "MAX_TERMINAL_SESSIONS reached", body = shared::ErrorResponse),
         (status = 503, description = "PTY spawn failure", body = shared::ErrorResponse)
@@ -387,7 +387,7 @@ async fn get_terminal(state: AppState, id: String) -> Result<Json<TermInfo>, Api
 // ---------------------------------------------------------------------------
 
 /// `DELETE /api/terminals/{id}` — kill + reap the session. Idempotent: an unknown id
-/// still answers `200 {"status":"deleted"}` (Python parity).
+/// still answers `200 {"status":"deleted"}`.
 #[utoipa::path(
     delete,
     path = "/api/terminals/{id}",

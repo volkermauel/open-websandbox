@@ -135,7 +135,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn secret_name_matches_python_prefix() {
+    fn secret_name_has_runtime_key_prefix() {
         assert_eq!(
             secret_name("owui-abcdef012345"),
             "owui-runtime-key-owui-abcdef012345"

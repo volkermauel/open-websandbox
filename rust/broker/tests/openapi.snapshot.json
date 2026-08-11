@@ -140,10 +140,10 @@
         "type": "object"
       },
       "ErrorResponse": {
-        "description": "Error body both control planes return: `{\"detail\": \"...\"}` (FastAPI `HTTPException`\nshape, byte-for-byte parity — D11). Used as the error response `body` across the\nbroker and runtime OpenAPI surfaces.",
+        "description": "Error body both control planes return: `{\"detail\": \"...\"}` (the\n`{ \"detail\": <string> }` shape — byte-for-byte parity, D11). Used as the\nerror response `body` across the broker and runtime OpenAPI surfaces.",
         "properties": {
           "detail": {
-            "description": "Human-readable error detail (the FastAPI `HTTPException.detail` value).",
+            "description": "Human-readable error detail.",
             "type": "string"
           }
         },
@@ -276,7 +276,7 @@
         "type": "object"
       },
       "OperatingMode": {
-        "description": "`spec.operatingMode` — the upstream controller's lifecycle mode.\n\nSerializes as the upstream string literals `Running` / `Suspended` (serde's\ndefault unit-variant representation), matching the values the Python broker\npatches in `_set_sandbox_operating_mode`.",
+        "description": "`spec.operatingMode` — the upstream controller's lifecycle mode.\n\nSerializes as the upstream string literals `Running` / `Suspended` (serde's\ndefault unit-variant representation), matching the values patched in\n`_set_sandbox_operating_mode`.",
         "enum": [
           "Running",
           "Suspended"
@@ -295,7 +295,7 @@
         "type": "object"
       },
       "Profile": {
-        "description": "Persistence profile — what backing volume a sandbox gets.\n\nSerializes as the lowercase literals `persistent` / `ephemeral` (D12 — same\nvalues the Python broker honours in `BROKER_DEFAULT_PROFILE` and the\n`X-Persistence` header). Defaults to [`Profile::Persistent`], matching the\nPython deploy default.",
+        "description": "Persistence profile — what backing volume a sandbox gets.\n\nSerializes as the lowercase literals `persistent` / `ephemeral` (D12 — the\nvalues honoured by `BROKER_DEFAULT_PROFILE` and the `X-Persistence`\nheader). Defaults to [`Profile::Persistent`], the broker deploy default.",
         "enum": [
           "persistent",
           "ephemeral"
@@ -370,7 +370,7 @@
         "type": "object"
       },
       "SandboxCondition": {
-        "description": "A status condition as surfaced in [`SandboxStatus::conditions`] (mirrors the\nupstream `meta.v1.Condition` subset the Python broker reads for readiness).",
+        "description": "A status condition as surfaced in [`SandboxStatus::conditions`] (mirrors the\nupstream `meta.v1.Condition` subset read for readiness).",
         "properties": {
           "last_transition_time": {
             "description": "Last transition time (RFC 3339), if surfaced.",
@@ -828,7 +828,7 @@
             "brokerBearer": []
           }
         ],
-        "summary": "`POST /api/sandboxes` — create a `Sandbox` from a `SandboxTemplate` (C-1\nfoundation; C-2's resolve-on-request reuses this path). 201 on create, 200\nwith the existing object on a 409 (idempotent, like the Python broker).",
+        "summary": "`POST /api/sandboxes` — create a `Sandbox` from a `SandboxTemplate` (C-1\nfoundation; C-2's resolve-on-request reuses this path). 201 on create, 200\nwith the existing object on a 409 — idempotent (409 → update existing).",
         "tags": [
           "sandboxes"
         ]
@@ -1064,7 +1064,7 @@
                 }
               }
             },
-            "description": "PTY session spawned (or recreated) — 200 per the Python contract"
+            "description": "PTY session spawned (or recreated) — idempotent, returns 200 on create-or-recreate"
           },
           "401": {
             "content": {
@@ -1149,7 +1149,7 @@
             "brokerBearer": []
           }
         ],
-        "summary": "`DELETE /api/terminals/{id}` — kill + reap the session. Idempotent: an unknown id\nstill answers `200 {\"status\":\"deleted\"}` (Python parity).",
+        "summary": "`DELETE /api/terminals/{id}` — kill + reap the session. Idempotent: an unknown id\nstill answers `200 {\"status\":\"deleted\"}`.",
         "tags": [
           "terminals"
         ]
@@ -2439,7 +2439,7 @@
             "brokerBearer": []
           }
         ],
-        "summary": "`GET /list` + `GET /list/` — list the workspace root. Python's FastAPI route\n`/list/{file_path:path}` matches the empty path (lists root); axum's\n`/list/{*file_path}` catch-all requires ≥1 segment, so these explicit routes\ncover the empty-path case (parity, D11).",
+        "summary": "`GET /list` + `GET /list/` — list the workspace root. The route\n`/list/{file_path:path}` matches the empty path (lists root); axum's\n`/list/{*file_path}` catch-all requires ≥1 segment, so these explicit routes\ncover the empty-path case (parity, D11).",
         "tags": [
           "tools"
         ]

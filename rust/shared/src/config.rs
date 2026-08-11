@@ -52,10 +52,9 @@ pub fn is_placeholder_secret(secret: &str) -> bool {
 
 /// Persistence profile — what backing volume a sandbox gets.
 ///
-/// Serializes as the lowercase literals `persistent` / `ephemeral` (D12 — same
-/// values the Python broker honours in `BROKER_DEFAULT_PROFILE` and the
-/// `X-Persistence` header). Defaults to [`Profile::Persistent`], matching the
-/// Python deploy default.
+/// Serializes as the lowercase literals `persistent` / `ephemeral` (D12 — the
+/// values honoured by `BROKER_DEFAULT_PROFILE` and the `X-Persistence`
+/// header). Defaults to [`Profile::Persistent`], the broker deploy default.
 #[derive(
     Debug,
     Clone,

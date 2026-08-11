@@ -472,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn hop_set_matches_python() {
+    fn hop_set_is_complete() {
         // The HOP set, verbatim.
         for h in [
             "connection",

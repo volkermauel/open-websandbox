@@ -553,7 +553,7 @@ pub async fn tool_list(
     list_impl(&state, &headers, &file_path).await
 }
 
-/// `GET /list` + `GET /list/` — list the workspace root. Python's FastAPI route
+/// `GET /list` + `GET /list/` — list the workspace root. The route
 /// `/list/{file_path:path}` matches the empty path (lists root); axum's
 /// `/list/{*file_path}` catch-all requires ≥1 segment, so these explicit routes
 /// cover the empty-path case (parity, D11).

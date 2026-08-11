@@ -24,7 +24,7 @@ async fn api_config_matches_openapi_spec_shape() {
 }
 
 #[tokio::test]
-async fn api_config_feature_keys_in_python_order() {
+async fn api_config_feature_keys_in_canonical_order() {
     // Field order matters for byte parity (D11). serde serializes struct fields
     // in declaration order, so the JSON text must read terminal, notebooks, desktop.
     let env = Env::new();

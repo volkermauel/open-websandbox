@@ -98,8 +98,8 @@ pub struct SandboxTemplateSpec {
 /// `spec.operatingMode` — the upstream controller's lifecycle mode.
 ///
 /// Serializes as the upstream string literals `Running` / `Suspended` (serde's
-/// default unit-variant representation), matching the values the Python broker
-/// patches in `_set_sandbox_operating_mode`.
+/// default unit-variant representation), matching the values patched in
+/// `_set_sandbox_operating_mode`.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, utoipa::ToSchema,
 )]
@@ -130,7 +130,7 @@ pub struct PodIpEntry {
 }
 
 /// A status condition as surfaced in [`SandboxStatus::conditions`] (mirrors the
-/// upstream `meta.v1.Condition` subset the Python broker reads for readiness).
+/// upstream `meta.v1.Condition` subset read for readiness).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, utoipa::ToSchema)]
 pub struct SandboxCondition {
     /// Condition type (e.g. `Ready`).

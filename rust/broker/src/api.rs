@@ -273,7 +273,7 @@ pub async fn api_status(_: Authed) -> Json<StatusResponse> {
 
 /// `POST /api/sandboxes` — create a `Sandbox` from a `SandboxTemplate` (C-1
 /// foundation; C-2's resolve-on-request reuses this path). 201 on create, 200
-/// with the existing object on a 409 (idempotent, like the Python broker).
+/// with the existing object on a 409 — idempotent (409 → update existing).
 #[utoipa::path(
     post,
     path = "/api/sandboxes",

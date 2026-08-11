@@ -154,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_match_python() {
+    fn defaults_match_contract() {
         let cfg = RuntimeConfig::from_map(map(&[]));
         assert_eq!(cfg.workdir, PathBuf::from("/workspace"));
         assert_eq!(cfg.max_procs, 256);
