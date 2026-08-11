@@ -18,8 +18,8 @@ use utoipa::OpenApi;
 // Schema types referenced by `components(schemas(...))` (bare names need them in scope).
 use crate::execute::{ExecuteRequest, ExecuteResponse};
 use crate::files::{
-    ArchiveRequest, CwdRequest, Entry, ListResponse, MoveRequest, PathBody, ReplaceRequest,
-    WriteRequest,
+    ArchiveRequest, CwdRequest, Entry, FileUpload, ListResponse, MoveRequest, PathBody,
+    ReplaceRequest, WriteRequest,
 };
 use crate::snapshot::RestoreResponse;
 use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
@@ -64,7 +64,7 @@ use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
     components(schemas(
         ExecuteRequest, ExecuteResponse, RestoreResponse,
         TermInfo, CreateResponse, DeleteResponse,
-        CwdRequest, WriteRequest, PathBody, MoveRequest, ReplaceRequest, ArchiveRequest,
+        CwdRequest, WriteRequest, PathBody, MoveRequest, ReplaceRequest, ArchiveRequest, FileUpload,
         ListResponse, Entry,
         shared::ErrorResponse
     )),

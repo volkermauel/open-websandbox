@@ -1066,6 +1066,20 @@ pub struct UploadQuery {
     pub directory: Option<String>,
 }
 
+/// Typed `multipart/form-data` body for the upload endpoints: a single binary
+/// `file` part. The runtime consumes the stream directly via
+/// `axum::extract::Multipart` (this struct exists only to describe the wire
+/// contract for OpenAPI/Scalar — it is never deserialized). The on-disk name
+/// is the basename of the part's `Content-Disposition` `filename`; path
+/// components are stripped as defense-in-depth (see [`upload_basename`]).
+#[derive(utoipa::ToSchema)]
+pub struct FileUpload {
+    /// Binary file content (one part named `file`).
+    #[schema(format = Binary)]
+    #[allow(dead_code)]
+    pub file: String,
+}
+
 /// Basename of an uploaded filename, never the dir component (defense-in-depth:
 /// a multipart field whose `filename` is `../evil` is reduced to `evil` before
 /// join, exactly like Python's `os.path.basename`).
@@ -1095,7 +1109,7 @@ fn upload_target_dir(directory: Option<&str>, base: &Path) -> Result<PathBuf, Ap
     path = "/files/upload",
     tag = "files",
     params(UploadQuery),
-    request_body(content_type = "multipart/form-data", description = "multipart `file` field(s) written to `directory`/<basename>"),
+    request_body(content = FileUpload, content_type = "multipart/form-data", description = "multipart `file` field written to `directory`/<basename>"),
     security(("brokerBearer" = [])),
     responses(
         (status = 200, description = "Saved path + size", body = serde_json::Value),
@@ -1159,7 +1173,7 @@ pub async fn upload(
     post,
     path = "/upload",
     tag = "tools",
-    request_body(content_type = "multipart/form-data", description = "multipart `file` field written to the workspace base"),
+    request_body(content = FileUpload, content_type = "multipart/form-data", description = "multipart `file` field written to the workspace base"),
     security(("brokerBearer" = [])),
     responses(
         (status = 200, description = "Saved path + bytes", body = serde_json::Value),
