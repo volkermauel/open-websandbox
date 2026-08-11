@@ -2,7 +2,7 @@
 //! `POST /upload`) + the zip archive endpoint (`POST /files/archive`).
 //!
 //! These three handlers were the last open-terminal/LLM-tool endpoints still
-//! served only by the legacy Python runtime; this ports them to Rust and proves
+//! outstanding; these contract tests prove
 //! byte/contract parity.
 
 #![forbid(unsafe_code)]
@@ -113,7 +113,7 @@ async fn upload_creates_missing_directory() {
 async fn upload_basename_strips_traversal() {
     let env = common::Env::new();
     // a `filename` carrying a path component is reduced to its basename before
-    // join (defense-in-depth), exactly like Python's `os.path.basename`.
+    // join (defense-in-depth), like `os.path.basename`.
     let (ct, body) = multipart("../evil.txt", b"x");
     let resp = env
         .send_typed(

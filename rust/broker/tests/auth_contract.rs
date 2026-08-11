@@ -1,6 +1,6 @@
 //! Shared-Bearer auth contract: gated routes are fail-closed.
 //!
-//! Mirrors the Python broker's `_auth`: placeholder/unset secret → 503;
+//! The shared-Bearer guard: placeholder/unset secret → 503;
 //! missing or mismatched Bearer → 401; correct Bearer → 200.
 
 #![forbid(unsafe_code)]

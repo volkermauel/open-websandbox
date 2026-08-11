@@ -17,8 +17,8 @@ use crate::snapshot::{restore, snapshot};
 use crate::state::AppState;
 use crate::terminals::{create_terminal, kill_terminal, list_terminals, terminal_get_or_ws};
 
-/// Health/info payload returned by `GET /`. Field order matches the Python
-/// runtime byte-for-byte (`status` first).
+/// Health/info payload returned by `GET /`. Field order is fixed
+/// byte-for-byte (`status` first).
 #[derive(serde::Serialize)]
 struct Root {
     status: &'static str,
@@ -47,8 +47,8 @@ pub fn build_router(state: AppState) -> Router {
         //      chart's PodMonitor on :8888/metrics).
         .route("/metrics", get(crate::metrics::metrics))
         // Gated routes: every handler declares `Authed` as its first extractor,
-        // so each is individually fail-closed (mirrors Python's per-route
-        // Security dep).
+        // so each is individually fail-closed (a per-route auth
+        // extractor).
         .route("/execute", post(execute))
         .route("/files/cwd", get(get_cwd).post(set_cwd))
         .route("/files/list", get(list_dir))

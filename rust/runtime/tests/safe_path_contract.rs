@@ -1,4 +1,4 @@
-//! Verbatim port of `tests/unit/runtime/test_safe_path.py` (17 cases).
+//! Path-confinement contract tests (17 cases).
 //!
 //! The path-confinement boundary is the #1 security deliverable of PR-B-1; these
 //! cases throw the usual traversal arsenal at [`safe_path`] directly (function

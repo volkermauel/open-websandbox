@@ -1,11 +1,11 @@
-//! Core of `tests/unit/runtime/test_snapshot_restore.py` — the S3-tiered
+//! Contract for the S3-tiered
 //! `/snapshot`+`/restore` surface (#52).
 //!
 //! The broker is the sole S3 client; the runtime only streams a zstd-compressed
 //! tar of the whole workspace off (`GET /snapshot`) and back on (`PUT /restore`)
 //! over the per-session key. These drive the round-trip on real tmp workspaces
 //! (the native `tar`+`zstd` CLIs are present), the size fail-on-exceed (D9), and
-//! the auth gating — 5 cases, matching the Python suite.
+//! the auth gating — 5 cases.
 
 #![forbid(unsafe_code)]
 

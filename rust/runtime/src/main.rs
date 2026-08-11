@@ -51,8 +51,8 @@ async fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Apply `RLIMIT_NPROC` to this process (and thus every child) — best-effort,
-/// matching the Python runtime's `try/except` swallow. Logged, never fatal.
+/// Apply `RLIMIT_NPROC` to this process (and thus every child) — best-effort;
+/// failures are swallowed. Logged, never fatal.
 fn apply_max_procs(max_procs: u64) {
     use nix::sys::resource::{setrlimit, Resource};
     match setrlimit(Resource::RLIMIT_NPROC, max_procs, max_procs) {

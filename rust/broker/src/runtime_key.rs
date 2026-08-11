@@ -8,9 +8,6 @@
 //! re-reads it on every proxied hop to authenticate to that runtime
 //! (`Authorization: Bearer <key>`). One pod, one key — no shared runtime
 //! credential crosses a sandbox boundary.
-//!
-//! Faithful port of the Python broker's `_mint_runtime_key` / `_write_runtime_key`
-//! / `_runtime_key_for` / `_inject_runtime_key_volume` (`broker/main.py`).
 
 #![forbid(unsafe_code)]
 
@@ -19,7 +16,7 @@ use std::collections::BTreeMap;
 use k8s_openapi::api::core::v1::Secret;
 use kube::api::ObjectMeta;
 
-/// Secret-name prefix (Python `RUNTIME_KEY_PREFIX`).
+/// Secret-name prefix.
 pub const KEY_PREFIX: &str = "owui-runtime-key-";
 /// The data key inside the Secret + the projected file name (`api-key`).
 pub const DATA_KEY: &str = "api-key";
@@ -32,9 +29,9 @@ pub fn secret_name(sandbox_name: &str) -> String {
 
 /// A fresh 256-bit per-session key, hex-encoded (64 chars). CSPRNG-sourced via
 /// `rand::rng()` (ThreadRng / ChaCha12) — never a placeholder the runtime's
-/// (Python: `secrets.token_urlsafe(32)`; the encoding differs but the entropy +
-/// the contract — an opaque bearer string the runtime compares in constant
-/// time — are identical.)
+/// auth rejects. The encoding differs from a URL-safe token, but the entropy
+/// and the contract — an opaque bearer string the runtime compares in constant
+/// time — are identical.
 #[must_use]
 pub fn mint_key() -> String {
     use rand::Rng;
@@ -51,8 +48,8 @@ pub fn mint_key() -> String {
 }
 
 /// Build the per-session key Secret (`stringData` so the apiserver base64-codes
-/// it; we read it back via `data` on each hop). Labels mirror the Python
-/// `RUNTIME_KEY_SECRET_LABELS` (`managed-by=owui-broker` + `component=runtime-key`).
+/// it; we read it back via `data` on each hop). Labels:
+/// `managed-by=owui-broker` + `component=runtime-key`.
 #[must_use]
 pub fn build_secret(sandbox_name: &str, namespace: &str, key: &str) -> Secret {
     let mut string_data = BTreeMap::new();
@@ -79,7 +76,7 @@ pub fn build_secret(sandbox_name: &str, namespace: &str, key: &str) -> Secret {
 /// Inject the per-session runtime-key `secret` volume + a read-only mount at
 /// `/etc/runtime-key` into a pod blueprint (`serde_json::Value`).
 ///
-/// Mirrors the Python `_inject_runtime_key_volume` byte-for-byte: the volume is
+/// The volume is
 /// a non-optional `secret` (not `projected`) sourcing `secretName` + an
 /// `items` map (`api-key`→`api-key`); the mount is `readOnly`. The Secret must
 /// exist before the pod is created (the caller `ensure_runtime_key`s first), so

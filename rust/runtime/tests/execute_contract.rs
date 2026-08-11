@@ -1,4 +1,4 @@
-//! Verbatim port of `tests/unit/runtime/test_execute.py` (9 cases).
+//! Execute-contract tests (9 cases).
 //!
 //! Real `tokio::process::Command` spawn — exit codes, stdout/stderr capture and
 //! split, the `cap` truncation at the configured cap, the timeout path

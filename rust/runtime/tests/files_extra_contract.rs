@@ -1,5 +1,5 @@
-//! Core of `tests/unit/runtime/test_files_extra.py` + the grep/glob/replace/view
-//! happy paths of `test_files_api.py` — the PR-B-4 file-operation surface.
+//! Contract for the PR-B-4 file-operation surface — the grep/glob/replace/view
+//! happy paths of the `/files/*` API.
 //!
 //! Covers: /ports, /files/view, /files/replace (incl. line-scoped),
 //! /download/{path}, /list/{path}, /exists/{path}, /files/grep, /files/glob.

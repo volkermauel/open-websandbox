@@ -1,8 +1,8 @@
-//! Error type mapping the FastAPI `HTTPException` contract onto axum responses.
+//! Error type mapping the canonical HTTP error contract onto axum responses.
 //!
 //! Every file/exec failure surfaces as an `ApiError` that renders a JSON body of
-//! the shape FastAPI produces (`{"detail": "..."}`) with the same status codes
-//! the Python runtime returns, so the HTTP surface is byte-for-byte compatible
+//! the canonical shape (`{"detail": "..."}`) with the same status codes, so the
+//! HTTP surface is byte-for-byte compatible
 //! (D11).
 
 #![forbid(unsafe_code)]
@@ -12,7 +12,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
 
-/// A handler error that maps 1:1 onto the Python runtime's HTTP status codes.
+/// A handler error that maps 1:1 onto the runtime's HTTP status codes.
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
     /// 400 — bad request: path traversal/escape, invalid subdir, write failure.
@@ -59,7 +59,7 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = self.status();
-        // Match FastAPI's HTTPException body shape exactly: {"detail": "..."}.
+        // Match the canonical error body shape exactly: {"detail": "..."}.
         let body = Json(json!({ "detail": self.to_string() }));
         (status, body).into_response()
     }

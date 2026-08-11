@@ -22,7 +22,7 @@ use crate::terminal::terminal_ws;
 /// the gated surface share one state: handlers that don't need it simply omit
 /// the [`State`](axum::extract::State) extractor, while every gated handler
 /// declares [`Authed`](crate::auth::Authed) first so each is individually
-/// fail-closed (mirrors the Python per-route `Security(_auth)`).
+/// fail-closed.
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         // Open (unauthenticated) routes.

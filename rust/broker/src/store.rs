@@ -65,7 +65,7 @@ pub trait SandboxStore: Send + Sync {
     async fn get_sandbox(&self, name: &str) -> Result<Option<Sandbox>, StoreError>;
 
     /// Delete a `Sandbox` by name. Returns whether the object existed
-    /// (404-tolerant, matching the Python `_delete_sandbox` swallow).
+    /// (404-tolerant).
     async fn delete_sandbox(&self, name: &str) -> Result<bool, StoreError>;
 
     /// List broker-owned `Sandbox` objects, optionally filtered by a Kubernetes
@@ -76,7 +76,7 @@ pub trait SandboxStore: Send + Sync {
     ) -> Result<Vec<Sandbox>, StoreError>;
 
     /// Park (`Suspended`) or resume (`Running`) a sandbox by patching
-    /// `spec.operatingMode` (mirrors the Python `_set_sandbox_operating_mode`).
+    /// `spec.operatingMode`.
     /// [`StoreError::NotFound`] when the object is absent.
     async fn patch_operating_mode(
         &self,
@@ -85,7 +85,7 @@ pub trait SandboxStore: Send + Sync {
     ) -> Result<(), StoreError>;
 
     /// Refresh the `broker-last-used` annotation to `now` (epoch seconds) on the
-    /// named sandbox (mirrors the Python `_touch_sandbox`). Active resolves call
+    /// named sandbox. Active resolves call
     /// this so the reaper doesn't park/reap a sandbox mid-session. Best-effort
     /// at the call site: a failure is logged, never fatal. [`StoreError::NotFound`]
     /// when the object is absent.
@@ -108,7 +108,7 @@ pub trait SandboxStore: Send + Sync {
     async fn read_runtime_key(&self, sandbox_name: &str) -> Result<Option<String>, StoreError>;
 
     /// Best-effort reap of the per-session key Secret with the sandbox
-    /// (404-tolerant, mirrors the Python `_delete_runtime_key`).
+    /// (404-tolerant).
     async fn delete_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError>;
 }
 
@@ -281,7 +281,7 @@ impl SandboxStore for KubeSandboxStore {
     }
 
     async fn apiserver_reachable(&self) -> bool {
-        // Lightweight probe mirroring the Python readyz: list sandboxes
+        // Lightweight readyz probe: list sandboxes
         // (limit 1). Any error → not ready.
         match self
             .sandbox_api()

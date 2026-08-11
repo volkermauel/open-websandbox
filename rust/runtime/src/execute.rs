@@ -1,14 +1,14 @@
 //! `POST /execute` — hardened sandbox command execution.
 //!
 //! Spawns the command in its own process group (`process_group(0)`, the safe
-//! `std` equivalent of Python's `start_new_session=True`) so a timeout can
+//! `std` equivalent of `start_new_session=True`) so a timeout can
 //! `killpg(SIGKILL)` the WHOLE tree, not just the shell. Output is capped per
-//! stream at `MAX_OUTPUT_BYTES` with the same truncation message as the Python
-//! runtime. Timeout → `exit_code=124`, `timed_out=true`, empty output. HTTP 200
+//! stream at `MAX_OUTPUT_BYTES` with the same truncation message.
+//! Timeout → `exit_code=124`, `timed_out=true`, empty output. HTTP 200
 //! even on non-zero exit (the exit code is in the body, not the status).
 //!
 //! `RLIMIT_NPROC` is applied once at boot (see `main.rs`) and inherited by
-//! children; it is NOT set per-command, matching the Python runtime.
+//! children; it is NOT set per-command.
 
 #![forbid(unsafe_code)]
 
@@ -46,10 +46,10 @@ pub struct ExecuteResponse {
     pub timed_out: bool,
 }
 
-/// Truncate output to `max` code points with the Python `_cap` message.
+/// Truncate output to `max` code points with the `_cap` message.
 ///
-/// Mirrors `len(s)` semantics (Python `str` length = code points) so the
-/// truncation byte count matches the Python runtime for the test output.
+/// Mirrors `len(s)` semantics (`str` length = code points) so the
+/// truncation byte count matches the runtime for the test output.
 pub(crate) fn cap(s: &str, max: usize) -> String {
     let count = s.chars().count();
     if count > max {
@@ -100,7 +100,7 @@ fn subdir_from(headers: &HeaderMap) -> Option<&str> {
 ///
 /// `child` is retained (only its piped stdout/stderr handles are read out) so we
 /// can `.wait()` it in both the normal-exit and timeout paths and avoid leaving a
-/// zombie — matching the Python `_kill_group` + `proc.wait()` reap.
+/// zombie (`_kill_group` + `proc.wait()` reap).
 pub(crate) async fn run_command(
     state: &AppState,
     base: &std::path::Path,

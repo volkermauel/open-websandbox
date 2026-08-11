@@ -2,14 +2,14 @@
 //!
 //! Every file endpoint funnels through [`safe_path`], which confines a
 //! caller-supplied path to the workspace base (`WORKDIR`, or
-//! `WORKDIR/<subdir>` under `X-Workspace-Subdir`). This is a faithful Rust port
-//! of the Python `server._safe_path` / `_request_base`: it rejects any path that
+//! `WORKDIR/<subdir>` under `X-Workspace-Subdir`). It rejects any path that
 //! resolves outside `base` — `..` traversal, absolute escapes, URL-encoded
+//! escapes, root
 //! traversal, and symlink escapes — while honouring absolute paths that are
 //! already inside `base` (the open-terminal UI echoes the cwd back from
 //! `GET /files/cwd`).
 //!
-//! The 17 cases in `tests/unit/runtime/test_safe_path.py` are ported verbatim
+//! The 17 path-confinement cases are ported verbatim
 //! in `tests/safe_path_contract.rs`.
 
 #![forbid(unsafe_code)]
@@ -34,7 +34,7 @@ fn unquote(s: &str) -> String {
 /// Resolve an absolute path to its canonical form, following symlinks for
 /// components that exist and leaving the (possibly non-existent) tail lexical.
 ///
-/// This mirrors Python's `os.path.realpath`, which — unlike
+/// Like `os.path.realpath`, which — unlike
 /// [`std::fs::canonicalize`] — succeeds on paths whose final components do not
 /// yet exist (e.g. a file about to be written). For the security property what
 /// matters is that a symlink living *inside* `base` that points *outside* is
@@ -104,7 +104,7 @@ fn resolve(input: &Path, links: &mut u32) -> PathBuf {
 
 /// True iff `child` is `base` itself or lives directly/indirectly under `base`.
 ///
-/// Equivalent to Python's `full == base or full.startswith(base + os.sep)`.
+/// Equivalent to `full == base or full.startswith(base + os.sep)`.
 /// Compares canonical paths byte-for-byte; a trailing separator is never
 /// significant because [`PathBuf`] drops it.
 fn within(child: &Path, base: &Path) -> bool {
@@ -161,7 +161,7 @@ pub fn request_base(workdir: &Path, subdir: Option<&str>) -> Result<PathBuf, Api
 
 /// `^[A-Za-z0-9._-]{1,64}$` — hand-rolled to avoid a regex dependency for one
 /// fixed pattern. `.` is allowed by the charset, so `..` passes the charset and
-/// is then caught by the escape check in [`request_base`] (matching Python).
+/// is then caught by the escape check in [`request_base`].
 fn is_valid_subdir(sub: &str) -> bool {
     let len = sub.chars().count();
     if !(1..=64).contains(&len) {

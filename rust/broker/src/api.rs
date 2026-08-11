@@ -1,17 +1,16 @@
 //! HTTP handlers — the broker's Open WebUI-facing surface + Sandbox CRUD.
 //!
-//! Two groups, matching the Python `app`:
+//! Two route groups:
 //!
 //! * **Open** (no auth): `GET /healthz`, `GET /readyz`, `GET /metrics`,
-//!   `GET /openapi.json`, `GET /docs` — exactly the routes the Python broker
-//!   registers without `Security(_auth)`.
+//!   `GET /openapi.json`, `GET /docs` — registered without an auth guard.
 //! * **Gated** (shared Bearer via [`Authed`](crate::auth::Authed)):
 //!   `GET /api/config`, `GET /api/status` (broker-served, OpenAPI-defined),
 //!   the Sandbox lifecycle CRUD (`/api/sandboxes[/{name}]`), and the catch-all
 //!   reverse proxy (`/{*path}`).
 //!
 //! What is real vs stubbed here is enumerated in the module docs of
-//! [`crate`]. Request/response shapes match `openapi_spec.py` for the endpoints
+//! [`crate`]. Request/response shapes match the OpenAPI spec for the endpoints
 //! it defines; the Sandbox CRUD is the broker-internal lifecycle surface this PR
 //! introduces (C-2's resolve-on-request flow reuses it).
 
@@ -36,7 +35,7 @@ use crate::sandbox::{build_sandbox, extract_pod_template};
 use crate::state::AppState;
 use crate::store::{StoreError, StoreError::*};
 
-// --- broker-served responses (match openapi_spec.py shapes) ----------------
+// --- broker-served responses (match the OpenAPI shapes) -------------------
 
 /// `GET /healthz` and `GET /readyz` body: `{"status": "..."}`.
 #[derive(Serialize, ToSchema)]
@@ -226,7 +225,7 @@ pub async fn docs() -> Response {
     ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
 }
 
-// --- gated: broker-served (openapi_spec.py parity) --------------------------
+// --- gated: broker-served (OpenAPI parity) ---------------------------------
 
 /// `GET /api/config` — feature discovery (terminal UI connection gate).
 #[utoipa::path(

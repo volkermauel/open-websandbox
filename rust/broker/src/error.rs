@@ -1,8 +1,8 @@
-//! Error type mapping the Python `HTTPException` contract onto axum responses.
+//! Error type mapping the canonical HTTP error contract onto axum responses.
 //!
 //! Mirrors [`runtime::error`](../../runtime/src/error.rs): every handler
 //! failure surfaces as an [`ApiError`] that renders a JSON body of the shape
-//! FastAPI produces (`{"detail": "..."}`) with the same status codes, so the
+//! `{"detail": "..."}` with the same status codes, so the
 //! HTTP surface is byte-for-byte compatible (D11). The broker-specific
 //! [`ApiError::NotImplemented`] (501) marks the reverse-proxy surface that
 //! PR-C-2 fills in.
@@ -63,7 +63,7 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = self.status();
-        // Match FastAPI's HTTPException body shape exactly: {"detail": "..."}.
+        // Match the canonical error body shape exactly: {"detail": "..."}.
         let body = Json(json!({ "detail": self.to_string() }));
         (status, body).into_response()
     }

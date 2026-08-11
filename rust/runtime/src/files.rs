@@ -34,7 +34,7 @@ fn base_of(state: &AppState, headers: &HeaderMap) -> Result<PathBuf, ApiError> {
     request_base(&state.config.workdir, subdir_from(headers))
 }
 
-/// Convert a file mtime to seconds-since-epoch (Python `float(st.st_mtime)`).
+/// Convert a file mtime to seconds-since-epoch (`float(st.st_mtime)`).
 fn modified_secs(meta: &std::fs::Metadata) -> f64 {
     meta.modified()
         .ok()
@@ -182,7 +182,7 @@ fn entry_for(p: &Path) -> Option<Entry> {
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_string();
-    // Match Python: `os.path.isdir` follows symlinks, so a symlink to a dir is
+    // `os.path.isdir` follows symlinks, so a symlink to a dir is
     // reported as "directory"; a broken symlink falls back to "file".
     let is_dir = if meta.file_type().is_symlink() {
         std::fs::metadata(p).map(|m| m.is_dir()).unwrap_or(false)
@@ -441,8 +441,8 @@ pub async fn list_ports(_auth: Authed) -> Json<serde_json::Value> {
 
 // --- raw-file response helper (view + download) -----------------------------
 
-/// Stream a file as raw bytes with mime + content-disposition, matching Python's
-/// `FileResponse(full, media_type=mime or octet-stream, filename=basename)`.
+/// Stream a file as raw bytes with mime + content-disposition
+/// (`FileResponse(full, media_type=mime or octet-stream, filename=basename)`).
 fn file_response(full: &Path) -> Result<Response, ApiError> {
     let mime = mime_guess::from_path(full).first_or_octet_stream();
     let bytes = std::fs::read(full).map_err(|e| ApiError::Internal(format!("read failed: {e}")))?;
@@ -688,7 +688,7 @@ pub async fn replace(
     if !full.is_file() {
         return Err(ApiError::NotFound("File not found".to_string()));
     }
-    // Python reads with `errors="replace"` (lossy UTF-8).
+    // Lossy UTF-8 read (errors="replace").
     // Non-blocking read (issue #82): was `std::fs::read`.
     let bytes = tokio::fs::read(&full)
         .await
@@ -707,7 +707,7 @@ pub async fn replace(
     ))
 }
 
-/// Count non-overlapping occurrences of `target` in `segment` (Python str.count).
+/// Count non-overlapping occurrences of `target` in `segment` (`str.count`).
 fn count_occurrences(segment: &str, target: &str) -> usize {
     if target.is_empty() {
         return 0;
@@ -797,7 +797,7 @@ pub async fn grep(
         return Err(ApiError::NotFound("Search path not found".to_string()));
     }
     let max_results = q.max_results.unwrap_or(50).clamp(1, 500);
-    // Python: regex=True compiles the query; regex=False compiles re.escape(query).
+    // regex=True compiles the query; regex=False compiles re.escape(query).
     let pattern_src = if q.regex.unwrap_or(true) {
         q.query.clone()
     } else {
@@ -810,7 +810,7 @@ pub async fn grep(
     let mut matches_arr: Vec<serde_json::Value> = Vec::new();
     let include = q.include.as_deref().map(|s| vec![s.to_string()]);
     for fpath in walk_files(&resolved, include.as_deref()) {
-        // Python opens with errors="replace"; a read failure (unreadable) is skipped.
+        // Lossy UTF-8 read (errors="replace"); a read failure (unreadable) is skipped.
         let Ok(fbytes) = std::fs::read(&fpath) else {
             continue;
         };
@@ -842,7 +842,7 @@ pub async fn grep(
 }
 
 /// All regular files under `root` (sorted); optional fnmatch include filter.
-/// Mirrors Python `_walk_files`: if `root` is a file, returns `[root]`.
+/// If `root` is a file, returns `[root]`.
 fn walk_files(root: &Path, include: Option<&[String]>) -> Vec<PathBuf> {
     let Ok(meta) = std::fs::metadata(root) else {
         return Vec::new();
@@ -922,7 +922,7 @@ pub async fn glob_search(
     let kind = q.kind.as_deref().unwrap_or("any");
     let max_results = q.max_results.unwrap_or(50).clamp(1, 500);
     // Collect all candidates (walked like os.walk), then sort by path; truncated
-    // iff total >= max_results (matches Python's append-then-check short-circuit).
+    // iff total >= max_results (append-then-check short-circuit).
     let mut found: Vec<(String, bool, u64, f64)> = Vec::new();
     glob_collect(&resolved, &resolved, &q.pattern, kind, &mut found);
     found.sort_by(|a, b| a.0.cmp(&b.0));
@@ -980,7 +980,7 @@ fn glob_collect(
             } else if kind == "directory" && !is_dir {
                 // type filter excludes this entry.
             } else if let Ok(st) = std::fs::metadata(&path) {
-                // os.stat failure (broken symlink) → skip, matching Python.
+                // os.stat failure (broken symlink) → skip.
                 out.push((rel, is_dir, st.len(), modified_secs(&st)));
             }
         }
@@ -993,7 +993,7 @@ fn glob_collect(
     }
 }
 
-/// Shell-style fnmatch (Python `fnmatch.fnmatch`, case-sensitive on Linux):
+/// Shell-style fnmatch (`fnmatch.fnmatch`, case-sensitive on Linux):
 /// translates `*`→`.*`, `?`→`.`, `[...]`→char class, anchors the whole string.
 fn fnmatch(name: &str, pattern: &str) -> bool {
     let Some(re_src) = fnmatch_translate(pattern) else {
@@ -1004,8 +1004,8 @@ fn fnmatch(name: &str, pattern: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Translate a shell glob into an anchored regex, mirroring Python's
-/// `fnmatch.translate` (classic form). Returns `^...$`.
+/// Translate a shell glob into an anchored regex
+/// (`fnmatch.translate`, classic form). Returns `^...$`.
 fn fnmatch_translate(pat: &str) -> Option<String> {
     let chars: Vec<char> = pat.chars().collect();
     let n = chars.len();
@@ -1095,7 +1095,7 @@ pub struct FileUpload {
 
 /// Basename of an uploaded filename, never the dir component (defense-in-depth:
 /// a multipart field whose `filename` is `../evil` is reduced to `evil` before
-/// join, exactly like Python's `os.path.basename`).
+/// join, like `os.path.basename`).
 fn upload_basename(name: Option<&str>) -> &str {
     name.and_then(|n| Path::new(n).file_name())
         .and_then(|s| s.to_str())
