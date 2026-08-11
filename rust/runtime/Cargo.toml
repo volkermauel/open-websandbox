@@ -10,6 +10,14 @@ description = "Sandbox runtime (axum + tokio): hardened /execute + /files/* surf
 [lib]
 path = "src/lib.rs"
 
+# OTLP exporter feature gate (issue #83). Forwarded to `shared` so the slim
+# opt-out build `cargo build -p runtime --no-default-features` drops
+# tonic/prost/h2 (+ OTLP HTTP client) from the runtime binary. `metrics` facade +
+# Prometheus `/metrics` + tracing SDK stay always-on regardless.
+[features]
+default = ["telemetry-otlp"]
+telemetry-otlp = ["shared/telemetry-otlp"]
+
 [[bin]]
 name = "runtime"
 path = "src/main.rs"
@@ -32,7 +40,7 @@ portable-pty = "0.9"
 serde.workspace = true
 serde_json.workspace = true
 utoipa.workspace = true
-shared = { version = "0.1.0", path = "../shared" }
+shared = { version = "0.1.0", path = "../shared", default-features = false }
 thiserror.workspace = true
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }

@@ -597,7 +597,7 @@ dependencies = [
  "kube",
  "metrics",
  "rand 0.10.2",
- "reqwest",
+ "reqwest 0.12.28",
  "runtime",
  "rustls 0.23.43",
  "serde",
@@ -2283,6 +2283,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "opentelemetry-http"
+version = "0.32.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5683015d09e2df236ef005b17f6f196f0d5f6313c4fa43a7b6a53b52776e4331"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "http 1.5.0",
+ "opentelemetry",
+ "reqwest 0.13.4",
+]
+
+[[package]]
 name = "opentelemetry-otlp"
 version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2290,9 +2303,11 @@ checksum = "9966929966d17620d7c316c643ba62631826e10021409357772d5eea84f62c35"
 dependencies = [
  "http 1.5.0",
  "opentelemetry",
+ "opentelemetry-http",
  "opentelemetry-proto",
  "opentelemetry_sdk",
  "prost",
+ "reqwest 0.13.4",
  "thiserror 2.0.20",
  "tokio",
  "tonic",
@@ -2891,6 +2906,35 @@ dependencies = [
  "wasm-streams",
  "web-sys",
  "webpki-roots",
+]
+
+[[package]]
+name = "reqwest"
+version = "0.13.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "219c5811de6525e5416c7d5d53bb656d3afdbc6c5af816e0802bcfa42dbdc1c3"
+dependencies = [
+ "base64",
+ "bytes",
+ "futures-core",
+ "http 1.5.0",
+ "http-body 1.1.0",
+ "http-body-util",
+ "hyper 1.11.0",
+ "hyper-util",
+ "js-sys",
+ "log",
+ "percent-encoding",
+ "pin-project-lite",
+ "sync_wrapper",
+ "tokio",
+ "tower",
+ "tower-http 0.6.11",
+ "tower-service",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

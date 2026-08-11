@@ -25,12 +25,18 @@ async-trait = "0.1.89"
 # OpenTelemetry stack (D9): the OTLP exporter + SDK + tracing bridge. The
 # feature set is pinned once here (D8) and consumed via `workspace = true`.
 # - `rt-tokio`: batch span processor runtime (opentelemetry_sdk).
-# - `tonic`: OTLP/gRPC transport (opentelemetry-otlp).
+# - `grpc-tonic`: OTLP/gRPC transport (tonic/prost/h2).
+# - `http-proto` + `reqwest-client`: OTLP/HTTP transport (issue #83), selected
+#   at runtime via `OTEL_EXPORTER_OTLP_PROTOCOL=http` (default `grpc`).
+# The OTLP exporter crate is feature-gated per member (`telemetry-otlp`, default
+# on) so slim builds can drop tonic/prost/h2 + the HTTP client entirely (issue
+# #83). The `metrics` facade + Prometheus `/metrics` and the `opentelemetry`
+# tracing SDK stay always-on; ONLY the OTLP exporter transport is conditional.
 # Tracing remains a no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset — boot+serve
 # never depend on a collector being reachable.
 opentelemetry = "0.32"
 opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "grpc-tonic"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "grpc-tonic", "http-proto", "reqwest-client"] }
 tracing-opentelemetry = "0.33"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
