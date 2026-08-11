@@ -1,6 +1,7 @@
 # Sandbox-runtime isolation (revised for dynamic dep installs, pip/npm).
 # default-deny ingress+egress; allow:
-#   ingress  — only the router (agent-sandbox-system) on the runtime port 8888
+#   ingress  — the router (agent-sandbox-system) on the runtime port 8888, AND (when
+#              monitoring.prometheus.enabled) the Prometheus scraper from the 'monitoring' ns
 #   egress   — DNS to PUBLIC resolvers (dnsPolicy: None — no cluster-DNS IP / no
 #              namespace search-domain leak), and HTTPS (443) to the internet for
 #              package installs, EXCLUDING all RFC1918/link-local so a sandbox cannot
@@ -18,6 +19,12 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: agent-sandbox-system
+      ports:
+        - { protocol: TCP, port: 8888 }
+    - from:                               # Prometheus scraper (PodMonitor) — runtime :8888
+        - namespaceSelector:              # (enable with monitoring.prometheus.enabled)
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
       ports:
         - { protocol: TCP, port: 8888 }
   egress:

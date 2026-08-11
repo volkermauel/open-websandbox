@@ -24,6 +24,20 @@ spec:
     ports:
     - protocol: TCP
       port: 8888
+  {{- if .Values.monitoring.prometheus.enabled }}
+  - from:                               # Prometheus scraper (PodMonitor) — runtime :8888
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Values.monitoring.prometheus.scrapeNamespace | quote }}
+      {{- with .Values.monitoring.prometheus.scrapePodLabels }}
+      podSelector:
+        matchLabels:
+          {{- toYaml . | nindent 10 }}
+      {{- end }}
+    ports:
+    - protocol: TCP
+      port: 8888
+  {{- end }}
   egress:
   - to:                               # DNS — public resolvers (matches dnsPolicy: None)
     {{- range .Values.networkPolicy.egress.dnsNameservers }}

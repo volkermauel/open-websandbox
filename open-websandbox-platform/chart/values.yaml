@@ -172,11 +172,20 @@ monitoring:
   # the prometheus-operator (kube-prometheus-stack) CRDs; OFF by default so clusters
   # without it install cleanly. When enabled: a ServiceMonitor scrapes the broker
   # (owui-broker Service, :8080/metrics) and a PodMonitor scrapes the runtime pods
-  # (app: code-standard, :8888/metrics). NOTE the runtime namespace is default-deny
-  # (NetworkPolicy) — allow ingress from your Prometheus namespace if you enable this.
+  # (app: code-standard, :8888/metrics). The runtime namespace is default-deny
+  # (NetworkPolicy); enabling this ALSO renders an allow-rule to :8888 from your
+  # Prometheus namespace (see scrapeNamespace / scrapePodLabels below).
   prometheus:
     enabled: false
     interval: 60s          # per-minute is sufficient (owner decision)
+    # NetworkPolicy ingress source for the Prometheus scraper. The runtime namespace is
+    # default-deny; when monitoring is enabled this renders an allow-rule to :8888 from the
+    # given namespace (translated to kubernetes.io/metadata.name=<ns>, auto-set by kube >=1.21).
+    # Defaults to the kube-prometheus-stack convention. Set scrapePodLabels to restrict to
+    # specific Prometheus pods (e.g. {app.kubernetes.io/name: prometheus}); empty = all pods
+    # in the namespace.
+    scrapeNamespace: monitoring
+    scrapePodLabels: {}
   # OpenTelemetry traces. Broker + runtime export via OTLP when `otlp.endpoint` is set
   # (OTEL_EXPORTER_OTLP_ENDPOINT on both pods). Empty => tracing disabled (soft no-op;
   # both services boot + serve regardless). Bring-your-own: point this at YOUR collector.
