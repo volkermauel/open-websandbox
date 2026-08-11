@@ -5,6 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::metrics::BrokerMetrics;
 use crate::s3::S3Offload;
 use crate::store::SandboxStore;
 
@@ -30,6 +31,9 @@ pub struct AppState {
     /// same [`S3Offload`] the leader-gated reaper offloads through); `None`
     /// otherwise, in which case resolve never attempts an S3 restore.
     pub s3_restore: Option<Arc<S3Offload>>,
+    /// D9 Prometheus metrics catalogue + registry (one per process; shared
+    ///    by the request path and the leader-gated reaper).
+    pub metrics: Arc<BrokerMetrics>,
 }
 
 impl AppState {
@@ -44,6 +48,7 @@ impl AppState {
             http,
             runtime_upstream_override: Arc::new(None),
             s3_restore: None,
+            metrics: BrokerMetrics::new(),
         }
     }
 
@@ -59,6 +64,7 @@ impl AppState {
             http,
             runtime_upstream_override: Arc::new(None),
             s3_restore: None,
+            metrics: BrokerMetrics::new(),
         }
     }
 

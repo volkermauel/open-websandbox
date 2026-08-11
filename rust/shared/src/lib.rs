@@ -13,7 +13,9 @@
 pub mod auth;
 pub mod config;
 pub mod crd;
+pub mod metrics;
 pub mod openapi;
+pub mod telemetry;
 
 pub use auth::constant_time_eq;
 pub use config::{
@@ -23,4 +25,6 @@ pub use crd::{
     OperatingMode, PodIpEntry, Sandbox, SandboxCondition, SandboxSpec, SandboxStatus,
     SandboxTemplate, SandboxTemplateSpec, ShutdownPolicy,
 };
+pub use metrics::{gather, install, HttpMetrics};
 pub use openapi::{BearerAddon, ErrorResponse, BEARER_SCHEME};
+pub use telemetry::{init as init_telemetry, shutdown as shutdown_telemetry};

@@ -37,6 +37,13 @@ async fn readyz_is_503_when_apiserver_unreachable() {
 #[tokio::test]
 async fn metrics_is_open_text() {
     let env = Env::new();
+    // Hit an open route first so the HTTP counter / histogram series for the
+    // templated route materialises (a freshly-registered Vec emits no child
+    // until first observation).
+    let probe = env.send(Method::GET, "/healthz", Bearer::None, None).await;
+    assert_eq!(status(&probe), StatusCode::OK);
+    let _ = body_text(probe).await;
+
     let resp = env.send(Method::GET, "/metrics", Bearer::None, None).await;
     assert_eq!(status(&resp), StatusCode::OK);
     assert!(resp
@@ -47,7 +54,23 @@ async fn metrics_is_open_text() {
         .unwrap()
         .starts_with("text/plain"));
     let body = body_text(resp).await;
-    assert!(body.contains("open-websandbox"), "{body}");
+    // D9: the stub is gone — the frozen broker metric catalogue is present.
+    for name in [
+        "open_websandbox_broker_http_requests_total",
+        "open_websandbox_broker_http_request_duration_seconds",
+        "open_websandbox_broker_active_sandboxes",
+        "open_websandbox_broker_sandboxes_created_total",
+        "open_websandbox_broker_sandboxes_deleted_total",
+        "open_websandbox_broker_runtime_hop_errors_total",
+    ] {
+        assert!(body.contains(name), "missing frozen metric {name}:\n{body}");
+    }
+    // The `path` label carries the templated matched route (bounded cardinality),
+    // not the raw URL — the /healthz probe shows up under path="/healthz".
+    assert!(
+        body.contains(r#"path="/healthz""#),
+        "expected templated path label for /healthz:\n{body}"
+    );
 }
 
 #[tokio::test]

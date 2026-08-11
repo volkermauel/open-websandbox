@@ -19,6 +19,7 @@ aws-sdk-s3 = "1"
 # rustls 0.23 needs an explicit process-level CryptoProvider when multiple TLS
 # crates (kube-rs, reqwest rustls-tls, aws-sdk-s3) pull it in transitively;
 # declared here so broker/src/main.rs can install_default() at boot.
+metrics.workspace = true
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "logging", "std", "tls12"] }
 anyhow.workspace = true
 async-trait.workspace = true

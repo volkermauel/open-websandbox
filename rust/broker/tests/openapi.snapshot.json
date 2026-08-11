@@ -2508,7 +2508,7 @@
             "description": "Prometheus exposition (text/plain)"
           }
         },
-        "summary": "`GET /metrics` — Prometheus exposition. PR-C-1 serves a minimal stub so the\nscrape path exists and is open; PR-C-3 wires the `open_websandbox_broker_*`\nmetric set (D9).",
+        "summary": "`GET /metrics` — Prometheus exposition (D9). Renders the broker's full\nmetric catalogue (`open_websandbox_broker_*`: HTTP rate/latency, active\nsandboxes, sandbox create/delete counts, runtime-hop errors) in\n`text/plain; version=0.0.4`.",
         "tags": [
           "health"
         ]

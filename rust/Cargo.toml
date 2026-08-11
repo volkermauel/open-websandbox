@@ -22,6 +22,18 @@ homepage = "https://github.com/volkermauel/open-websandbox"
 [workspace.dependencies]
 anyhow = "1.0.104"
 async-trait = "0.1.89"
+# OpenTelemetry stack (D9): the OTLP exporter + SDK + tracing bridge. The
+# feature set is pinned once here (D8) and consumed via `workspace = true`.
+# - `rt-tokio`: batch span processor runtime (opentelemetry_sdk).
+# - `tonic`: OTLP/gRPC transport (opentelemetry-otlp).
+# Tracing remains a no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset — boot+serve
+# never depend on a collector being reachable.
+opentelemetry = "0.32"
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "grpc-tonic"] }
+tracing-opentelemetry = "0.33"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # k8s-openapi requires exactly one version feature to be enabled. `shared` owns
 # the CRD type derives and therefore owns this feature selection for now; when
 # `broker`/`runtime` gain binaries in PR-B/PR-C, the pinned k8s version feature
@@ -31,6 +43,13 @@ kube = { version = "4.2.0", features = ["derive"] }
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+# D9 metrics facade (issue #74 Q4): the `metrics` crate fronts the
+# `metrics-exporter-prometheus` recorder. Pinned once here (D8) and consumed
+# via `workspace = true`; call sites use the `metrics::counter!` /
+# `metrics::histogram!` / `metrics::gauge!` macros against the single
+# per-process recorder installed by `shared`.
+metrics = "0.24"
+metrics-exporter-prometheus = "0.18"
 subtle = "2.6.1"
 thiserror = "2.0.20"
 utoipa = "5.5.0"

@@ -3,6 +3,7 @@
 
 #![forbid(unsafe_code)]
 
+use axum::middleware::from_fn_with_state;
 use axum::routing::{any, get, post};
 use axum::Router;
 
@@ -10,6 +11,7 @@ use crate::api::{
     api_config, api_status, create_sandbox, delete_sandbox, docs, get_sandbox, healthz,
     list_sandboxes, metrics, openapi_json, readyz,
 };
+use crate::metrics::http_metrics_layer;
 use crate::proxy::proxy_catch_all;
 use crate::state::AppState;
 use crate::terminal::terminal_ws;
@@ -44,5 +46,8 @@ pub fn build_router(state: AppState) -> Router {
         // Catch-all reverse proxy: /execute, /files/*, /snapshot, /restore,
         // /api/terminals (POST), … → resolved runtime pod.
         .route("/{*path}", any(proxy_catch_all))
+        // D9: record HTTP rate/latency for every served request, keyed by the
+        //      templated route (bounded-cardinality `path` label).
+        .layer(from_fn_with_state(state.clone(), http_metrics_layer))
         .with_state(state)
 }

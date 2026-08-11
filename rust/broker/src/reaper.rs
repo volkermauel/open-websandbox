@@ -37,6 +37,7 @@ use kube::ResourceExt;
 use shared::{OperatingMode, Profile, Sandbox};
 
 use crate::leaser::LeaderGate;
+use crate::metrics::{ACTIVE_SANDBOXES, SANDBOXES_DELETED_TOTAL};
 use crate::sandbox::{LAST_USED_KEY, PROFILE_LABEL_KEY};
 use crate::store::SandboxStore;
 
@@ -293,6 +294,15 @@ pub async fn run_reaper_loop(
                 offload_failed = stats.offload_failed,
                 "reaper tick"
             );
+        }
+        // D9 — leader-view metrics: only the elected leader returns non-empty
+        //        stats here (`maybe_reap_once` no-ops off-leader), so we mirror
+        //        that guard to avoid a non-leader zeroing the gauge.
+        if gate.is_leader() {
+            metrics::gauge!(ACTIVE_SANDBOXES).set(stats.scanned as f64);
+            if stats.reaped > 0 {
+                metrics::counter!(SANDBOXES_DELETED_TOTAL).increment(stats.reaped as u64);
+            }
         }
         // Cooperatively await the next tick OR a shutdown signal.
         tokio::select! {

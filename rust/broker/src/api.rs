@@ -31,6 +31,7 @@ use shared::{Profile, Sandbox};
 
 use crate::auth::Authed;
 use crate::error::ApiError;
+use crate::metrics::{SANDBOXES_CREATED_TOTAL, SANDBOXES_DELETED_TOTAL};
 use crate::sandbox::{build_sandbox, extract_pod_template};
 use crate::state::AppState;
 use crate::store::{StoreError, StoreError::*};
@@ -168,9 +169,10 @@ pub async fn readyz(State(state): State<AppState>) -> Result<Json<HealthResponse
     }
 }
 
-/// `GET /metrics` — Prometheus exposition. PR-C-1 serves a minimal stub so the
-/// scrape path exists and is open; PR-C-3 wires the `open_websandbox_broker_*`
-/// metric set (D9).
+/// `GET /metrics` — Prometheus exposition (D9). Renders the broker's full
+/// metric catalogue (`open_websandbox_broker_*`: HTTP rate/latency, active
+/// sandboxes, sandbox create/delete counts, runtime-hop errors) in
+/// `text/plain; version=0.0.4`.
 #[utoipa::path(
     get,
     path = "/metrics",
@@ -182,7 +184,7 @@ pub async fn readyz(State(state): State<AppState>) -> Result<Json<HealthResponse
 pub async fn metrics() -> Response {
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
-        "# open-websandbox broker metrics (stub; PR-C-3 wires Prometheus)\n",
+        shared::gather(),
     )
         .into_response()
 }
@@ -289,6 +291,7 @@ pub async fn api_status(_: Authed) -> Json<StatusResponse> {
         (status = 503, description = "Shared secret not configured", body = shared::ErrorResponse)
     )
 )]
+#[tracing::instrument(name = "sandbox.create", skip(state, req), fields(sandbox = tracing::field::Empty))]
 pub async fn create_sandbox(
     _: Authed,
     State(state): State<AppState>,
@@ -315,7 +318,11 @@ pub async fn create_sandbox(
     );
 
     match state.store.create_sandbox(sandbox).await {
-        Ok(created) => Ok((StatusCode::CREATED, Json(created))),
+        Ok(created) => {
+            // D9: a brand-new sandbox was created (explicit POST path).
+            metrics::counter!(SANDBOXES_CREATED_TOTAL).increment(1);
+            Ok((StatusCode::CREATED, Json(created)))
+        }
         Err(Conflict) => {
             // Idempotent: a concurrent create won — return the existing object.
             let existing = state
@@ -402,15 +409,21 @@ pub async fn get_sandbox(
         (status = 503, body = shared::ErrorResponse)
     )
 )]
+#[tracing::instrument(name = "sandbox.delete", skip(state), fields(sandbox = %name))]
 pub async fn delete_sandbox(
     _: Authed,
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    state
+    // D9: only count an actual delete (the store is 404-tolerant: a sandbox
+    // already gone yields `false`).
+    if state
         .store
         .delete_sandbox(&name)
         .await
-        .map_err(map_store_err)?;
+        .map_err(map_store_err)?
+    {
+        metrics::counter!(SANDBOXES_DELETED_TOTAL).increment(1);
+    }
     Ok(StatusCode::NO_CONTENT)
 }

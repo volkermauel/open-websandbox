@@ -22,6 +22,7 @@ pub mod client;
 pub mod config;
 pub mod error;
 pub mod leaser;
+pub mod metrics;
 pub mod proxy;
 pub mod reaper;
 pub mod resolve;
@@ -38,6 +39,7 @@ pub use client::build_client;
 pub use config::ServerConfig;
 pub use error::ApiError;
 pub use leaser::{InMemoryLease, InMemoryLeaseClient, KubeLease, LeaderGate, LeaseClient};
+pub use metrics::BrokerMetrics;
 pub use reaper::{NoopOffload, OffloadError, ReapOffload};
 pub use resolve::{resolve_sandbox, sandbox_name, ResolvedSandbox};
 pub use s3::{

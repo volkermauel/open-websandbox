@@ -3,6 +3,7 @@
 
 #![forbid(unsafe_code)]
 
+use axum::middleware::from_fn_with_state;
 use axum::routing::{delete, get, post, put};
 use axum::Router;
 
@@ -37,15 +38,17 @@ async fn ok() -> axum::http::StatusCode {
 
 /// Build the full runtime router over `state`.
 pub fn build_router(state: AppState) -> Router {
-    // Open (unauthenticated) routes: GET / + the two health probes.
-    let open = Router::new()
+    Router::new()
+        // Open (unauthenticated) routes: GET / + the two health probes.
         .route("/", get(root))
         .route("/healthz", get(ok))
-        .route("/readyz", get(ok));
-
-    // Gated routes: every handler declares `Authed` as its first extractor, so
-    // each is individually fail-closed (mirrors Python's per-route Security dep).
-    let gated = Router::new()
+        .route("/readyz", get(ok))
+        // D9: Prometheus exposition (open — scraped without auth, matching the
+        //      chart's PodMonitor on :8888/metrics).
+        .route("/metrics", get(crate::metrics::metrics))
+        // Gated routes: every handler declares `Authed` as its first extractor,
+        // so each is individually fail-closed (mirrors Python's per-route
+        // Security dep).
         .route("/execute", post(execute))
         .route("/files/cwd", get(get_cwd).post(set_cwd))
         .route("/files/list", get(list_dir))
@@ -80,7 +83,12 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/terminals/{id}",
             get(terminal_get_or_ws).delete(kill_terminal),
-        );
-
-    open.merge(gated.with_state(state))
+        )
+        // D9: record HTTP rate/latency for every served request, keyed by the
+        //      templated route (bounded-cardinality `path` label).
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::metrics::http_metrics_layer,
+        ))
+        .with_state(state)
 }

@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::auth::SessionKeyStore;
 use crate::config::RuntimeConfig;
+use crate::metrics::RuntimeMetrics;
 use crate::terminals::TerminalRegistry;
 
 /// State shared across all request handlers.
@@ -18,6 +19,8 @@ pub struct AppState {
     pub key_store: Arc<SessionKeyStore>,
     /// In-process PTY terminal sessions (`/api/terminals`).
     pub terminals: Arc<TerminalRegistry>,
+    /// D9 Prometheus metrics catalogue + registry (one per process).
+    pub metrics: Arc<RuntimeMetrics>,
 }
 
 impl AppState {
@@ -26,6 +29,7 @@ impl AppState {
             config: Arc::new(config),
             key_store: Arc::new(key_store),
             terminals: Arc::new(TerminalRegistry::new()),
+            metrics: RuntimeMetrics::new(),
         }
     }
 }

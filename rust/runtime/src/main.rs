@@ -14,12 +14,9 @@ use runtime::{build_router, AppState, RuntimeConfig, SessionKeyStore};
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "runtime=info".into()),
-        )
-        .init();
+    // D9 — soft OTel: fmt always; OTLP/gRPC bridge only when
+    // OTEL_EXPORTER_OTLP_ENDPOINT is set (no-op otherwise).
+    let otel_provider = shared::init_telemetry("open-websandbox-runtime", "runtime=info");
 
     let cfg = RuntimeConfig::from_env();
     tracing::info!(workdir = %cfg.workdir.display(), "runtime booting");
@@ -49,6 +46,8 @@ async fn main() -> ExitCode {
         tracing::error!("serve failed: {e}");
         return ExitCode::from(1);
     }
+    // D9 — best-effort flush of the OTLP batch processor on graceful exit.
+    shared::shutdown_telemetry(otel_provider);
     ExitCode::SUCCESS
 }
 

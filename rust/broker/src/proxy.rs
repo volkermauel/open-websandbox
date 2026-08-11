@@ -31,8 +31,10 @@ use shared::Profile;
 
 use crate::auth::Authed;
 use crate::error::ApiError;
+use crate::metrics::RUNTIME_HOP_ERRORS_TOTAL;
 use crate::resolve::{resolve_sandbox, ResolvedSandbox};
 use crate::state::AppState;
+use tracing::Instrument;
 
 /// Hop-by-hop + broker-managed headers stripped before forwarding (Python `HOP`).
 ///
@@ -261,8 +263,17 @@ pub async fn proxy_catch_all(
         .headers(fwd)
         .body(body)
         .send()
+        .instrument(tracing::info_span!(
+            "runtime.hop",
+            "runtime.pod" = %resolved.pod_ip,
+            "http.url" = %url,
+        ))
         .await
-        .map_err(|e| ApiError::BadGateway(format!("runtime hop to {url} failed: {e}")))?;
+        .map_err(|e| {
+            // D9: a runtime hop transport/connect/send failure.
+            metrics::counter!(RUNTIME_HOP_ERRORS_TOTAL).increment(1);
+            ApiError::BadGateway(format!("runtime hop to {url} failed: {e}"))
+        })?;
 
     forward_response(upstream).await
 }

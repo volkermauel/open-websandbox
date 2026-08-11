@@ -35,12 +35,10 @@ async fn main() -> ExitCode {
     // S3 offload). install_default is idempotent — a later caller (e.g. aws-sdk)
     // silently no-ops onto the already-installed provider.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "broker=info".into()),
-        )
-        .init();
+    // D9 — soft OTel: fmt always; OTLP/gRPC bridge only when
+    // OTEL_EXPORTER_OTLP_ENDPOINT is set (no-op otherwise). Held for the
+    // process lifetime so the batch processor can flush on shutdown.
+    let otel_provider = shared::init_telemetry("open-websandbox-broker", "broker=info");
 
     let cfg = match BrokerConfig::from_env() {
         Ok(c) => c,
@@ -162,6 +160,8 @@ async fn main() -> ExitCode {
     let _ = reaper_handle.await;
     let _ = leader_handle.await;
     tracing::info!("broker shutdown complete");
+    // D9 — best-effort flush of the OTLP batch processor on graceful exit.
+    shared::shutdown_telemetry(otel_provider);
     ExitCode::SUCCESS
 }
 
