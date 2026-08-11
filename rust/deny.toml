@@ -21,30 +21,15 @@ yanked = "deny"
 # Unmaintained crates are surfaced for triage, not hard-failed: the k8s/tokio/
 # hyper tree is large and inherited, and "unmaintained" is noisy on a scaffold.
 unmaintained = "workspace"
-# Issue #80 (D9 telemetry supply-chain audit): the three rustls-webpki
-# RUSTSEC-2026-0098/0099/0104 advisories all hit rustls-webpki 0.101.7, which is
-# pulled ONLY by the legacy rustls 0.21.12 / hyper 0.14 line — itself pulled in
-# solely by the AWS SDK subtree (broker's `aws-sdk-s3` -> aws-smithy-runtime ->
-# aws-smithy-http-client -> rustls 0.21.12 / hyper-rustls 0.24.2). The D9 telemetry
-# subtree (tonic / hyper-1 / opentelemetry / metrics-exporter-prometheus) uses the
-# patched rustls-webpki 0.103.13 and is NOT affected. The patched versions require
-# rustls-webpki >= 0.103.x, which is unreachable without bumping aws-sdk-s3 off the
-# legacy hyper-0.14/rustls-0.21 line — a dependency-version bump explicitly out of
-# scope for #80 (dedup/allowlist/ignore only; "no patched version within the locked
-# semver line" = the ignore-with-reason+expiry case per issue Q1 default).
-# TRACKING: a follow-up should bump aws-sdk-s3 to a hyper-1/rustls-0.23-native
-# release so the entire webpki-0.101 / h2-0.3 / hyper-0.14 chain drops out and these
-# ignores can be removed. Re-evaluate on/before the expiry dates below.
-ignore = [
-    # Name-constraints URI bug; reachable only after cert signature verification and
-    # requires a misissued certificate -> low practical severity for this control plane.
-    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101.7 pulled only by rustls 0.21.12 via broker's aws-sdk-s3 -> aws-smithy-runtime -> aws-smithy-http-client (NOT D9 telemetry, which uses patched 0.103.13). Patch needs webpki 0.103.x, unreachable without an aws-sdk-s3 version bump (out of scope for #80). Requires misissued cert (post-signature name-constraint bug) -> low severity. Expiry: 2027-02-28." },
-    # Name-constraints wildcard bug; same reachability/severity profile as -0098.
-    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101.7 pulled only by rustls 0.21.12 via broker's aws-sdk-s3 -> aws-smithy-runtime -> aws-smithy-http-client (NOT D9 telemetry, which uses patched 0.103.13). Patch needs webpki 0.103.x, unreachable without an aws-sdk-s3 version bump (out of scope for #80). Requires misissued cert (post-signature name-constraint bug) -> low severity. Expiry: 2027-02-28." },
-    # CRL-parsing panic; reachable only if the application parses certificate
-    # revocation lists. broker/runtime never parse CRLs -> not affected in practice.
-    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101.7 pulled only by rustls 0.21.12 via broker's aws-sdk-s3 -> aws-smithy-runtime -> aws-smithy-http-client (NOT D9 telemetry, which uses patched 0.103.13). Patch needs webpki 0.103.x, unreachable without an aws-sdk-s3 version bump (out of scope for #80). Reachable only when parsing CRLs, which broker/runtime never do -> not affected in practice. Expiry: 2027-02-28." },
-]
+# Issue #80 follow-up: the three rustls-webpki RUSTSEC-2026-0098/0099/0104
+# advisories (webpki 0.101.7) were CLEARED by dropping aws-sdk-s3's default
+# `rustls` feature in broker/Cargo.toml (default-features = false + the
+# rustls-0.23-native `default-https-client`). That feature was the sole source
+# of the legacy hyper-0.14 / rustls-0.21 / webpki-0.101 / h2-0.3 line; the graph
+# now resolves to rustls-webpki 0.103.13 (rustls 0.23.43) only, so the previously
+# time-boxed ignores were removed. No advisories are currently ignored: every
+# hit must be triaged explicitly.
+ignore = []
 
 [licenses]
 # Permissive licenses + our own copyleft (AGPL-3.0-only). No GPL/LGPL/SSPL
