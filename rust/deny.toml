@@ -38,12 +38,12 @@ unmaintained = "workspace"
 ignore = [
     # Name-constraints URI bug; reachable only after cert signature verification and
     # requires a misissued certificate -> low practical severity for this control plane.
-    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101.7 pulled only by rustls 0.21.12 via broker's aws-sdk-s3 -> aws-smithy-runtime -> aws-smithy-http-client (NOT D9 telemetry, which uses patched 0.103.13). Patch needs webpki 0.103.x, unreachable without an aws-sdk-s3 version bump (out of scope for #80). Requires misissued cert (post-signature name-constraint bug) -> low severity. Expiry: 2026-07-31." },
+    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101.7 pulled only by rustls 0.21.12 via broker's aws-sdk-s3 -> aws-smithy-runtime -> aws-smithy-http-client (NOT D9 telemetry, which uses patched 0.103.13). Patch needs webpki 0.103.x, unreachable without an aws-sdk-s3 version bump (out of scope for #80). Requires misissued cert (post-signature name-constraint bug) -> low severity. Expiry: 2027-02-28." },
     # Name-constraints wildcard bug; same reachability/severity profile as -0098.
-    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101.7 pulled only by rustls 0.21.12 via broker's aws-sdk-s3 -> aws-smithy-runtime -> aws-smithy-http-client (NOT D9 telemetry, which uses patched 0.103.13). Patch needs webpki 0.103.x, unreachable without an aws-sdk-s3 version bump (out of scope for #80). Requires misissued cert (post-signature name-constraint bug) -> low severity. Expiry: 2026-07-31." },
+    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101.7 pulled only by rustls 0.21.12 via broker's aws-sdk-s3 -> aws-smithy-runtime -> aws-smithy-http-client (NOT D9 telemetry, which uses patched 0.103.13). Patch needs webpki 0.103.x, unreachable without an aws-sdk-s3 version bump (out of scope for #80). Requires misissued cert (post-signature name-constraint bug) -> low severity. Expiry: 2027-02-28." },
     # CRL-parsing panic; reachable only if the application parses certificate
     # revocation lists. broker/runtime never parse CRLs -> not affected in practice.
-    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101.7 pulled only by rustls 0.21.12 via broker's aws-sdk-s3 -> aws-smithy-runtime -> aws-smithy-http-client (NOT D9 telemetry, which uses patched 0.103.13). Patch needs webpki 0.103.x, unreachable without an aws-sdk-s3 version bump (out of scope for #80). Reachable only when parsing CRLs, which broker/runtime never do -> not affected in practice. Expiry: 2026-07-31." },
+    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101.7 pulled only by rustls 0.21.12 via broker's aws-sdk-s3 -> aws-smithy-runtime -> aws-smithy-http-client (NOT D9 telemetry, which uses patched 0.103.13). Patch needs webpki 0.103.x, unreachable without an aws-sdk-s3 version bump (out of scope for #80). Reachable only when parsing CRLs, which broker/runtime never do -> not affected in practice. Expiry: 2027-02-28." },
 ]
 
 [licenses]

@@ -21,7 +21,7 @@
 # hyper-0.14/rustls-0.21 line — a dependency-version bump explicitly out of
 # scope for #80 (dedup/allowlist/ignore only). cargo-audit's `ignore` is a bare
 # ID list, so the per-advisory reason+expiry is documented here and in
-# deny.toml. Expiry for all three: 2026-07-31.
+# deny.toml. Expiry for all three: 2027-02-28.
 #
 # TRACKING: a follow-up should bump aws-sdk-s3 to a hyper-1/rustls-0.23-native
 # release so the entire webpki-0.101 / h2-0.3 / hyper-0.14 chain drops out and
