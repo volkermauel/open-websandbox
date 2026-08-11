@@ -116,6 +116,7 @@ fn now_unix() -> i64 {
 ///    (→ 503, matching the PR-C-2 spec; the Python broker raises 504).
 ///
 /// Returns the ready [`ResolvedSandbox`] (name + pod IP).
+#[tracing::instrument(name = "sandbox.resolve", skip(state), fields(sandbox = tracing::field::Empty))]
 pub async fn resolve_sandbox(
     state: &AppState,
     user_id: &str,
@@ -123,6 +124,7 @@ pub async fn resolve_sandbox(
     profile: Profile,
 ) -> Result<ResolvedSandbox, ApiError> {
     let name = sandbox_name(user_id, session_id, profile);
+    tracing::Span::current().record("sandbox", name.as_str());
 
     // --- get-or-create -----------------------------------------------------
     let existing = state
@@ -163,7 +165,10 @@ pub async fn resolve_sandbox(
             now_unix(),
         );
         match state.store.create_sandbox(sandbox).await {
-            Ok(_) => {}
+            Ok(_) => {
+                // D9: a new sandbox was actually created (resolve path).
+                state.metrics.sandboxes_created_total.inc();
+            }
             // A concurrent resolve won the create race — poll for the winner.
             Err(StoreError::Conflict) => {}
             Err(e) => return Err(map_store_err(e)),

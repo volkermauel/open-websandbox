@@ -112,6 +112,8 @@ pub(crate) async fn run_command(
         .clamp(1, cfg.max_timeout);
     let preview: String = command.chars().take(200).collect();
     tracing::info!("exec (timeout={timeout_secs}s): {preview}");
+    // D9: count every executed command (timeouts recorded separately).
+    state.metrics.execute_commands_total.inc();
 
     let mut cmd = tokio::process::Command::new(&cfg.shell);
     cmd.arg("-c")
@@ -165,6 +167,8 @@ pub(crate) async fn run_command(
             })
         }
         Err(_) => {
+            // D9: this run hit the /execute timeout.
+            state.metrics.execute_timeouts_total.inc();
             // Timeout: SIGKILL the whole process group, reap the direct child.
             if pid > 0 {
                 // Best-effort; ESRCH (already gone) is ignored.

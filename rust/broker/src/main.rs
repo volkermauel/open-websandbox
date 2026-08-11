@@ -35,12 +35,10 @@ async fn main() -> ExitCode {
     // S3 offload). install_default is idempotent — a later caller (e.g. aws-sdk)
     // silently no-ops onto the already-installed provider.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "broker=info".into()),
-        )
-        .init();
+    // D9 — soft OTel: fmt always; OTLP/gRPC bridge only when
+    // OTEL_EXPORTER_OTLP_ENDPOINT is set (no-op otherwise). Held for the
+    // process lifetime so the batch processor can flush on shutdown.
+    let otel_provider = shared::init_telemetry("open-websandbox-broker", "broker=info");
 
     let cfg = match BrokerConfig::from_env() {
         Ok(c) => c,
@@ -101,6 +99,9 @@ async fn main() -> ExitCode {
 
     // --- PR-C-3 background: leader election + leader-gated idle reaper --------
     let gate = Arc::new(LeaderGate::new());
+    // D9: capture the metrics handle before `state` moves into the router; the
+    //      leader-gated reaper owns the active-sandboxes gauge + delete counter.
+    let metrics = state.metrics.clone();
     let lease: Arc<dyn LeaseClient> = Arc::new(KubeLease::new(kube_client, &cfg_arc));
     let app = build_router(state);
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -118,10 +119,11 @@ async fn main() -> ExitCode {
         let store = store.clone();
         let offload = offload.clone();
         let cfg = cfg_arc.clone();
+        let metrics = metrics.clone();
         let gate = gate.clone();
         let rx = shutdown_rx.clone();
         tokio::spawn(async move {
-            run_reaper_loop(gate, store, offload, cfg, rx).await;
+            run_reaper_loop(gate, store, offload, cfg, metrics, rx).await;
         })
     };
 
@@ -162,6 +164,8 @@ async fn main() -> ExitCode {
     let _ = reaper_handle.await;
     let _ = leader_handle.await;
     tracing::info!("broker shutdown complete");
+    // D9 — best-effort flush of the OTLP batch processor on graceful exit.
+    shared::shutdown_telemetry(otel_provider);
     ExitCode::SUCCESS
 }
 
