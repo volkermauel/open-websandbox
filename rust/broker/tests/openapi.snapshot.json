@@ -216,6 +216,20 @@
         ],
         "type": "object"
       },
+      "FileUpload": {
+        "description": "Typed `multipart/form-data` body for the upload endpoints: a single binary\n`file` part. The runtime consumes the stream directly via\n`axum::extract::Multipart` (this struct exists only to describe the wire\ncontract for OpenAPI/Scalar — it is never deserialized). The on-disk name\nis the basename of the part's `Content-Disposition` `filename`; path\ncomponents are stripped as defense-in-depth (see [`upload_basename`]).",
+        "properties": {
+          "file": {
+            "description": "Binary file content (one part named `file`).",
+            "format": "binary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "type": "object"
+      },
       "HealthResponse": {
         "description": "`GET /healthz` and `GET /readyz` body: `{\"status\": \"...\"}`.",
         "properties": {
@@ -2195,9 +2209,14 @@
         ],
         "requestBody": {
           "content": {
-            "multipart/form-data": {}
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/FileUpload"
+              }
+            }
           },
-          "description": "multipart `file` field(s) written to `directory`/<basename>"
+          "description": "multipart `file` field written to `directory`/<basename>",
+          "required": true
         },
         "responses": {
           "200": {
@@ -2701,9 +2720,14 @@
         "operationId": "tool_upload",
         "requestBody": {
           "content": {
-            "multipart/form-data": {}
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/FileUpload"
+              }
+            }
           },
-          "description": "multipart `file` field written to the workspace base"
+          "description": "multipart `file` field written to the workspace base",
+          "required": true
         },
         "responses": {
           "200": {
