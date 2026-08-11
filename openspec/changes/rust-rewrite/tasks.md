@@ -62,7 +62,7 @@
 - [ ] `aws-sdk-s3` (D4, feature-gated) soft-import semantics.
 - [ ] `/metrics` (`open_websandbox_broker_*`, bounded path labels) + soft OTel.
 - [ ] `rust/broker/Dockerfile`: multi-stage cargo → `gcr.io/distroless/cc-debian12`
-      (D13); ~15–30 MB.
+      (D13); ~40 MiB single executable (stripped ~26 MiB; accepted #83 — debug symbols kept for prod backtraces).
 - [ ] Unit tests: port `test_k8s`, `test_resolve`, `test_reaper`, `test_leader`,
       `test_s3_tiered`, `test_endpoints`, `test_migrate`, `test_terminal_proxy`,
       `test_openapi_version`, `test_observability`, `test_helpers`, `test_coverage_gaps`.
