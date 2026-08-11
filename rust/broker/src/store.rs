@@ -205,7 +205,10 @@ impl SandboxStore for KubeSandboxStore {
     async fn read_runtime_key(&self, sandbox_name: &str) -> Result<Option<String>, StoreError> {
         use k8s_openapi::api::core::v1::Secret;
         let secrets: Api<Secret> = Api::namespaced(self.client.clone(), &self.namespace);
-        match secrets.get(&crate::runtime_key::secret_name(sandbox_name)).await {
+        match secrets
+            .get(&crate::runtime_key::secret_name(sandbox_name))
+            .await
+        {
             Ok(sec) => Ok(sec
                 .data
                 .and_then(|d| d.get(crate::runtime_key::DATA_KEY).cloned())
@@ -219,7 +222,10 @@ impl SandboxStore for KubeSandboxStore {
         use k8s_openapi::api::core::v1::Secret;
         let secrets: Api<Secret> = Api::namespaced(self.client.clone(), &self.namespace);
         match secrets
-            .delete(&crate::runtime_key::secret_name(sandbox_name), &DeleteParams::default())
+            .delete(
+                &crate::runtime_key::secret_name(sandbox_name),
+                &DeleteParams::default(),
+            )
             .await
         {
             Ok(_) => Ok(()),
@@ -530,7 +536,6 @@ impl SandboxStore for StubSandboxStore {
             .remove(sandbox_name);
         Ok(())
     }
-
 }
 
 /// Build a Ready `SandboxStatus` for the stub (a controller would populate this

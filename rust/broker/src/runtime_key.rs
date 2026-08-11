@@ -58,7 +58,10 @@ pub fn build_secret(sandbox_name: &str, namespace: &str, key: &str) -> Secret {
     let mut string_data = BTreeMap::new();
     string_data.insert(DATA_KEY.to_string(), key.to_string());
     let mut labels = BTreeMap::new();
-    labels.insert("app.kubernetes.io/managed-by".to_string(), "owui-broker".to_string());
+    labels.insert(
+        "app.kubernetes.io/managed-by".to_string(),
+        "owui-broker".to_string(),
+    );
     labels.insert("owui.io/component".to_string(), "runtime-key".to_string());
     Secret {
         metadata: ObjectMeta {
@@ -108,7 +111,9 @@ pub fn inject_volume(pod: &mut serde_json::Value, sandbox_name: &str) {
     // containers[*].volumeMounts += [{name: runtime-key, mountPath: /etc/runtime-key, readOnly: true}]
     if let Some(containers) = spec.get_mut("containers").and_then(|c| c.as_array_mut()) {
         for c in containers {
-            let Some(cobj) = c.as_object_mut() else { continue };
+            let Some(cobj) = c.as_object_mut() else {
+                continue;
+            };
             let mounts = cobj
                 .entry("volumeMounts".to_string())
                 .or_insert_with(|| serde_json::json!([]));
@@ -134,7 +139,10 @@ mod tests {
 
     #[test]
     fn secret_name_matches_python_prefix() {
-        assert_eq!(secret_name("owui-abcdef012345"), "owui-runtime-key-owui-abcdef012345");
+        assert_eq!(
+            secret_name("owui-abcdef012345"),
+            "owui-runtime-key-owui-abcdef012345"
+        );
     }
 
     #[test]
@@ -157,15 +165,22 @@ mod tests {
         inject_volume(&mut pod, "owui-deadbeef");
         let spec = &pod["spec"];
         // volume present, references the per-session secret + the items map
-        let vol = spec["volumes"].as_array().unwrap()
+        let vol = spec["volumes"]
+            .as_array()
+            .unwrap()
             .iter()
             .find(|v| v["name"] == "runtime-key")
             .expect("runtime-key volume injected");
-        assert_eq!(vol["secret"]["secretName"], "owui-runtime-key-owui-deadbeef");
+        assert_eq!(
+            vol["secret"]["secretName"],
+            "owui-runtime-key-owui-deadbeef"
+        );
         assert_eq!(vol["secret"]["items"][0]["key"], "api-key");
         assert_eq!(vol["secret"]["items"][0]["path"], "api-key");
         // mount present, readOnly at /etc/runtime-key
-        let mount = spec["containers"][0]["volumeMounts"].as_array().unwrap()
+        let mount = spec["containers"][0]["volumeMounts"]
+            .as_array()
+            .unwrap()
             .iter()
             .find(|m| m["name"] == "runtime-key")
             .expect("runtime-key mount injected");
@@ -178,8 +193,12 @@ mod tests {
         let mut pod = serde_json::json!({"spec": {"containers": [{"name": "sandbox"}]}});
         inject_volume(&mut pod, "owui-x");
         inject_volume(&mut pod, "owui-x");
-        let n: usize = pod["spec"]["volumes"].as_array().unwrap()
-            .iter().filter(|v| v["name"] == "runtime-key").count();
+        let n: usize = pod["spec"]["volumes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|v| v["name"] == "runtime-key")
+            .count();
         assert_eq!(n, 1, "not double-injected");
     }
 }
