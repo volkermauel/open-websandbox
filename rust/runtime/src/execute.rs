@@ -30,14 +30,14 @@ use crate::state::AppState;
 
 /// `POST /execute` request body. `timeout` is clamped into `[1, MAX_TIMEOUT]`,
 /// defaulting to `DEFAULT_TIMEOUT` (seconds).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ExecuteRequest {
     pub command: String,
     pub timeout: Option<u64>,
 }
 
 /// `POST /execute` response body (HTTP 200 even on non-zero exit).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExecuteResponse {
     pub stdout: String,
     pub stderr: String,
@@ -63,6 +63,18 @@ pub(crate) fn cap(s: &str, max: usize) -> String {
 ///
 /// `Authed` authenticates the per-session key; `HeaderMap` carries the optional
 /// `X-Workspace-Subdir`; `Json` parses the body (body-consuming extractor last).
+#[utoipa::path(
+    post,
+    path = "/execute",
+    tag = "execute",
+    request_body = ExecuteRequest,
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Captured stdout/stderr + exit code (HTTP 200 even on non-zero exit; timeout → exit_code 124)", body = ExecuteResponse),
+        (status = 401, description = "Missing/invalid per-session Bearer", body = shared::ErrorResponse),
+        (status = 500, description = "Failed to reap the command", body = shared::ErrorResponse)
+    )
+)]
 pub async fn execute(
     _auth: Authed,
     State(state): State<AppState>,

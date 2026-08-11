@@ -32,6 +32,7 @@ pub mod state;
 pub mod store;
 pub mod terminal;
 
+pub mod openapi;
 pub use app::build_router;
 pub use client::build_client;
 pub use config::ServerConfig;

@@ -30,6 +30,7 @@ percent-encoding = "2"
 portable-pty = "0.9"
 serde.workspace = true
 serde_json.workspace = true
+utoipa.workspace = true
 shared = { version = "0.1.0", path = "../shared" }
 thiserror.workspace = true
 tokio = { version = "1", features = ["full"] }

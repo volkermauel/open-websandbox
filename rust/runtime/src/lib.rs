@@ -13,6 +13,7 @@ pub mod config;
 pub mod error;
 pub mod execute;
 pub mod files;
+pub mod openapi;
 pub mod safe_path;
 pub mod snapshot;
 pub mod state;

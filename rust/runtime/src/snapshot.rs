@@ -49,7 +49,7 @@ const CHUNK: usize = 1 << 20;
 /// Bounded frames in flight between the producer task and the response body.
 const BODY_CHANNEL_DEPTH: usize = 8;
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct RestoreResponse {
     restored: bool,
     bytes: u64,
@@ -70,6 +70,18 @@ fn hardened(cmd: &mut Command) -> &mut Command {
 // GET /snapshot
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/snapshot",
+    tag = "snapshot",
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Workspace as a zstd-compressed tar stream (application/zstd)"),
+        (status = 401, description = "Missing/invalid per-session Bearer", body = shared::ErrorResponse),
+        (status = 413, description = "Workspace exceeds MAX_WORKSPACE_BYTES", body = shared::ErrorResponse),
+        (status = 500, description = "Pipeline failure", body = shared::ErrorResponse)
+    )
+)]
 pub async fn snapshot(_auth: Authed, State(state): State<AppState>) -> Result<Response, ApiError> {
     let base = request_base(&state.config.workdir, None)?;
 
@@ -166,6 +178,18 @@ pub async fn snapshot(_auth: Authed, State(state): State<AppState>) -> Result<Re
 // PUT /restore
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    put,
+    path = "/restore",
+    tag = "snapshot",
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Workspace restored", body = RestoreResponse),
+        (status = 401, description = "Missing/invalid per-session Bearer", body = shared::ErrorResponse),
+        (status = 413, description = "Restore stream exceeds MAX_WORKSPACE_BYTES", body = shared::ErrorResponse),
+        (status = 500, description = "Pipeline failure", body = shared::ErrorResponse)
+    )
+)]
 pub async fn restore(
     _auth: Authed,
     State(state): State<AppState>,

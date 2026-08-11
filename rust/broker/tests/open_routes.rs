@@ -58,7 +58,8 @@ async fn openapi_json_is_open_and_valid() {
         .await;
     assert_eq!(status(&resp), StatusCode::OK);
     let body: serde_json::Value = json(resp).await;
-    assert_eq!(body["openapi"], "3.0.3");
+    // utoipa 5 emits OpenAPI 3.1.0 (D10).
+    assert_eq!(body["openapi"], "3.1.0");
     assert!(body["paths"].is_object(), "{body}");
 }
 
@@ -68,5 +69,7 @@ async fn docs_serves_html() {
     let resp = env.send(Method::GET, "/docs", Bearer::None, None).await;
     assert_eq!(status(&resp), StatusCode::OK);
     let body = body_text(resp).await;
-    assert!(body.contains("swagger-ui"), "{body}");
+    // /docs serves Scalar (issue #75 Q3): the HTML inlines the spec under the
+    // `api-reference` script id.
+    assert!(body.contains("api-reference"), "{body}");
 }

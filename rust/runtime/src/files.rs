@@ -43,7 +43,7 @@ fn modified_secs(meta: &std::fs::Metadata) -> f64 {
         .unwrap_or(0.0)
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct Entry {
     name: String,
     #[serde(rename = "type")]
@@ -52,14 +52,26 @@ pub struct Entry {
     modified: f64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ListResponse {
+    #[schema(value_type = String)]
     dir: PathBuf,
     entries: Vec<Entry>,
 }
 
 // --- /files/cwd --------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/files/cwd",
+    tag = "files",
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Workspace cwd + home", body = serde_json::Value),
+        (status = 400, description = "Invalid workspace subdir", body = shared::ErrorResponse),
+        (status = 401, description = "Missing/invalid per-session Bearer", body = shared::ErrorResponse)
+    )
+)]
 pub async fn get_cwd(
     _auth: Authed,
     State(state): State<AppState>,
@@ -72,11 +84,24 @@ pub async fn get_cwd(
     })))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CwdRequest {
     pub path: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/files/cwd",
+    tag = "files",
+    request_body = CwdRequest,
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Resolved cwd", body = serde_json::Value),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 404, description = "Directory not found", body = shared::ErrorResponse)
+    )
+)]
 pub async fn set_cwd(
     _auth: Authed,
     State(state): State<AppState>,
@@ -93,11 +118,25 @@ pub async fn set_cwd(
 
 // --- /files/list -------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 pub struct ListQuery {
     pub directory: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/files/list",
+    tag = "files",
+    params(ListQuery),
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Directory listing", body = ListResponse),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 404, description = "Directory not found", body = shared::ErrorResponse),
+        (status = 500, body = shared::ErrorResponse)
+    )
+)]
 pub async fn list_dir(
     _auth: Authed,
     State(state): State<AppState>,
@@ -160,11 +199,25 @@ fn entry_for(p: &Path) -> Option<Entry> {
 
 // --- /files/read -------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 pub struct PathQuery {
     pub path: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/files/read",
+    tag = "files",
+    params(PathQuery),
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "File content (JSON) or raw image bytes"),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 404, description = "File not found", body = shared::ErrorResponse),
+        (status = 500, body = shared::ErrorResponse)
+    )
+)]
 pub async fn read_file(
     _auth: Authed,
     State(state): State<AppState>,
@@ -203,12 +256,24 @@ pub async fn read_file(
 
 // --- /files/write ------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct WriteRequest {
     pub path: String,
     pub content: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/files/write",
+    tag = "files",
+    request_body = WriteRequest,
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Bytes written", body = serde_json::Value),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse)
+    )
+)]
 pub async fn write_file(
     _auth: Authed,
     State(state): State<AppState>,
@@ -231,6 +296,18 @@ pub async fn write_file(
 
 // --- /files/mkdir ------------------------------------------------------------
 
+#[utoipa::path(
+    post,
+    path = "/files/mkdir",
+    tag = "files",
+    request_body = PathBody,
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Created path", body = serde_json::Value),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse)
+    )
+)]
 pub async fn mkdir(
     _auth: Authed,
     State(state): State<AppState>,
@@ -243,19 +320,33 @@ pub async fn mkdir(
     Ok(Json(serde_json::json!({ "path": full })))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct PathBody {
     pub path: String,
 }
 
 // --- /files/move -------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct MoveRequest {
     pub source: String,
     pub destination: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/files/move",
+    tag = "files",
+    request_body = MoveRequest,
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Moved source→destination", body = serde_json::Value),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 404, description = "Source not found", body = shared::ErrorResponse),
+        (status = 409, description = "Destination already exists", body = shared::ErrorResponse)
+    )
+)]
 pub async fn move_entry(
     _auth: Authed,
     State(state): State<AppState>,
@@ -279,6 +370,19 @@ pub async fn move_entry(
 
 // --- /files/delete -----------------------------------------------------------
 
+#[utoipa::path(
+    delete,
+    path = "/files/delete",
+    tag = "files",
+    params(PathQuery),
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Deleted entry", body = serde_json::Value),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 404, description = "Path not found", body = shared::ErrorResponse)
+    )
+)]
 pub async fn delete_entry(
     _auth: Authed,
     State(state): State<AppState>,
@@ -312,6 +416,16 @@ pub async fn delete_entry(
 
 // --- /ports -----------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/ports",
+    tag = "ports",
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Host ports (restricted runtime → always empty)", body = serde_json::Value),
+        (status = 401, body = shared::ErrorResponse)
+    )
+)]
 pub async fn list_ports(_auth: Authed) -> Json<serde_json::Value> {
     // Restricted runtime: no host-port introspection. Surface an empty list so the
     // UI ports panel renders cleanly (matches open-terminal's restricted fallback).
@@ -349,6 +463,20 @@ fn file_response(full: &Path) -> Result<Response, ApiError> {
 
 // --- /files/view ------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/files/view",
+    tag = "files",
+    params(PathQuery),
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Raw file bytes (content-type/disposition)"),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 404, description = "File not found", body = shared::ErrorResponse),
+        (status = 500, body = shared::ErrorResponse)
+    )
+)]
 pub async fn view_file(
     _auth: Authed,
     State(state): State<AppState>,
@@ -365,6 +493,20 @@ pub async fn view_file(
 
 // --- /download/{*file_path} -------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/download/{file_path}",
+    tag = "tools",
+    params(("file_path" = String, Path, description = "Workspace-relative file path")),
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Raw file bytes (attachment)"),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 404, description = "File not found", body = shared::ErrorResponse),
+        (status = 500, body = shared::ErrorResponse)
+    )
+)]
 pub async fn tool_download(
     _auth: Authed,
     State(state): State<AppState>,
@@ -381,6 +523,20 @@ pub async fn tool_download(
 
 // --- /list/{*file_path} -----------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/list/{file_path}",
+    tag = "tools",
+    params(("file_path" = String, Path, description = "Workspace-relative directory path")),
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Directory entries", body = serde_json::Value),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 404, description = "Directory not found", body = shared::ErrorResponse),
+        (status = 500, body = shared::ErrorResponse)
+    )
+)]
 pub async fn tool_list(
     _auth: Authed,
     State(state): State<AppState>,
@@ -394,6 +550,17 @@ pub async fn tool_list(
 /// `/list/{file_path:path}` matches the empty path (lists root); axum's
 /// `/list/{*file_path}` catch-all requires ≥1 segment, so these explicit routes
 /// cover the empty-path case (parity, D11).
+#[utoipa::path(
+    get,
+    path = "/list",
+    tag = "tools",
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Workspace-root entries", body = serde_json::Value),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 500, body = shared::ErrorResponse)
+    )
+)]
 pub async fn tool_list_root(
     _auth: Authed,
     State(state): State<AppState>,
@@ -443,6 +610,18 @@ async fn list_impl(
 
 // --- /exists/{*file_path} ---------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/exists/{file_path}",
+    tag = "tools",
+    params(("file_path" = String, Path, description = "Workspace-relative path")),
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Existence probe", body = serde_json::Value),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse)
+    )
+)]
 pub async fn tool_exists(
     _auth: Authed,
     State(state): State<AppState>,
@@ -462,7 +641,7 @@ pub async fn tool_exists(
 
 // --- /files/replace ---------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ReplacementChunk {
     target: String,
     replacement: String,
@@ -472,12 +651,25 @@ pub struct ReplacementChunk {
     allow_multiple: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ReplaceRequest {
     path: String,
     replacements: Vec<ReplacementChunk>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/files/replace",
+    tag = "files",
+    request_body = ReplaceRequest,
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Bytes written", body = serde_json::Value),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 404, description = "File not found", body = shared::ErrorResponse)
+    )
+)]
 pub async fn replace(
     _auth: Authed,
     State(state): State<AppState>,
@@ -556,7 +748,7 @@ fn apply_replacement(content: String, chunk: &ReplacementChunk) -> Result<String
 
 // --- /files/grep -------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 pub struct GrepQuery {
     query: String,
     path: Option<String>,
@@ -566,6 +758,19 @@ pub struct GrepQuery {
     max_results: Option<usize>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/files/grep",
+    tag = "files",
+    params(GrepQuery),
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Search matches", body = serde_json::Value),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 404, description = "Search path not found", body = shared::ErrorResponse)
+    )
+)]
 pub async fn grep(
     _auth: Authed,
     State(state): State<AppState>,
@@ -667,7 +872,7 @@ fn collect_files(dir: &Path, include: Option<&[String]>, out: &mut Vec<PathBuf>)
 
 // --- /files/glob -------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 pub struct GlobQuery {
     pattern: String,
     path: Option<String>,
@@ -676,6 +881,19 @@ pub struct GlobQuery {
     max_results: Option<usize>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/files/glob",
+    tag = "files",
+    params(GlobQuery),
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Glob matches", body = serde_json::Value),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 404, description = "Search directory not found", body = shared::ErrorResponse)
+    )
+)]
 pub async fn glob_search(
     _auth: Authed,
     State(state): State<AppState>,
@@ -838,12 +1056,12 @@ fn fnmatch_translate(pat: &str) -> Option<String> {
 
 // --- PR-B-5: /files/archive (zip) + /files/upload + /upload (multipart) ------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ArchiveRequest {
     pub paths: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 pub struct UploadQuery {
     pub directory: Option<String>,
 }
@@ -872,6 +1090,19 @@ fn upload_target_dir(directory: Option<&str>, base: &Path) -> Result<PathBuf, Ap
 /// `POST /files/upload` — multipart `file` field written to `directory/<basename>`
 /// (default the workspace base). The runtime streams the body straight to disk;
 /// `X-Workspace-Subdir` selects the base, like every other `/files/*` handler.
+#[utoipa::path(
+    post,
+    path = "/files/upload",
+    tag = "files",
+    params(UploadQuery),
+    request_body(content_type = "multipart/form-data", description = "multipart `file` field(s) written to `directory`/<basename>"),
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Saved path + size", body = serde_json::Value),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse)
+    )
+)]
 pub async fn upload(
     _auth: Authed,
     State(state): State<AppState>,
@@ -924,6 +1155,18 @@ pub async fn upload(
 /// `POST /upload` — the LLM-tool upload alias (multipart `file` to the workspace
 /// base). Returns `{"saved": path, "bytes": n}`, the shape the broker's curated
 /// `upload_file` tool resolves against.
+#[utoipa::path(
+    post,
+    path = "/upload",
+    tag = "tools",
+    request_body(content_type = "multipart/form-data", description = "multipart `file` field written to the workspace base"),
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Saved path + bytes", body = serde_json::Value),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse)
+    )
+)]
 pub async fn tool_upload(
     _auth: Authed,
     State(state): State<AppState>,
@@ -969,6 +1212,20 @@ pub async fn tool_upload(
 /// `POST /files/archive` — zip the listed paths and stream the archive back.
 /// Dirs recurse (files archived as `<basename>/<rel>`); a single file archives
 /// as its basename. `application/zip` + `Content-Disposition: attachment`.
+#[utoipa::path(
+    post,
+    path = "/files/archive",
+    tag = "files",
+    request_body = ArchiveRequest,
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Zip archive (application/zip, attachment)"),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 404, description = "A listed path not found", body = shared::ErrorResponse),
+        (status = 500, body = shared::ErrorResponse)
+    )
+)]
 pub async fn archive(
     _auth: Authed,
     State(state): State<AppState>,
