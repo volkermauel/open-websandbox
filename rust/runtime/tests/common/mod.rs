@@ -182,6 +182,32 @@ impl Env {
             .unwrap();
         self.router.clone().oneshot(req).await.expect("oneshot")
     }
+
+    /// Send a raw `axum::body::Body` (e.g. a streaming body that errors mid-stream
+    /// to simulate a client disconnect) with the default Bearer + `application/zstd`.
+    pub async fn send_body(
+        &self,
+        method: Method,
+        uri: &str,
+        bearer: Bearer<'_>,
+        body: Body,
+    ) -> Response<Body> {
+        let mut builder = Request::builder().method(method).uri(uri);
+        match bearer {
+            Bearer::Default => {
+                builder = builder.header("authorization", format!("Bearer {}", self.bearer));
+            }
+            Bearer::Explicit(v) => {
+                builder = builder.header("authorization", format!("Bearer {v}"));
+            }
+            Bearer::None => {}
+        }
+        let req = builder
+            .header("content-type", "application/zstd")
+            .body(body)
+            .unwrap();
+        self.router.clone().oneshot(req).await.expect("oneshot")
+    }
 }
 
 /// Bearer control for [`Env::send`].

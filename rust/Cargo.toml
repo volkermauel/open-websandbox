@@ -21,7 +21,16 @@ homepage = "https://github.com/volkermauel/open-websandbox"
 # toolchain (rustc/cargo 1.97.1).
 [workspace.dependencies]
 anyhow = "1.0.104"
+# Native tar+zstd for `/snapshot`+`/restore` (#94): the `zstd` stage is fully
+# async-streamed via `async-compression` (tokio `ZstdEncoder`/`ZstdDecoder`, Q1-b);
+# the `tar` crate runs synchronously inside a `spawn_blocking` task bridged to the
+# async stream by a bounded mpsc channel; `walkdir` replaces `find -mindepth 1`.
+# libzstd is bundled statically (Q2); `#![forbid(unsafe_code)]` covers our crates
+# only, audited deps with internal unsafe are accepted (Q7) — matching ring/aws-lc.
+async-compression = { version = "0.4", features = ["tokio", "zstd"] }
 async-trait = "0.1.89"
+tar = "0.4"
+walkdir = "2"
 # OpenTelemetry stack (D9): the OTLP exporter + SDK + tracing bridge. The
 # feature set is pinned once here (D8) and consumed via `workspace = true`.
 # - `rt-tokio`: batch span processor runtime (opentelemetry_sdk).
