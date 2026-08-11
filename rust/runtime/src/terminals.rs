@@ -1,9 +1,9 @@
 //! Interactive terminal surface — `portable-pty` + axum WebSocket relay.
 //!
-//! Direct, contract-faithful Rust port of the Python `server` PTY block (the
+//! Rust PTY surface (the
 //! `/api/terminals` POST/GET/DELETE + the `/api/terminals/{id}` WebSocket relay).
 //!
-//! # Wire contract (D5 / D11 — strict 1:1 with the Python runtime)
+//! # Wire contract (D5 / D11 — strict 1:1)
 //!
 //! * `POST /api/terminals` (Authed) → `200 {"id","created_at","pid"}`; spawns the
 //!   configured `$SHELL` on a 24×80 PTY in `request_base(workdir, X-Workspace-Subdir)`
@@ -15,7 +15,7 @@
 //! * `GET /api/terminals/{id}` (Authed) → `200 {"id","created_at","pid"}` / **404**.
 //! * `DELETE /api/terminals/{id}` (Authed) → `200 {"status":"deleted"}` (idempotent).
 //! * `GET /api/terminals/{id}` WebSocket (Authed at upgrade — 401 before the socket
-//!   is accepted): **1:1 binary/text frames** mirroring the Python relay byte-for-byte.
+//!   is accepted): **1:1 binary/text frames** relayed byte-for-byte.
 //!   Inbound **binary** frames are raw stdin to the PTY; inbound **text** frames are
 //!   JSON control messages (`{"type":"resize","rows":N,"cols":M}`, tolerated
 //!   `{"type":"auth",…}`); PTY output is relayed back as **binary** frames. An
@@ -25,9 +25,9 @@
 //!
 //! Each `Session` owns the `portable-pty` master + child. `portable-pty` spawns the
 //! shell with `setsid()`, so the shell is its own session/process-group leader
-//! (pgid == pid) — exactly like the Python `start_new_session=True`. On teardown
+//! (pgid == pid) — equivalent to `start_new_session=True`. On teardown
 //! (WS close, `DELETE`, dead-session reap, or process exit) we `killpg(SIGKILL)` the
-//! whole group (parity with Python's `os.killpg(os.getpgid(pid), SIGKILL)`) and
+//! whole group (`os.killpg(os.getpgid(pid), SIGKILL)`) and
 //! `child.wait()` to reap, so no zombie shell survives. The per-connection reader and
 //! stdin-writer threads own independent `dup`'d master fds and self-terminate once
 //! the child dies (the master read returns EOF/EIO) or the relay ends.
@@ -60,9 +60,9 @@ use crate::error::ApiError;
 use crate::safe_path::request_base;
 use crate::state::AppState;
 
-/// WebSocket close code for an unknown or already-ended session (matches Python).
+/// WebSocket close code for an unknown or already-ended session.
 const CLOSE_UNKNOWN: u16 = 4004;
-/// Default window size every PTY is created with (matches Python 24×80).
+/// Default window size every PTY is created with (24×80).
 const PTY_SIZE: PtySize = PtySize {
     rows: 24,
     cols: 80,
@@ -147,7 +147,7 @@ async fn is_alive(session: &Arc<Mutex<Session>>) -> bool {
 
 /// SIGKILL the child's whole process group, then `wait()` to reap it (no zombie).
 /// `portable-pty` spawns the shell via `setsid()`, so the group id equals the pid —
-/// parity with the Python `os.killpg(os.getpgid(pid), SIGKILL)`. The blocking reap
+/// (`os.killpg(os.getpgid(pid), SIGKILL)`). The blocking reap
 /// runs on a blocking thread so it never stalls the async runtime.
 async fn teardown_one(session: Arc<Mutex<Session>>) {
     let pid = { session.lock().await.pid };
@@ -175,7 +175,7 @@ async fn teardown_one(session: Arc<Mutex<Session>>) {
     tag = "terminals",
     security(("brokerBearer" = [])),
     responses(
-        (status = 200, description = "PTY session spawned (or recreated) — 200 per the Python contract", body = CreateResponse),
+        (status = 200, description = "PTY session spawned (or recreated) — idempotent, returns 200 on create-or-recreate", body = CreateResponse),
         (status = 401, description = "Missing/invalid per-session Bearer", body = shared::ErrorResponse),
         (status = 429, description = "MAX_TERMINAL_SESSIONS reached", body = shared::ErrorResponse),
         (status = 503, description = "PTY spawn failure", body = shared::ErrorResponse)
@@ -199,7 +199,7 @@ pub async fn create_terminal(
     let resp = {
         let mut map = state.terminals.sessions.lock().await;
 
-        // Reap dead sessions first (mirrors the Python create-time sweep).
+        // Reap dead sessions first (create-time sweep).
         let mut dead = Vec::new();
         for (k, s) in map.iter() {
             if !is_alive(s).await {
@@ -212,8 +212,8 @@ pub async fn create_terminal(
             }
         }
 
-        // Cap is checked AFTER reaping but BEFORE recreating an existing id, matching
-        // the Python `len(_terminals) >= MAX` ordering.
+        // Cap is checked AFTER reaping but BEFORE recreating an existing id
+        // (`len(_terminals) >= MAX` ordering).
         if (map.len() as u32) >= cap {
             drop(map);
             for s in to_teardown {
@@ -262,8 +262,8 @@ fn spawn_pty(shell: &str, cwd: &Path) -> Result<Session, String> {
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PTY_SIZE).map_err(|e| format!("{e}"))?;
     let mut cmd = CommandBuilder::new(shell);
-    // `CommandBuilder::new` already inherits `os.environ` (mirroring Python's
-    // `{**os.environ, "TERM": ...}`); we only override TERM.
+    // `CommandBuilder::new` already inherits `os.environ`
+    // (`{**os.environ, "TERM": ...}`); we only override TERM.
     cmd.cwd(cwd);
     cmd.env("TERM", "xterm-256color");
 
@@ -271,7 +271,7 @@ fn spawn_pty(shell: &str, cwd: &Path) -> Result<Session, String> {
     let pid = child.process_id().unwrap_or(0);
     let master = pair.master;
     // Close our slave handle so the child's fds are the only slave ends: when the
-    // shell exits, the master read sees EOF/EIO (matches Python `os.close(slave_fd)`).
+    // shell exits, the master read sees EOF/EIO (`os.close(slave_fd)`).
     drop(pair.slave);
 
     Ok(Session {
@@ -373,7 +373,7 @@ async fn get_terminal(state: AppState, id: String) -> Result<Json<TermInfo>, Api
             }))
         }
         Some(arc) => {
-            // Dead: reap + remove, then 404 (mirrors Python's get-dead cleanup).
+            // Dead: reap + remove, then 404.
             remove_if_eq(&state.terminals, &id, &arc).await;
             teardown_one(arc).await;
             Err(ApiError::NotFound("terminal not found".to_string()))
@@ -387,7 +387,7 @@ async fn get_terminal(state: AppState, id: String) -> Result<Json<TermInfo>, Api
 // ---------------------------------------------------------------------------
 
 /// `DELETE /api/terminals/{id}` — kill + reap the session. Idempotent: an unknown id
-/// still answers `200 {"status":"deleted"}` (Python parity).
+/// still answers `200 {"status":"deleted"}`.
 #[utoipa::path(
     delete,
     path = "/api/terminals/{id}",
@@ -544,7 +544,7 @@ async fn close_unknown(socket: &mut WebSocket) {
 
 /// Apply one inbound TEXT control frame. Only `resize` is honoured; an `auth` frame
 /// is tolerated (auth already ran at upgrade); anything else (incl. non-JSON) is
-/// ignored — matching the Python receiver's tolerant branches.
+/// ignored (tolerant of unknown frames).
 async fn apply_control(text: &str, session: &Arc<Mutex<Session>>) {
     let Ok(payload) = serde_json::from_str::<Value>(text) else {
         return; // malformed → ignored
@@ -553,7 +553,7 @@ async fn apply_control(text: &str, session: &Arc<Mutex<Session>>) {
         return;
     };
     if t == "resize" {
-        // Tolerate missing/non-numeric fields exactly like the Python receiver
+        // Tolerate missing/non-numeric fields
         // (defaults 24/80, errors swallowed).
         let rows = payload
             .get("rows")
@@ -599,8 +599,8 @@ fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
-/// Opaque session id when no `X-Session-Id` is supplied (Python uses
-/// `uuid4()[:8]`). We mix a monotonic counter with the current time into 8 hex
+/// Opaque session id when no `X-Session-Id` is supplied
+/// (`uuid4()[:8]` equivalent). We mix a monotonic counter with the current time into 8 hex
 /// digits — process-unique without pulling in a randomness crate.
 fn random_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};

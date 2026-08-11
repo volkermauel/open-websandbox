@@ -1,4 +1,4 @@
-//! Core of `tests/unit/runtime/test_files_api.py` — the open-terminal `/files/*`
+//! Contract for the open-terminal `/files/*`
 //! round-trip surface in scope for PR-B-1 (the grep/glob/upload/archive/view and
 //! LLM-tool handlers arrive in PR-B-4).
 //!

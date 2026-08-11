@@ -10,7 +10,7 @@ use common::{body_text, json, status, Bearer, Env};
 
 #[tokio::test]
 async fn api_config_matches_openapi_spec_shape() {
-    // openapi_spec.py ConfigResponse: {"features":{"terminal":true,"notebooks":false,"desktop":false}}
+    // ConfigResponse: {"features":{"terminal":true,"notebooks":false,"desktop":false}}
     let env = Env::new();
     let resp = env
         .send(Method::GET, "/api/config", Bearer::Default, None)
@@ -24,7 +24,7 @@ async fn api_config_matches_openapi_spec_shape() {
 }
 
 #[tokio::test]
-async fn api_config_feature_keys_in_python_order() {
+async fn api_config_feature_keys_in_canonical_order() {
     // Field order matters for byte parity (D11). serde serializes struct fields
     // in declaration order, so the JSON text must read terminal, notebooks, desktop.
     let env = Env::new();
@@ -40,7 +40,7 @@ async fn api_config_feature_keys_in_python_order() {
 
 #[tokio::test]
 async fn api_status_matches_openapi_spec_shape() {
-    // openapi_spec.py StatusResponse: {"active_pods":0,"max_pods":10,"pods":[]}
+    // StatusResponse: {"active_pods":0,"max_pods":10,"pods":[]}
     let env = Env::new();
     let resp = env
         .send(Method::GET, "/api/status", Bearer::Default, None)

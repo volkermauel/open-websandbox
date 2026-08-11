@@ -1,5 +1,5 @@
-//! Drop-in runtime configuration (D12 — same env-var names/values as the Python
-//! runtime, so the chart's env blocks are unchanged).
+//! Drop-in runtime configuration (D12 — same env-var names/values, so the
+//! chart's env blocks are unchanged).
 //!
 //! [`RuntimeConfig::from_env`] reads the process environment directly; the pure
 //! parsing core is factored into [`parse_value`] (mirroring `shared::config`) so
@@ -74,16 +74,16 @@ impl Default for RuntimeConfig {
 }
 
 impl RuntimeConfig {
-    /// Load configuration from process environment variables, applying the same
-    /// defaults as the Python implementation (D12).
+    /// Load configuration from process environment variables, applying the
+    /// documented defaults (D12).
     pub fn from_env() -> Self {
         Self::from_map(|name| env::var(name).ok().filter(|v| !v.is_empty()))
     }
 
     /// Pure, testable core: build a config from a name→value lookup. Absent or
     /// empty values fall back to the documented defaults; present-but-malformed
-    /// values fall back to the default as well (the Python `_env_int` swallows
-    /// `TypeError`/`ValueError`), so a bad env var never crashes the runtime.
+    /// values fall back to the default as well (parse errors are swallowed), so a
+    /// bad env var never crashes the runtime.
     pub(crate) fn from_map<G>(get: G) -> Self
     where
         G: Fn(&str) -> Option<String>,
@@ -111,8 +111,8 @@ impl RuntimeConfig {
 /// Parse a raw string into `T`, returning `None` on failure.
 ///
 /// Pure wrapper around [`FromStr`] so it can be unit-tested without mutating the
-/// process environment (which would require `unsafe` since Rust 1.83). Mirrors
-/// the Python `_env_int` swallow-on-error behaviour.
+/// process environment (which would require `unsafe` since Rust 1.83). Parse
+/// errors are swallowed rather than propagated.
 pub(crate) fn parse_value<T>(var: &'static str, raw: &str) -> Option<T>
 where
     T: FromStr,
@@ -128,8 +128,8 @@ where
     })
 }
 
-/// Look up `var`, parse it, or fall back to `default` (mirrors the Python
-/// `_env_int` swallow-on-error behaviour).
+/// Look up `var`, parse it, or fall back to `default` (parse errors are
+/// swallowed).
 fn env_t<G, T>(get: &G, var: &'static str, default: T) -> T
 where
     G: Fn(&str) -> Option<String>,
@@ -154,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_match_python() {
+    fn defaults_match_contract() {
         let cfg = RuntimeConfig::from_map(map(&[]));
         assert_eq!(cfg.workdir, PathBuf::from("/workspace"));
         assert_eq!(cfg.max_procs, 256);

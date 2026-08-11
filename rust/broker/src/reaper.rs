@@ -1,30 +1,28 @@
 //! Leader-gated idle reaper — parks + reaps broker-owned `Sandbox` objects.
 //!
-//! Mirrors the Python broker's `_reaper_loop` 1:1 (D11): periodically list every
-//! `Sandbox` labelled `app.kubernetes.io/managed-by=owui-broker`, read each one's
-//! idle time from its `broker-last-used` annotation (`now - last_used`), and for
-//! those past their threshold:
+//! Periodically lists every `Sandbox` labelled
+//! `app.kubernetes.io/managed-by=owui-broker`, reads each one's idle time from
+//! its `broker-last-used` annotation (`now - last_used`), and for those past
+//! their threshold:
 //!
-//! * **ephemeral** (emptyDir) → **reap** (delete) once idle past `idle_ttl_seconds`
-//!   (Python `IDLE_TTL`).
+//! * **ephemeral** (emptyDir) → **reap** (delete) once idle past `idle_ttl_seconds`.
 //! * **persistent** (PVC-backed) → **park** (`spec.operatingMode: Suspended`) once
-//!   idle past `park_idle_seconds` (Python `PARK_TTL`); **reap** (delete) once idle
-//!   past `reap_seconds` (Python `REAP_TTL`, 7 days). Reap takes precedence over
-//!   park, and an already-`Suspended` sandbox is never re-parked.
+//!   idle past `park_idle_seconds`; **reap** (delete) once idle past
+//!   `reap_seconds` (7 days). Reap takes precedence over park, and an
+//!   already-`Suspended` sandbox is never re-parked.
 //!
 //! The leader election ([`crate::leaser`]) gates the *whole* loop: only the elected
-//! broker reaps, so two replicas never double-park/double-reap the same sandbox
-//! (Python `_is_leader`). Non-leaders still serve the read/proxy path.
+//! broker reaps, so two replicas never double-park/double-reap the same sandbox.
+//! Non-leaders still serve the read/proxy path.
 //!
 //! ## The C-4 offload seam
 //!
 //! Before deleting a sandbox the reaper hands it to [`ReapOffload::offload_on_reap`].
 //! C-3 ships a [`NoopOffload`] that always succeeds (delete proceeds immediately);
-//! C-4 replaces it with the S3-tiered offload (Python `_offload_to_s3_with_retry`),
-//! which streams `/workspace → S3` and — on failure — returns `Err` so the reaper
-//! **keeps the sandbox alive for the next tick** (D7: never silently lose a
-//! snapshot). The C-4 impl no-ops for non-s3-tiered sandboxes, matching the Python
-//! branch that only offloads `persistent` + `s3-tiered`.
+//! C-4 replaces it with the S3-tiered offload, which streams `/workspace → S3`
+//! and — on failure — returns `Err` so the reaper **keeps the sandbox alive for
+//! the next tick** (D7: never silently lose a snapshot). The C-4 impl no-ops for
+//! non-s3-tiered sandboxes — it only offloads `persistent` + `s3-tiered`.
 
 #![forbid(unsafe_code)]
 
@@ -41,8 +39,8 @@ use crate::metrics::{ACTIVE_SANDBOXES, SANDBOXES_DELETED_TOTAL};
 use crate::sandbox::{LAST_USED_KEY, PROFILE_LABEL_KEY};
 use crate::store::SandboxStore;
 
-/// The label selector that returns exactly the broker-owned `Sandbox` set
-/// (Python `label_selector="app.kubernetes.io/managed-by=owui-broker"`).
+/// Label selector matching exactly the broker-owned `Sandbox` set
+/// (`app.kubernetes.io/managed-by=owui-broker`).
 pub const MANAGED_BY_SELECTOR: &str = "app.kubernetes.io/managed-by=owui-broker";
 
 /// What the reaper decided to do with one sandbox this tick.
@@ -81,16 +79,15 @@ fn decide(
     cfg: &shared::BrokerConfig,
 ) -> ReaperAction {
     match profile {
-        // Python: s3-tiered persistent — reap at IDLE_TTL (like ephemeral) so
+        // s3-tiered persistent — reap at IDLE_TTL (like ephemeral) so
         // the cold tier (S3) captures state before the emptyDir is destroyed.
         // The reaper offloads first (C-4 ReapOffload); never parks (the pod
-        // must be alive to snapshot). Gated on `s3_enabled` (Python's global
-        // `S3_TIERED = PERSISTENT_MODE == "s3-tiered"`).
+        // must be alive to snapshot). Gated on `s3_enabled`.
         Profile::Persistent if cfg.s3_enabled && idle_secs > cfg.idle_ttl_seconds => {
             ReaperAction::Reap
         }
         Profile::Persistent if cfg.s3_enabled => ReaperAction::Skip,
-        // Python: persistent (non-s3-tiered) — park at PARK_TTL, reap at REAP_TTL.
+        // persistent (non-s3-tiered) — park at PARK_TTL, reap at REAP_TTL.
         // Reap takes precedence; an already-Suspended sandbox is never re-parked.
         Profile::Persistent if idle_secs > cfg.reap_seconds => ReaperAction::Reap,
         Profile::Persistent
@@ -99,15 +96,14 @@ fn decide(
             ReaperAction::Park
         }
         Profile::Persistent => ReaperAction::Skip,
-        // Python: ephemeral (emptyDir) — reap at IDLE_TTL (return capacity to pool).
+        // ephemeral (emptyDir) — reap at IDLE_TTL (return capacity to pool).
         Profile::Ephemeral if idle_secs > cfg.idle_ttl_seconds => ReaperAction::Reap,
         Profile::Ephemeral => ReaperAction::Skip,
     }
 }
 
 /// Read the `broker-profile` label, defaulting to ephemeral when absent or
-/// unrecognised (Python `labels.get(PROFILE, EPHEMERAL)`; an unknown value falls
-/// through the Python `else` branch as ephemeral).
+/// unrecognised (an unknown value falls through as ephemeral).
 fn profile_of(labels: Option<&BTreeMap<String, String>>) -> Profile {
     match labels
         .and_then(|l| l.get(PROFILE_LABEL_KEY))
@@ -118,8 +114,8 @@ fn profile_of(labels: Option<&BTreeMap<String, String>>) -> Profile {
     }
 }
 
-/// Parse the `broker-last-used` annotation to epoch seconds (Python
-/// `int(annots.get(LAST_USED, "0") or 0)`). `None` when absent/unparseable;
+/// Parse the `broker-last-used` annotation to epoch seconds (defaulting to
+/// 0). `None` when absent/unparseable;
 /// callers treat `None` **and** `Some(0)` as "no last-used → skip".
 fn last_used_of(annotations: &BTreeMap<String, String>) -> Option<i64> {
     annotations
@@ -137,8 +133,7 @@ fn now_unix() -> i64 {
 
 /// The C-4 cold-tier offload seam: stream a sandbox's `/workspace` to cold
 /// storage before it is reaped. C-3's [`NoopOffload`] is a logged no-op that
-/// always succeeds; C-4 swaps in the S3-tiered offload (Python
-/// `_offload_to_s3_with_retry`).
+/// always succeeds; C-4 swaps in the S3-tiered offload.
 #[async_trait]
 pub trait ReapOffload: Send + Sync {
     /// Offload `sandbox`'s workspace. Returning [`OffloadError`] keeps the
@@ -158,7 +153,7 @@ pub enum OffloadError {
 
 /// C-3 default offload: do nothing (S3 tiering lands in C-4). Always succeeds,
 /// so the reaper deletes immediately — correct for ephemeral + per-user-pvc
-/// sandboxes, which carry nothing to offload (Python only offloads s3-tiered).
+/// sandboxes, which carry nothing to offload (only s3-tiered is offloaded).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoopOffload;
 
@@ -174,9 +169,8 @@ impl ReapOffload for NoopOffload {
 }
 
 /// One leader-agnostic reaper tick: list broker-owned sandboxes, decide each
-/// one's action, apply it. The injectable `now` makes idle time deterministic in
-/// tests. Mirrors the body of the Python `_reaper_loop`. Does NOT check the
-/// leader gate — see [`maybe_reap_once`].
+/// one's action, apply it. The injectable `now` makes idle time deterministic
+/// in tests. Does NOT check the leader gate — see [`maybe_reap_once`].
 pub async fn reap_once(
     store: &dyn SandboxStore,
     offload: &dyn ReapOffload,
@@ -195,7 +189,7 @@ pub async fn reap_once(
 
     for sbx in &sandboxes {
         let name = sbx.name_any();
-        // Python: `lu = int(annots.get(LAST_USED,"0") or 0); if not lu: continue`.
+        // No usable last-used → skip (treat absent as "not yet tracked").
         let lu = sbx.metadata.annotations.as_ref().and_then(last_used_of);
         let Some(lu) = lu else {
             stats.skipped += 1;
@@ -273,7 +267,7 @@ pub async fn maybe_reap_once(
 
 /// Background reaper loop (leader-gated). Runs every `reaper_poll_seconds`;
 /// exits cleanly when the leader loop signals shutdown (the leader loop owns
-/// this task's lifetime, mirroring the Python `_apply_leadership`).
+/// this task's lifetime).
 pub async fn run_reaper_loop(
     gate: Arc<LeaderGate>,
     store: Arc<dyn SandboxStore>,
@@ -331,7 +325,7 @@ mod tests {
         }
     }
 
-    // --- decide(): the pure idle policy (parity with Python branches) ---------
+    // --- decide(): the pure idle policy ----------------------------------------
 
     #[test]
     fn ephemeral_under_idle_ttl_is_skipped() {
@@ -347,7 +341,7 @@ mod tests {
         assert_eq!(
             decide(Profile::Ephemeral, 120, OperatingMode::Running, &c),
             ReaperAction::Skip,
-            "Python uses strict > (not >=): exactly at TTL is still warm"
+            "strict-greater (not >=): exactly at TTL is still warm"
         );
     }
 
@@ -384,7 +378,7 @@ mod tests {
         assert_eq!(
             decide(Profile::Persistent, 301, OperatingMode::Suspended, &c),
             ReaperAction::Skip,
-            "never re-park an already-parked sandbox (Python mode != Suspended guard)"
+            "never re-park an already-parked sandbox (mode != Suspended guard)"
         );
     }
 
@@ -426,7 +420,7 @@ mod tests {
 
     #[test]
     fn s3_tiered_persistent_reaps_at_idle_ttl_like_ephemeral() {
-        // Python: s3-tiered reaps at IDLE_TTL (cold tier is S3) — never waits
+        // s3-tiered reaps at IDLE_TTL (cold tier is S3) — never waits
         // for PARK/REAP_TTL — so the emptyDir state is captured before destroy.
         let c = cfg_s3(120, 300, 604_800);
         assert_eq!(

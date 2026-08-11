@@ -1,14 +1,14 @@
 //! Pure Sandbox lifecycle logic — no I/O, fully unit-testable.
 //!
-//! [`build_sandbox`] mirrors the Python `_create_sandbox`'s field surgery: it
-//! clones the backing template's `podTemplate`, stamps the `profile` label onto
-//! it, and assembles a `Sandbox` with the spec fields the broker always sets
-//! (`operatingMode: Running`, `shutdownPolicy: Retain`) plus the managed-by
-//! label and the `broker-*` annotations the reaper (C-2) and S3 tier (C-3)
-//! read. The per-session runtime-key Secret volume injection and the persistent
-//! PVC `subPath` surgery live in C-2/C-3 (per-session key management and the
-//! resolve-on-request flow are out of scope for C-1); this helper produces the
-//! C-1 baseline that those later passes extend.
+//! [`build_sandbox`] does the field surgery: it clones the backing template's
+//! `podTemplate`, stamps the `profile` label onto it, and assembles a `Sandbox`
+//! with the spec fields the broker always sets (`operatingMode: Running`,
+//! `shutdownPolicy: Retain`) plus the managed-by label and the `broker-*`
+//! annotations the reaper (C-2) and S3 tier (C-3) read. The per-session
+//! runtime-key Secret volume injection and the persistent PVC `subPath` surgery
+//! live in C-2/C-3 (per-session key management and the resolve-on-request flow
+//! are out of scope for C-1); this helper produces the C-1 baseline that those
+//! later passes extend.
 
 #![forbid(unsafe_code)]
 
@@ -21,13 +21,13 @@ use shared::{OperatingMode, Profile, Sandbox, SandboxSpec, SandboxTemplate, Shut
 use crate::error::ApiError;
 
 /// Managed-by label key/value the broker stamps on every Sandbox it owns
-/// (mirrors the Python `MANAGED_BY = {"app.kubernetes.io/managed-by": "owui-broker"}`).
+/// (`app.kubernetes.io/managed-by=owui-broker`).
 pub const MANAGED_BY_KEY: &str = "app.kubernetes.io/managed-by";
 pub const MANAGED_BY_VALUE: &str = "owui-broker";
-/// Label key recording a Sandbox's persistence profile (Python `PROFILE` const).
+/// Label key recording a Sandbox's persistence profile.
 pub const PROFILE_LABEL_KEY: &str = "broker-profile";
 /// Annotation key carrying the epoch-seconds "last used" timestamp the reaper
-/// parks/reaps against (Python `LAST_USED` const).
+/// parks/reaps against.
 pub const LAST_USED_KEY: &str = "broker-last-used";
 /// Annotation carrying the owning user id (S3 offload reads this).
 pub const USER_KEY: &str = "broker-user";
@@ -49,8 +49,8 @@ pub fn extract_pod_template(template: &SandboxTemplate) -> Result<serde_json::Va
 
 /// Build a per-session `Sandbox` from a cloned template pod-blueprint.
 ///
-/// Mirrors the field set the Python `_create_sandbox` writes. `now` is taken as
-/// a parameter so this function is pure and deterministic in tests; the handler
+/// `now` is taken as a parameter so this function is pure and deterministic in
+/// tests; the handler
 /// passes the current epoch seconds. `pod_template` is the template's pod
 /// blueprint (the caller already [`extract_pod_template`]d it); this helper
 /// stamps the `profile` label onto it.
@@ -64,8 +64,8 @@ pub fn build_sandbox(
     namespace: &str,
     now: i64,
 ) -> Sandbox {
-    // Stamp the profile label onto the pod blueprint's metadata (Python:
-    // pod_tmpl.metadata.labels["profile"] = profile).
+    // Stamp the profile label onto the pod blueprint's metadata
+    // (pod_tmpl.metadata.labels["profile"] = profile).
     if let Some(obj) = pod_template.as_object_mut() {
         let metadata = obj
             .entry("metadata")

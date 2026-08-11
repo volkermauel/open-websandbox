@@ -10,15 +10,15 @@
 //!
 //! ## Why `podTemplate` is a `serde_json::Value`
 //!
-//! The Python broker reads the base `SandboxTemplate`'s `spec.podTemplate`,
+//! The broker reads the base `SandboxTemplate`'s `spec.podTemplate`,
 //! deep-copies it, and shuffles a handful of keys (clears the `workspace`
 //! volume, points it at a PVC/emptyDir, injects the per-session key volume). It
 //! never *interprets* the pod spec, only passes it through byte-for-byte. Typing
 //! the full [`k8s_openapi`] pod tree would add a large surface we don't reason
 //! about and would require enabling k8s-openapi's optional `schemars` feature
 //! (its `JsonSchema` impls are feature-gated, and the workspace does not enable
-//! it). `serde_json::Value` round-trips any pod template exactly — matching the
-//! Python "opaque dict" behaviour — while the fields the broker *does* reason
+//! it). `serde_json::Value` round-trips any pod template exactly — treating it
+//! as an opaque dict — while the fields the broker *does* reason
 //! about (`operatingMode`, `shutdownPolicy`) are typed enums below.
 
 #![forbid(unsafe_code)]
@@ -98,8 +98,8 @@ pub struct SandboxTemplateSpec {
 /// `spec.operatingMode` — the upstream controller's lifecycle mode.
 ///
 /// Serializes as the upstream string literals `Running` / `Suspended` (serde's
-/// default unit-variant representation), matching the values the Python broker
-/// patches in `_set_sandbox_operating_mode`.
+/// default unit-variant representation), matching the values patched in
+/// `_set_sandbox_operating_mode`.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, utoipa::ToSchema,
 )]
@@ -122,7 +122,7 @@ pub enum ShutdownPolicy {
 }
 
 /// A pod IP entry as surfaced in [`SandboxStatus::pod_i_ps`] (mirrors the
-/// upstream `core.v1.PodIP` `{ ip }` shape the Python broker reads).
+/// upstream `core.v1.PodIP` `{ ip }` shape).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, utoipa::ToSchema)]
 pub struct PodIpEntry {
     /// The pod IP.
@@ -130,7 +130,7 @@ pub struct PodIpEntry {
 }
 
 /// A status condition as surfaced in [`SandboxStatus::conditions`] (mirrors the
-/// upstream `meta.v1.Condition` subset the Python broker reads for readiness).
+/// upstream `meta.v1.Condition` subset read for readiness).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, utoipa::ToSchema)]
 pub struct SandboxCondition {
     /// Condition type (e.g. `Ready`).
@@ -179,8 +179,8 @@ pub struct SandboxStatus {
 }
 
 impl SandboxStatus {
-    /// True when a `Ready`/`True` condition is present — the predicate the
-    /// Python broker's `_sandbox_ready` applies before proxying.
+    /// True when a `Ready`/`True` condition is present — the readiness
+    /// predicate applied before proxying.
     #[must_use]
     pub fn is_ready(&self) -> bool {
         self.conditions

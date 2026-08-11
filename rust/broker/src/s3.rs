@@ -4,8 +4,7 @@
 //! The broker is the **sole S3 client** (#50 preserved): the runtime pod stays
 //! network-isolated and only streams a `zstd` tarball of its workspace off
 //! (`GET /snapshot`) and back on (`PUT /restore`). This module drives both
-//! directions, mirroring the Python broker's `_offload_to_s3_with_retry` /
-//! `_restore_from_s3` 1:1 (D11):
+//! directions (D11):
 //!
 //! * **offload** ([`S3Offload`] implementing [`ReapOffload`]): `GET /snapshot`
 //!   → `put_object` the new versioned key (SSE-S3) → keep-latest retention via
@@ -46,7 +45,7 @@ use crate::reaper::{OffloadError, ReapOffload};
 use crate::sandbox::{PROFILE_LABEL_KEY, SESSION_KEY, USER_KEY};
 use crate::store::SandboxStore;
 
-/// Object-expiry/retention metadata + retry defaults match the Python broker
+/// Object-expiry/retention metadata + retry defaults
 /// (`S3_RETENTION_DAYS=30`, `S3_OFFLOAD_MAX_ATTEMPTS=5`,
 /// `S3_OFFLOAD_BACKOFF_SECONDS=10`). Exposed as constants so the wiring +
 /// tests reference the documented defaults.
@@ -58,9 +57,9 @@ const DEFAULT_OFFLOAD_BACKOFF: Duration = Duration::from_secs(10);
 // Object-key scheme (D3): `<prefix>/<sandbox>/workspace-<ts>.tar.zst`
 // ---------------------------------------------------------------------------
 
-/// Per-session cold-tier namespace: `<prefix>/<user>/chats/<session>/` (Python
-/// `_s3_prefix`, keyed by user + session for D11 parity — a Rust broker reads
-/// objects a Python broker wrote, and the e2e inspects them by user/chat). The
+/// Per-session cold-tier namespace: `<prefix>/<user>/chats/<session>/`, keyed
+/// by user + session for D11 parity — any broker reads objects another wrote,
+/// and the e2e inspects them by user/chat. The
 /// surrounding slashes of the configured prefix are stripped so the namespace is
 /// canonical regardless of env formatting.
 #[must_use]
@@ -71,8 +70,8 @@ pub fn s3_namespace(prefix: &str, user: &str, session: &str) -> String {
 
 /// Versioned snapshot object key:
 /// `<prefix>/<user>/chats/<session>/workspace-<ts>.tar.zst`. The timestamp is
-/// zero-padded to 10 digits so **lexical order == chronological order** (Python
-/// D3) — [`ColdStore::latest_key`] is therefore a lexical max.
+/// zero-padded to 10 digits so **lexical order == chronological order** (D3) —
+/// [`ColdStore::latest_key`] is therefore a lexical max.
 #[must_use]
 pub fn s3_object_key(prefix: &str, user: &str, session: &str, ts: i64) -> String {
     format!(
@@ -152,7 +151,7 @@ impl AwsColdStore {
             builder = builder.endpoint_url(&cfg.s3_endpoint);
         }
         // Static credentials when provided; otherwise the SDK default chain
-        // (env, IMDS, …) applies — matching the Python bring-your-own model.
+        // (env, IMDS, …) applies — bring-your-own credentials.
         if !cfg.s3_access_key_id.is_empty() {
             builder = builder.credentials_provider(Credentials::new(
                 &cfg.s3_access_key_id,
@@ -391,8 +390,8 @@ pub enum RestoreError {
     Failed(String),
 }
 
-/// Outcome of a restore attempt (Python `_restore_from_s3` returns the key or
-/// `None`; the `None` path is the first-creation no-op).
+/// Outcome of a restore attempt (returns the restored key or `None`; the
+/// `None` path is the first-creation no-op).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestoreOutcome {
     /// An object was found and streamed to `/restore` (`Ok(key)` carried the
@@ -424,7 +423,7 @@ pub struct S3Offload {
 
 impl S3Offload {
     /// Build the driver from the broker config + a concrete cold store + the
-    /// shared proxy HTTP client. Retry policy + retention default to the Python
+    /// shared proxy HTTP client. Retry policy + retention default to the documented
     /// values ([`DEFAULT_OFFLOAD_MAX_ATTEMPTS`] / [`DEFAULT_OFFLOAD_BACKOFF`] /
     /// [`DEFAULT_RETENTION_DAYS`]).
     #[must_use]
@@ -483,7 +482,7 @@ impl S3Offload {
     }
 
     /// Runtime-hop URL for `path` (leading `/`): the override base when set,
-    /// else `http://<pod-ip>:8888<path>` (the Python broker's hardcoded `:8888`).
+    /// else `http://<pod-ip>:8888<path>` (hard-coded `:8888`).
     fn runtime_url(&self, pod_ip: &str, path: &str) -> String {
         match &self.runtime_upstream_override {
             Some(base) => format!("{base}{path}"),
@@ -547,7 +546,7 @@ impl S3Offload {
         Ok(())
     }
 
-    /// Restore-on-resume (Python `_restore_from_s3`): list the namespace →
+    /// Restore-on-resume: list the namespace →
     /// newest object → GET it → PUT `/restore`. A no-op ([`RestoreOutcome::NoObject`])
     /// when there is no object (first creation); any failure surfaces as
     /// [`RestoreError::Failed`] so resolve can fail the resume (502) rather than
@@ -601,7 +600,7 @@ impl S3Offload {
 #[async_trait]
 impl ReapOffload for S3Offload {
     async fn offload_on_reap(&self, sandbox: &Sandbox) -> Result<(), OffloadError> {
-        // Python only offloads persistent s3-tiered sandboxes; ephemeral +
+        // Only persistent s3-tiered sandboxes are offloaded; ephemeral +
         // PVC-persistent carry nothing for the cold tier. When S3 tiering is
         // enabled, every *persistent* reap is an s3-tiered reap.
         if profile_of(sandbox) != Profile::Persistent {
@@ -813,8 +812,8 @@ mod tests {
 
     #[tokio::test]
     async fn offload_noops_for_ephemeral_profile() {
-        // Ephemeral sandboxes carry nothing for the cold tier (Python only
-        // offloads persistent s3-tiered). Must return Ok without touching S3.
+        // Ephemeral sandboxes carry nothing for the cold tier (only persistent
+        // s3-tiered is offloaded). Must return Ok without touching S3.
         let store = Arc::new(InMemoryColdStore::new());
         let offload = S3Offload::new(
             &BrokerConfig::default(),

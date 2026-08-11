@@ -1,10 +1,9 @@
 //! Kubernetes client construction.
 //!
 //! Builds a [`kube::Client`] from in-cluster service-account config, falling
-//! back to the local kubeconfig for dev/tests — the same try/fallback the
-//! Python broker performs with `config.load_incluster_config()` /
-//! `config.load_kube_config()`. [`kube::Config::infer`] does both in one call
-//! (in-cluster first, kubeconfig second), which is exactly the desired order.
+//! back to the local kubeconfig for dev/tests. [`kube::Config::infer`] does
+//! both in one call (in-cluster first, kubeconfig second), which is exactly the
+//! desired order.
 
 #![forbid(unsafe_code)]
 

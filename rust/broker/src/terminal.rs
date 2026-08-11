@@ -1,6 +1,6 @@
 //! Terminal WebSocket relay (OWUI open-terminal contract).
 //!
-//! Mirrors the Python broker's `/api/terminals/{session_id}` WebSocket handler.
+//! Handler for the `/api/terminals/{session_id}` WebSocket relay.
 //! Browsers cannot set arbitrary headers on a WS open, so the OWUI terminal UI
 //! sends its identity via query params (`user_id`, `session_id`/`chat_id`,
 //! `persistence`) with the chat id in the path, and the shared secret as the
@@ -8,13 +8,13 @@
 //! [`resolve_sandbox`](crate::resolve::resolve_sandbox), open an outbound WS to
 //! the runtime pod's terminal endpoint (`ws://<pod-ip>:8888/api/terminals/{id}`),
 //! and relay frames bidirectionally until either side closes (first-completed-
-//! wins, matching the Python `asyncio.wait(..., FIRST_COMPLETED)`).
+//! wins).
 //!
 //! The HTTP terminal-management surface (`POST /api/terminals`, `GET
 //! /api/terminals/{id}` status) flows through the catch-all reverse proxy
 //! ([`crate::proxy`]); only the interactive WS is handled here.
 //!
-//! Like the Python original, the byte relay is exercised end-to-end (a live WS
+//! The byte relay is exercised end-to-end (a live WS
 //! fixture would need a PTY-equivalent upstream); the auth + identity parsing is
 //! unit-tested below.
 
@@ -37,7 +37,7 @@ use crate::proxy::{profile_from_header, RUNTIME_PORT};
 use crate::resolve::resolve_sandbox;
 use crate::state::AppState;
 
-/// How long to wait for the OWUI first-message auth before closing (Python: 10s).
+/// How long to wait for the OWUI first-message auth before closing (10s).
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Identity carried from the OWUI WS open (query params fall back to headers).
@@ -62,7 +62,7 @@ pub struct TerminalWsQuery {
 }
 
 /// Resolve the terminal identity from query params, then headers, then the path
-/// session id (mirrors the Python precedence). `X-User-Id` is required (1008
+/// session id. `X-User-Id` is required (1008
 /// close when absent); `X-Session-Id`/chat falls back to the path id; profile
 /// resolves via [`profile_from_header`].
 pub fn terminal_identity(
@@ -117,8 +117,7 @@ fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 }
 
 /// `GET /api/terminals/{id}` (WebSocket upgrade). Validates identity, then hands
-/// off to [`relay`] inside the upgrade future (post-accept auth + resolve + relay,
-/// matching the Python handler).
+/// off to [`relay`] inside the upgrade future (post-accept auth + resolve + relay).
 pub async fn terminal_ws(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
@@ -160,7 +159,7 @@ async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, s
         }
     }
 
-    // 2. resolve the target sandbox (close 1011 on failure, like the Python 1011).
+    // 2. resolve the target sandbox (close 1011 on failure).
     let resolved = match resolve_sandbox(
         &state,
         &identity.user_id,
@@ -182,7 +181,7 @@ async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, s
     };
 
     // 3. best-effort: ensure an interactive PTY exists on the resolved pod before
-    //    attaching (idempotent). Mirrors the Python `contextlib.suppress` POST.
+    //    attaching (idempotent; errors suppressed).
     ensure_pty(&state, &resolved.pod_ip, &session_id).await;
 
     tracing::info!(
@@ -193,8 +192,8 @@ async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, s
         "terminal ws relay started"
     );
 
-    // 4. connect the upstream runtime terminal WS (plaintext in-cluster, like the
-    //    Python broker — TLS terminates at the ingress).
+    // 4. connect the upstream runtime terminal WS (plaintext in-cluster;
+    //    TLS terminates at the ingress).
     let upstream_url = format!(
         "ws://{}:{RUNTIME_PORT}/api/terminals/{session_id}",
         resolved.pod_ip
@@ -232,7 +231,7 @@ async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, s
             }
         }
         // Dropping up_sink closes the upstream WS → the runtime's handler reaches
-        // its finally-block PTY cleanup (Python: same effect).
+        // its finally-block PTY cleanup.
     });
     let mut u2c = tokio::spawn(async move {
         while let Some(msg) = up_stream.next().await {
@@ -251,7 +250,7 @@ async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, s
     });
 
     // Stop as soon as EITHER side ends; abort the other and let the dropped sinks
-    // close both sockets (first-completed-wins, Python parity).
+    // close both sockets (first-completed-wins).
     tokio::select! {
         _ = &mut c2u => {}
         _ = &mut u2c => {}
@@ -294,7 +293,7 @@ async fn wait_auth(client: &mut WebSocket, secret: &str) -> AuthResult {
 }
 
 /// Best-effort `POST /api/terminals` to the resolved pod so an interactive PTY
-/// exists before the WS attaches (idempotent; errors swallowed, Python parity).
+/// exists before the WS attaches (idempotent; errors swallowed).
 async fn ensure_pty(state: &AppState, pod_ip: &str, session_id: &str) {
     let mut headers = HeaderMap::new();
     if let Ok(v) = "application/json".parse() {

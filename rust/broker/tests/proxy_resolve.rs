@@ -144,7 +144,7 @@ async fn resolve_creates_and_waits_for_ready_when_absent() {
 }
 
 #[tokio::test]
-async fn resolve_deterministic_name_matches_python_scheme() {
+async fn resolve_name_scheme_is_deterministic() {
     let store = store_with_template();
     store.set_auto_ready_on_create(Some("10.0.0.2".into()));
     let state = state(store.clone(), config(5));
@@ -152,13 +152,13 @@ async fn resolve_deterministic_name_matches_python_scheme() {
     let e = resolve_sandbox(&state, "u-1", "s-1", Profile::Ephemeral)
         .await
         .unwrap();
-    // Python: owui- + sha256("u-1|s-1")[:12].
+    // Expected: owui- + sha256("u-1|s-1")[:12].
     assert!(e.name.starts_with("owui-"), "{}", e.name);
 
     let p = resolve_sandbox(&state, "u-1", "s-1", Profile::Persistent)
         .await
         .unwrap();
-    // Python: owui-c- + sha256("u-1/s-1")[:12].
+    // Expected: owui-c- + sha256("u-1/s-1")[:12].
     assert!(p.name.starts_with("owui-c-"), "{}", p.name);
 }
 

@@ -38,11 +38,11 @@ impl Modify for BearerAddon {
     }
 }
 
-/// Error body both control planes return: `{"detail": "..."}` (FastAPI `HTTPException`
-/// shape, byte-for-byte parity — D11). Used as the error response `body` across the
-/// broker and runtime OpenAPI surfaces.
+/// Error body both control planes return: `{"detail": "..."}` (the
+/// `{ "detail": <string> }` shape — byte-for-byte parity, D11). Used as the
+/// error response `body` across the broker and runtime OpenAPI surfaces.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct ErrorResponse {
-    /// Human-readable error detail (the FastAPI `HTTPException.detail` value).
+    /// Human-readable error detail.
     pub detail: String,
 }

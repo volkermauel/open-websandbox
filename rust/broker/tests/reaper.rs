@@ -53,7 +53,7 @@ fn cfg(idle: u64, park: u64, reap: u64) -> shared::BrokerConfig {
     }
 }
 
-/// A seed sandbox missing its `broker-last-used` annotation (Python `if not lu`).
+/// A seed sandbox missing its `broker-last-used` annotation.
 fn seed_no_last_used(name: &str, profile: &str) -> Sandbox {
     let mut sbx = seed(name, profile, 0, Some(OperatingMode::Running));
     sbx.metadata

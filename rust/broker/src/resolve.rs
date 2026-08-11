@@ -1,17 +1,15 @@
 //! Deterministic session→sandbox resolution + ready-polling.
 //!
-//! Mirrors the Python broker's `resolve_sandbox` / `_ephemeral_sandbox_name` /
-//! `_chat_sandbox_name` (PR-C-2): compute the deterministic per-session Sandbox
-//! name, get-or-create it via the [`SandboxStore`], then poll the store until the
-//! upstream controller reports `Ready` **and** a pod IP (reusing
+//! Per-session sandbox resolution (PR-C-2): compute the deterministic per-session
+//! Sandbox name, get-or-create it via the [`SandboxStore`], then poll the store
+//! until the upstream controller reports `Ready` **and** a pod IP (reusing
 //! [`SandboxStatus::is_ready`](shared::SandboxStatus::is_ready) +
 //! [`pod_ip`](shared::SandboxStatus::pod_ip)).
 //!
-//! Out of scope here (land in later PRs, matching the Python order): per-session
+//! Out of scope here (land in later PRs): per-session
 //! runtime-key mint/rotate (C-3), staging→chat migration (C-3), S3-tiered restore
-//! (C-4). The Python broker resumes a `Suspended` sandbox before watching; the
-//! Rust controller-set interaction (park/resume) is C-3/leader-election territory,
-//! so a present-but-not-Ready sandbox is simply polled here.
+//! (C-4). The controller-set interaction (park/resume) is C-3/leader-election
+//! territory, so a present-but-not-Ready sandbox is simply polled here.
 
 #![forbid(unsafe_code)]
 
@@ -26,13 +24,13 @@ use crate::sandbox::{build_sandbox, extract_pod_template};
 use crate::state::AppState;
 use crate::store::StoreError;
 
-/// Prefix for ephemeral (per-SESSION, emptyDir) sandboxes (Python `CLAIM_PREFIX`).
+/// Prefix for ephemeral (per-SESSION, emptyDir) sandboxes.
 pub const EPHEMERAL_PREFIX: &str = "owui-";
-/// Prefix for persistent (per-CHAT) sandboxes (Python `CHAT_PREFIX`).
+/// Prefix for persistent (per-CHAT) sandboxes.
 pub const CHAT_PREFIX: &str = "owui-c-";
 
-/// Poll interval while waiting for a Sandbox to reach `Ready`. The Python broker
-/// uses a server-side Watch; PR-C-2 polls the store (simpler, fine for C-2 per
+/// Poll interval while waiting for a Sandbox to reach `Ready`. PR-C-2 polls
+/// the store (simpler, fine for C-2 per
 /// the issue). 250 ms keeps perceived latency low without hammering the apiserver
 /// on the real backend.
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -49,14 +47,13 @@ pub struct ResolvedSandbox {
 
 /// Deterministic, DNS-label-safe per-session Sandbox name.
 ///
-/// * Ephemeral profile: `owui-` + `sha256("{user}|{session}")[:12]`
-///   (Python `_ephemeral_sandbox_name`).
-/// * Persistent profile: `owui-c-` + `sha256("{user}/{session}")[:12]`
-///   (Python `_chat_sandbox_name`).
+/// * Ephemeral profile: `owui-` + `sha256("{user}|{session}")[:12]`.
+/// * Persistent profile: `owui-c-` + `sha256("{user}/{session}")[:12]`.
 ///
-/// Byte-identical to the Python scheme — including the differing separator (`|`
-/// vs `/`) and prefix (`owui-` vs `owui-c-`) — so a Rust broker resolves the SAME
-/// object a Python broker created for a given user/session (D11 cutover safety).
+/// The scheme is byte-identical to the reference broker — including the differing
+/// separator (`|` vs `/`) and prefix (`owui-` vs `owui-c-`) — so any broker
+/// instance resolves the SAME object for a given user/session (D11 cutover
+/// safety).
 #[must_use]
 pub fn sandbox_name(user_id: &str, session_id: &str, profile: Profile) -> String {
     match profile {
@@ -71,7 +68,7 @@ pub fn sandbox_name(user_id: &str, session_id: &str, profile: Profile) -> String
     }
 }
 
-/// First 12 hex chars (6 bytes) of `sha256(input)` — matches Python `hexdigest()[:12]`.
+/// First 12 hex chars (6 bytes) of `sha256(input)` (`hexdigest()[:12]`).
 fn hex12(input: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input);
@@ -79,7 +76,7 @@ fn hex12(input: &[u8]) -> String {
     out.iter().take(6).map(|b| format!("{b:02x}")).collect()
 }
 
-/// Pod IP of a `Ready` sandbox, or `None` (Python `_sandbox_ready_with_ip`).
+/// Pod IP of a `Ready` sandbox, or `None`.
 fn ready_pod_ip(sbx: &Sandbox) -> Option<String> {
     let status: &SandboxStatus = sbx.status.as_ref()?;
     if status.is_ready() {
@@ -114,7 +111,7 @@ fn now_unix() -> i64 {
 ///    A `Conflict` means a concurrent create won — fall through to the poll.
 /// 3. Poll [`SandboxStore::get_sandbox`] every [`READY_POLL_INTERVAL`] until
 ///    [`ready_pod_ip`] or the configured `claim_timeout_seconds` deadline
-///    (→ 503, matching the PR-C-2 spec; the Python broker raises 504).
+///    (→ 503, matching the PR-C-2 spec).
 ///
 /// Returns the ready [`ResolvedSandbox`] (name + pod IP).
 #[tracing::instrument(name = "sandbox.resolve", skip(state), fields(sandbox = tracing::field::Empty))]
@@ -175,8 +172,8 @@ pub async fn resolve_sandbox(
             Err(e) => return Err(map_store_err(e)),
         }
     }
-    // Resume a parked sandbox (Python `_resume_if_suspended` on every watch
-    // event): flip a `Suspended` sandbox back to `Running` so its pod schedules
+    // Resume a parked sandbox before the ready poll: flip a `Suspended`
+    // sandbox back to `Running` so its pod schedules
     // before the Ready poll. C-3's rotate-on-resume (per-session key) stays
     // deferred to the per-session-key PR; C-4 only needs the operatingMode flip
     // + the restore below.
@@ -193,10 +190,9 @@ pub async fn resolve_sandbox(
     }
 
     let resolved = wait_for_ready(state, &name).await?;
-    // Activity bump (Python `_touch_sandbox`): refresh `broker-last-used` so the
+    // Activity bump: refresh `broker-last-used` so the
     // leader's reaper doesn't park/reap a sandbox mid-session. Best-effort — the
-    // resolve already succeeded, so a patch failure is logged, never fatal
-    // (mirrors the Python `except ... log.debug` swallow).
+    // resolve already succeeded, so a patch failure is logged, never fatal.
     if let Err(e) = state
         .store
         .touch_last_used(&resolved.name, now_unix())
@@ -204,7 +200,7 @@ pub async fn resolve_sandbox(
     {
         tracing::debug!(sandbox = %resolved.name, error = %e, "non-fatal last-used touch");
     }
-    // C-4 restore-on-resume (Python `_restore_from_s3`, gated on S3 tiering +
+    // C-4 restore-on-resume (gated on S3 tiering +
     // persistent profile): block readiness until S3 → /workspace is present.
     // No-op on first creation (no object under the namespace); on restore
     // failure we FAIL the resume (502) so the user never gets an empty
@@ -264,13 +260,13 @@ mod tests {
     use super::*;
     use shared::SandboxStatus;
 
-    // --- name derivation (parity with the Python scheme) --------------------
+    // --- name derivation (deterministic scheme) -----------------------------
 
     #[test]
     fn ephemeral_name_uses_pipe_separator_and_claim_prefix() {
         let name = sandbox_name("user-1", "chat-1", Profile::Ephemeral);
         assert!(name.starts_with(EPHEMERAL_PREFIX), "{name}");
-        // Python: sha256("user-1|chat-1").hexdigest()[:12]
+        // Expected: sha256("user-1|chat-1").hexdigest()[:12]
         let want = hex12(b"user-1|chat-1");
         assert_eq!(name, format!("{EPHEMERAL_PREFIX}{want}"));
     }

@@ -1,6 +1,6 @@
 //! Fail-closed per-session API-key authentication (issues #4 / #50).
 //!
-//! Direct port of the Python `server` key handling. Each sandbox pod gets its
+//! Per-session key handling. Each sandbox pod gets its
 //! OWN broker↔runtime key, delivered as a projected Secret volume mounted at
 //! `RUNTIME_KEY_FILE` (`/etc/runtime-key/api-key`). The runtime reads it from
 //! that FILE (never the env), mtime-caching the value so a rotated Secret —
@@ -13,7 +13,7 @@
 //!   request path AND a refused boot ([`SessionKeyStore::validate`]);
 //! * a missing or mismatched Bearer → 401.
 //!
-//! The 9 cases in `tests/unit/runtime/test_runtime_auth.py` are ported in
+//! The 9 auth cases are ported in
 //! `tests/auth_contract.rs`.
 
 #![forbid(unsafe_code)]
@@ -32,8 +32,7 @@ use shared::constant_time_eq;
 use crate::error::ApiError;
 use crate::state::AppState;
 
-/// Keys that count as "not configured" (must not be shipped as-is). Matches the
-/// Python `_PLACEHOLDER_KEYS` frozenset exactly.
+/// Keys that count as "not configured" (must not be shipped as-is).
 const PLACEHOLDER_KEYS: &[&str] = &[
     "",
     "dev-shared-secret-change-me",
@@ -42,7 +41,7 @@ const PLACEHOLDER_KEYS: &[&str] = &[
     "placeholder",
 ];
 
-/// Sentinel "the file is missing" cache state (Python uses mtime `-2.0`).
+/// Sentinel "the file is missing" cache state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mtime {
     /// `RUNTIME_KEY_FILE` does not exist / is unreadable.
@@ -188,8 +187,7 @@ pub fn bearer_from_headers(headers: &HeaderMap) -> Option<Vec<u8>> {
 /// Extractor proof that a request passed [`SessionKeyStore::check`].
 ///
 /// Add this as the first handler parameter on every gated route; open routes
-/// simply omit it. This mirrors the Python `Security(_auth_runtime)` dependency
-/// wired onto each gated endpoint.
+/// simply omit it — it is the guard wired onto each gated endpoint.
 #[derive(Debug, Clone, Copy)]
 pub struct Authed;
 

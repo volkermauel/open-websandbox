@@ -1,15 +1,15 @@
 //! Reverse proxy: forward Open WebUI runtime-tool requests to the resolved
 //! sandbox pod.
 //!
-//! Mirrors the Python broker's catch-all `proxy` handler. The shared Bearer is
-//! validated up-front by [`Authed`](crate::auth::Authed); here we:
+//! The shared Bearer is validated up-front by
+//! [`Authed`](crate::auth::Authed); here we:
 //!
 //! 1. read the OWUI request identity (`X-User-Id` required; `X-Session-Id`
 //!    defaults to the user; `X-Persistence` selects the profile, else the
-//!    configured default — exactly the Python `_auth` + `proxy` parsing);
+//!    configured default);
 //! 2. [`resolve_sandbox`] for that identity (get-or-create + Ready poll);
-//! 3. rebuild the headers: strip the hop-by-hop + broker-managed set (Python
-//!    `HOP`, including the inbound `Authorization`), then inject the runtime
+//! 3. rebuild the headers: strip the hop-by-hop + broker-managed set
+//!    ([`HOP`], including the inbound `Authorization`), then inject the runtime
 //!    Bearer (`BROKER_RUNTIME_API_KEY` — C-2 shared key; C-3 rotates per session)
 //!    and the `X-Sandbox-*` identity the runtime echoes;
 //! 4. forward method + path + query + body to `http://<pod-ip>:8888<path>` over
@@ -36,7 +36,7 @@ use crate::resolve::{resolve_sandbox, ResolvedSandbox};
 use crate::state::AppState;
 use tracing::Instrument;
 
-/// Hop-by-hop + broker-managed headers stripped before forwarding (Python `HOP`).
+/// Hop-by-hop + broker-managed headers stripped before forwarding ([`HOP`]).
 ///
 /// `authorization` is dropped here so the inbound OWUI→broker Bearer never reaches
 /// the runtime; the runtime hop gets its OWN Bearer (the runtime key) injected
@@ -55,11 +55,11 @@ const HOP: &[&str] = &[
     "authorization",
 ];
 
-/// Runtime pod port (the Python broker hardcodes `:8888`).
+/// Runtime pod port (hard-coded `:8888`).
 pub const RUNTIME_PORT: u16 = 8888;
 
-/// Cap on a forwarded request body read into memory (256 MiB). The Python catch-all
-/// also buffers the full body (`await request.body()`); streaming the request body
+/// Cap on a forwarded request body read into memory (256 MiB). This handler
+/// also buffers the full body; streaming the request body
 /// end-to-end is a later optimisation. 256 MiB covers realistic `/files` uploads.
 const MAX_FORWARD_BODY: usize = 256 * 1024 * 1024;
 
@@ -74,7 +74,7 @@ pub struct ForwardIdentity {
     pub profile: Profile,
 }
 
-/// Parse the OWUI request identity from the headers (Python `proxy` parsing).
+/// Parse the OWUI request identity from the inbound headers.
 ///
 /// `X-User-Id` is required (400 when absent); `X-Session-Id` defaults to the user
 /// id; an unrecognised/absent `X-Persistence` selects the configured default
@@ -124,8 +124,7 @@ pub(crate) fn profile_from_header(headers: &HeaderMap, default_profile: Profile)
 ///
 /// Copies every inbound header whose lowercased name is NOT in [`HOP`], then
 /// injects the runtime Bearer (when a runtime key is configured) and the
-/// `X-Sandbox-*` / `X-Session-Id` identity the runtime echoes back. Mirrors the
-/// Python `fwd` dict + `_runtime_auth_headers`.
+/// `X-Sandbox-*` / `X-Session-Id` identity the runtime echoes back.
 #[must_use]
 pub fn build_forward_headers(
     inbound: &HeaderMap,
@@ -187,11 +186,11 @@ pub fn upstream_url(state: &AppState, resolved: &ResolvedSandbox, path_and_query
 }
 
 /// Strip the host from a 3xx `Location` so redirects stay broker-relative
-/// (Python: `urlunsplit(("","","path","query",""))`). A relative `Location` is
+/// (keep only the path + query). A relative `Location` is
 /// returned unchanged.
 #[must_use]
 pub fn rewrite_location(loc: &str) -> String {
-    // Match Python's `urlunsplit(("","",path,query,""))`: drop scheme + netloc,
+    // Drop scheme + netloc,
     // keep the path (+ query), leave a relative path verbatim. A fragment (if
     // any) is dropped to match urlsplit's separate fragment slot.
     let after_authority = if let Some((_, rest)) = loc.split_once("://") {
@@ -309,9 +308,8 @@ async fn forward_response(upstream: reqwest::Response) -> Result<Response, ApiEr
     for (name, value) in &out {
         builder = builder.header(name.clone(), value.clone());
     }
-    // Stream the upstream body straight through (the Python broker reads it all
-    // via `aread()`; streaming is strictly better and avoids buffering large
-    // /files payloads in the broker).
+    // Stream the upstream body straight through; streaming is strictly better
+    // and avoids buffering large /files payloads in the broker.
     builder
         .body(Body::from_stream(upstream.bytes_stream()))
         .map_err(|e| ApiError::Internal(format!("could not build proxy response: {e}")))
@@ -474,8 +472,8 @@ mod tests {
     }
 
     #[test]
-    fn hop_set_matches_python() {
-        // Python HOP set, verbatim.
+    fn hop_set_is_complete() {
+        // The HOP set, verbatim.
         for h in [
             "connection",
             "keep-alive",

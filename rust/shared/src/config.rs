@@ -1,13 +1,12 @@
 //! Drop-in configuration parsing for the control plane (D12).
 //!
-//! The Python components today read their behaviour from environment variables
-//! with fixed names; the Rust rewrite keeps those names and values identical so
-//! the chart's env blocks are unchanged. PR-A surfaced two representative
-//! fields; PR-C-1 filled in the broker knobs needed for the HTTP surface and
-//! Sandbox lifecycle; PR-C-3 (this pass) adds the idle-reaper TTLs + the leader-
-//! election lease parameters the reaper loop + lease loop read (Python
-//! `IDLE_TTL` / `PARK_TTL` / `REAP_TTL` / `REAPER_POLL_SECONDS` +
-//! `_LEADER_*`).
+//! The control plane reads its behaviour from environment variables with
+//! fixed names; the Rust rewrite keeps those names and values identical so the
+//! chart's env blocks are unchanged. PR-A surfaced two representative fields;
+//! PR-C-1 filled in the broker knobs needed for the HTTP surface and Sandbox
+//! lifecycle; PR-C-3 (this pass) adds the idle-reaper TTLs + the leader-election
+//! lease parameters the reaper loop + lease loop read (`IDLE_TTL` / `PARK_TTL` /
+//! `REAP_TTL` / `REAPER_POLL_SECONDS` + `_LEADER_*`).
 //!
 //! Note on testing: [`BrokerConfig::from_env`] reads the process environment
 //! directly, and [`std::env::set_var`]/[`remove_var`](std::env::remove_var) are
@@ -35,8 +34,7 @@ pub enum ConfigError {
 }
 
 /// Known-unsafe placeholder values for `BROKER_SHARED_SECRET`. The broker's boot
-/// guard and per-request auth treat these as "unset" (fail-closed), mirroring
-/// the Python `_PLACEHOLDER_SECRETS` frozenset exactly.
+/// guard and per-request auth treat these as "unset" (fail-closed).
 pub const PLACEHOLDER_SECRETS: &[&str] = &[
     "",
     "dev-shared-secret-change-me",
@@ -54,10 +52,9 @@ pub fn is_placeholder_secret(secret: &str) -> bool {
 
 /// Persistence profile — what backing volume a sandbox gets.
 ///
-/// Serializes as the lowercase literals `persistent` / `ephemeral` (D12 — same
-/// values the Python broker honours in `BROKER_DEFAULT_PROFILE` and the
-/// `X-Persistence` header). Defaults to [`Profile::Persistent`], matching the
-/// Python deploy default.
+/// Serializes as the lowercase literals `persistent` / `ephemeral` (D12 — the
+/// values honoured by `BROKER_DEFAULT_PROFILE` and the `X-Persistence`
+/// header). Defaults to [`Profile::Persistent`], the broker deploy default.
 #[derive(
     Debug,
     Clone,
@@ -103,9 +100,8 @@ impl FromStr for Profile {
 
 /// Broker configuration loaded from the environment.
 ///
-/// Field names mirror the env-var names the Python broker already honours
-/// (D12 — drop-in). Later PRs add the remaining knobs (warm-pool sizing,
-/// storage tiering, ...).
+/// Field names mirror the env-var names the chart honours (D12 — drop-in).
+/// Later PRs add the remaining knobs (warm-pool sizing, storage tiering, ...).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct BrokerConfig {
     /// Maximum concurrent terminal (PTY) sessions per runtime before new ones
@@ -143,73 +139,69 @@ pub struct BrokerConfig {
     /// Bearer <key>` on the direct pod hop (env `BROKER_RUNTIME_API_KEY`).
     ///
     /// PR-C-2 uses this single shared key; PR-C-3 replaces it with the per-session
-    /// `owui-runtime-key-<sandbox>` Secret the Python broker mints/rotates (issue
-    /// #4). Empty ⇒ no Authorization header is forwarded (the runtime then
-    /// fail-closes), mirroring the Python `_runtime_auth_headers` `if key else {}`.
+    /// `owui-runtime-key-<sandbox>` Secret the broker mints/rotates (issue #4).
+    /// Empty ⇒ no Authorization header is forwarded (the runtime then fail-closes).
     #[serde(default)]
     pub runtime_api_key: String,
 
     /// Seconds to wait for a freshly created/resumed Sandbox to reach `Ready`
-    /// (env `BROKER_CLAIM_TIMEOUT_SECONDS`, default `60`). Mirrors the Python
-    /// `CLAIM_READY_TIMEOUT`. Expiry surfaces as HTTP 503 (sandbox unavailable).
+    /// (env `BROKER_CLAIM_TIMEOUT_SECONDS`, default `60`). Expiry surfaces as
+    /// HTTP 503 (sandbox unavailable).
     #[serde(default = "default_claim_timeout_seconds")]
     pub claim_timeout_seconds: u64,
 
     /// Total seconds allowed for one broker→runtime pod hop (env
-    /// `BROKER_PROXY_TIMEOUT_SECONDS`, default `660`). Mirrors the Python
-    /// `PROXY_TIMEOUT`; applied to the shared `reqwest` client.
+    /// `BROKER_PROXY_TIMEOUT_SECONDS`, default `660`); applied to the shared
+    /// `reqwest` client.
     #[serde(default = "default_proxy_timeout_seconds")]
     pub proxy_timeout_seconds: u64,
 
     /// Idle seconds after which an **ephemeral** (emptyDir) Sandbox is reaped
-    /// (env `BROKER_IDLE_TTL_SECONDS`, default `120`). Mirrors the Python
-    /// `IDLE_TTL` — the time a session's sandbox stays warm with no activity
-    /// before the reaper deletes it and returns its capacity to the pool.
+    /// (env `BROKER_IDLE_TTL_SECONDS`, default `120`) — the time a session's
+    /// sandbox stays warm with no activity before the reaper deletes it and
+    /// returns its capacity to the pool.
     #[serde(default = "default_idle_ttl_seconds")]
     pub idle_ttl_seconds: u64,
 
     /// Idle seconds after which a **persistent** Sandbox is parked — pod deleted,
     /// node freed, `Sandbox` object + PVC retained for resume (env
-    /// `BROKER_PARK_IDLE_SECONDS`, default `120`). Mirrors the Python `PARK_TTL`.
+    /// `BROKER_PARK_IDLE_SECONDS`, default `120`).
     #[serde(default = "default_park_idle_seconds")]
     pub park_idle_seconds: u64,
 
     /// Idle seconds after which a **persistent** Sandbox is fully reaped — the
     /// `Sandbox` object (and its released PVC claim) is deleted (env
-    /// `BROKER_REAP_SECONDS`, default `604_800` = 7 days). Mirrors the Python
-    /// `REAP_TTL`. Always greater than [`Self::park_idle_seconds`].
+    /// `BROKER_REAP_SECONDS`, default `604_800` = 7 days). Always greater than
+    /// [`Self::park_idle_seconds`].
     #[serde(default = "default_reap_seconds")]
     pub reap_seconds: u64,
 
     /// Interval between idle-reaper sweeps (env `BROKER_REAPER_POLL_SECONDS`,
-    /// default `60`). Mirrors the Python `REAPER_POLL_SECONDS`. Only the elected
-    /// leader runs the loop; non-leaders skip reaping entirely.
+    /// default `60`). Only the elected leader runs the loop; non-leaders skip
+    /// reaping entirely.
     #[serde(default = "default_reaper_poll_seconds")]
     pub reaper_poll_seconds: u64,
 
     /// Namespace holding the broker leader-election `Lease` (env
-    /// `BROKER_LEADER_NAMESPACE`). Defaults to [`Self::runtime_ns`] when unset,
-    /// matching the Python `_LEADER_LOCK_NS = os.environ.get(..., RUNTIME_NS)`.
+    /// `BROKER_LEADER_NAMESPACE`). Defaults to [`Self::runtime_ns`] when unset.
     #[serde(default = "default_runtime_ns")]
     pub leader_namespace: String,
 
     /// Name of the `coordination.k8s.io/v1` `Lease` only the elected broker holds
-    /// (env `BROKER_LEADER_LEASE`, default `owui-broker-leader`). Mirrors the
-    /// Python `_LEADER_LEASE_NAME`.
+    /// (env `BROKER_LEADER_LEASE`, default `owui-broker-leader`).
     #[serde(default = "default_leader_lease")]
     pub leader_lease: String,
 
     /// `Lease.spec.leaseDurationSeconds` — how long a holder's claim stays valid
-    /// without a renew (env `BROKER_LEADER_DURATION_SECONDS`, default `15`).
-    /// Mirrors the Python `_LEADER_DURATION`; a holder whose `renewTime` is older
-    /// than this is considered expired and another broker may take over.
+    /// without a renew (env `BROKER_LEADER_DURATION_SECONDS`, default `15`). A
+    /// holder whose `renewTime` is older than this is considered expired and
+    /// another broker may take over.
     #[serde(default = "default_leader_duration_seconds")]
     pub leader_duration_seconds: u64,
 
     /// How often the leader loop renews (or re-attempts) the lease (env
-    /// `BROKER_LEADER_RENEW_SECONDS`, default `5`). Mirrors the Python
-    /// `_LEADER_RENEW_SECONDS`; kept well under [`Self::leader_duration_seconds`]
-    /// so a holder stays ahead of its own expiry.
+    /// `BROKER_LEADER_RENEW_SECONDS`, default `5`); kept well under
+    /// [`Self::leader_duration_seconds`] so a holder stays ahead of its own expiry.
     #[serde(default = "default_leader_renew_seconds")]
     pub leader_renew_seconds: u64,
 
@@ -217,7 +209,7 @@ pub struct BrokerConfig {
     // The broker is the SOLE S3 client (#50): it streams a sandbox's /workspace
     // off to S3 on reap and back on resume. Fully behind `s3_enabled` (default
     // off); the real `aws-sdk-s3` client is only constructed when enabled. Env
-    // names mirror the Python broker's `BROKER_S3_*` knobs (D12 drop-in).
+    // env names follow the `BROKER_S3_*` convention (D12 drop-in).
     /// Gate the whole S3 cold tier (env `BROKER_S3_ENABLED`; `1`/`true`/`yes`/
     /// `on`). When false the reaper uses [`NoopOffload`](../../broker/reaper
     /// /struct.NoopOffload.html) and resolve skips restore (no cold tier).
@@ -255,12 +247,12 @@ pub struct BrokerConfig {
 
     /// Force path-style addressing (`<endpoint>/<bucket>/<key>`) — required by
     /// MinIO/R2/Proxmox and works on AWS S3 too (env `BROKER_S3_PATH_STYLE`,
-    /// default `true`, matching the Python broker's hard-coded path-style).
+    /// default `true`).
     #[serde(default = "default_s3_path_style")]
     pub s3_path_style: bool,
     /// Server-side encryption mode (env `BROKER_S3_SSE`; e.g. `"AES256"` for
     /// SSE-S3). Empty or `"none"` disables SSE — required for stores without a
-    /// KMS/SSE backend (dev MinIO). Matches the Python `S3_SSE` knob (D12).
+    /// KMS/SSE backend (dev MinIO) (D12).
     #[serde(default)]
     pub s3_sse: String,
 }
@@ -366,13 +358,13 @@ impl Default for BrokerConfig {
 }
 
 impl BrokerConfig {
-    /// Load configuration from process environment variables, applying the same
-    /// defaults as the Python implementation (D12).
+    /// Load configuration from process environment variables, applying the
+    /// documented defaults (D12).
     ///
     /// Returns [`ConfigError::Invalid`] when a recognised numeric variable is
     /// set to a value that cannot be parsed; absent variables fall back to
     /// their documented defaults. A malformed `BROKER_DEFAULT_PROFILE` falls
-    /// back to `persistent` (matching the Python defensive fallback) rather than
+    /// back to `persistent` (a defensive fallback) rather than
     /// erroring.
     pub fn from_env() -> Result<Self, ConfigError> {
         Self::from_map(|name| env::var(name).ok().filter(|v| !v.is_empty()))
@@ -387,13 +379,12 @@ impl BrokerConfig {
         G: Fn(&str) -> Option<String>,
     {
         let runtime_ns = get("BROKER_RUNTIME_NS").unwrap_or_else(default_runtime_ns);
-        // BROKER_LEADER_NAMESPACE defaults to the resolved runtime_ns
-        // (Python: _LEADER_LOCK_NS = os.environ.get(..., RUNTIME_NS)).
+        // BROKER_LEADER_NAMESPACE defaults to the resolved runtime_ns.
         let leader_namespace = get("BROKER_LEADER_NAMESPACE").unwrap_or_else(|| runtime_ns.clone());
         // S3 static credentials: prefer explicit env (BROKER_S3_ACCESS_KEY_ID/_SECRET),
         // else read the projected Secret volume at $BROKER_S3_CREDS_DIR (default
-        // /etc/s3-creds) the Helm chart mounts (#48: no secret in env), matching
-        // the Python broker. Empty => SDK default credential chain.
+        // /etc/s3-creds) the Helm chart mounts (#48: no secret in env). Empty
+        // => SDK default credential chain.
         let (s3_access_key_id, s3_secret_access_key) = resolve_s3_creds(
             &get,
             &get("BROKER_S3_ACCESS_KEY_ID").unwrap_or_default(),
@@ -454,7 +445,7 @@ impl BrokerConfig {
 /// key id is absent, reads the projected Secret volume the Helm chart mounts at
 /// `$BROKER_S3_CREDS_DIR` (default `/etc/s3-creds`) — the `access-key-id` and
 /// `secret-access-key` files — so the broker authenticates without a secret in env
-/// (#48), matching the Python broker. Returns `("", "")` when neither source is
+/// (#48). Returns `("", "")` when neither source is
 /// set, leaving authentication to the SDK default chain (env, IMDS, …).
 fn resolve_s3_creds<G>(get: &G, env_access: &str, env_secret: &str) -> (String, String)
 where
@@ -489,9 +480,8 @@ where
     }
 }
 
-/// Parse a Python-style boolean: case-insensitive `1`/`true`/`yes`/`on` ⇒
-/// `true`, anything else ⇒ `false` (mirrors the Python broker's S3/PROFILE
-/// parsing).
+/// Parse a boolean: case-insensitive `1`/`true`/`yes`/`on` ⇒ `true`,
+/// anything else ⇒ `false` (used for S3/PROFILE toggles).
 fn parse_bool(raw: &str) -> bool {
     matches!(
         raw.trim().to_ascii_lowercase().as_str(),
@@ -499,9 +489,9 @@ fn parse_bool(raw: &str) -> bool {
     )
 }
 
-/// Strip leading/trailing `/` from an S3 prefix segment (Python
-/// `S3_PREFIX.strip("/")`); collapses the object-key namespace so
-/// `<prefix>/<sandbox>/` is canonical regardless of trailing slashes in env.
+/// Strip leading/trailing `/` from an S3 prefix segment; collapses the
+/// object-key namespace so `<prefix>/<sandbox>/` is canonical regardless of
+/// trailing slashes in env.
 fn trim_prefix(raw: &str) -> String {
     raw.trim_matches('/').to_string()
 }
@@ -588,12 +578,12 @@ mod tests {
     #[test]
     fn serde_defaults_cover_reaper_and_leader_fields() {
         let cfg: BrokerConfig = serde_json::from_str("{}").expect("empty object");
-        // Reaper TTLs mirror Python IDLE_TTL / PARK_TTL / REAP_TTL / REAPER_POLL.
+        // Reaper TTLs: IDLE_TTL / PARK_TTL / REAP_TTL / REAPER_POLL.
         assert_eq!(cfg.idle_ttl_seconds, 120);
         assert_eq!(cfg.park_idle_seconds, 120);
         assert_eq!(cfg.reap_seconds, 7 * 24 * 3600);
         assert_eq!(cfg.reaper_poll_seconds, 60);
-        // Leader-lease params mirror Python _LEADER_*.
+        // Leader-lease params: _LEADER_*.
         assert_eq!(cfg.leader_namespace, "agent-sandbox-runtime");
         assert_eq!(cfg.leader_lease, "owui-broker-leader");
         assert_eq!(cfg.leader_duration_seconds, 15);
@@ -603,8 +593,8 @@ mod tests {
     #[test]
     fn serde_defaults_cover_s3_fields() {
         let cfg: BrokerConfig = serde_json::from_str("{}").expect("empty object");
-        // S3 cold tier defaults off; path-style on (matches Python's
-        // hard-coded `addressing_style: "path"`); prefix defaults to `users`.
+        // S3 cold tier defaults off; path-style on (hard-coded
+        // `addressing_style: "path"`); prefix defaults to `users`.
         assert!(!cfg.s3_enabled);
         assert_eq!(cfg.s3_endpoint, "");
         assert_eq!(cfg.s3_region, "us-east-1");
@@ -725,13 +715,13 @@ mod tests {
         assert_eq!(cfg.park_idle_seconds, 120);
         assert_eq!(cfg.reap_seconds, 7 * 24 * 3600);
         assert_eq!(cfg.reaper_poll_seconds, 60);
-        // Leader namespace defaults to runtime_ns when unset (Python behaviour).
+        // Leader namespace defaults to runtime_ns when unset.
         assert_eq!(cfg.leader_namespace, cfg.runtime_ns);
         assert_eq!(cfg.leader_lease, "owui-broker-leader");
         assert_eq!(cfg.leader_duration_seconds, 15);
         assert_eq!(cfg.leader_renew_seconds, 5);
         // S3 cold tier defaults: disabled, empty endpoint/creds, AWS default
-        // region, `users` prefix, path-style on (matches Python's hard-coded
+        // region, `users` prefix, path-style on (hard-coded
         // addressing_style="path").
         assert!(!cfg.s3_enabled);
         assert_eq!(cfg.s3_endpoint, "");
@@ -744,8 +734,7 @@ mod tests {
     #[test]
     fn leader_namespace_defaults_to_runtime_ns_when_overridden() {
         // When the runtime namespace is overridden but the leader namespace is
-        // left unset, the leader namespace follows the override — matching the
-        // Python `_LEADER_LOCK_NS = os.environ.get(..., RUNTIME_NS)` binding.
+        // left unset, the leader namespace follows the override.
         let cfg = BrokerConfig::from_map(map(&[("BROKER_RUNTIME_NS", "custom-rt")])).expect("ok");
         assert_eq!(cfg.runtime_ns, "custom-rt");
         assert_eq!(cfg.leader_namespace, "custom-rt");
@@ -786,7 +775,7 @@ mod tests {
     fn s3_creds_read_from_files_when_env_absent() {
         // The Helm chart projects the Secret at /etc/s3-creds as files (#48: no
         // secret in env). When the env creds are absent the broker must read them
-        // from there, matching the Python runtime.
+        // from there.
         let dir = std::env::temp_dir().join(format!("owsb-s3-creds-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("access-key-id"), "  file-akid  \n").unwrap();

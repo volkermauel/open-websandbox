@@ -1,6 +1,6 @@
-//! Verbatim port of `tests/unit/runtime/test_runtime_auth.py` (9 cases).
+//! Per-session auth contract tests (9 cases).
 //!
-//! The Python suite drives the guard through `POST /api/terminals`, which lands
+//! The reference suite drives the guard through `POST /api/terminals`, which lands
 //! in PR-B-3 (PTY terminal). Here we exercise the identical guard through
 //! `POST /execute` instead — the auth contract is the same per-session key
 //! check; only the gated vehicle differs.
@@ -169,7 +169,7 @@ async fn reloads_on_rotate() {
 // --- route-table-driven auth invariant (regression guard) --------------------
 /// Every app-defined route except the open health/info endpoints (GET /,
 /// GET /healthz, GET /readyz) 401s without a Bearer. Any newly-added ungated
-/// route fails this test on purpose — the Python `test_full_surface_auth_invariant`.
+/// route fails this test on purpose (the full-surface auth invariant).
 #[tokio::test]
 async fn full_surface_auth_invariant() {
     let env = common::Env::new();

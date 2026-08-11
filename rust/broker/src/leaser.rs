@@ -1,16 +1,16 @@
 //! Leader election over a `coordination.k8s.io/v1` `Lease`.
 //!
-//! Mirrors the Python broker's single-lease election 1:1 (D11): exactly one
+//! Single-lease election (D11): exactly one
 //! broker holds a named `Lease` and is allowed to run the idle reaper, so two
 //! replicas never double-park/double-reap the same sandbox. The request path
 //! (proxy/resolve) runs on every replica regardless of leadership — only the
 //! reaper is leader-gated (see [`crate::reaper`]).
 //!
-//! ## Parameters (match Python `_LEADER_*`)
+//! ## Parameters (`_LEADER_*`)
 //!
 //! * namespace — `BROKER_LEADER_NAMESPACE` (defaults to the runtime namespace).
 //! * name — `BROKER_LEADER_LEASE` (default `owui-broker-leader`).
-//! * identity — `HOSTNAME` env, else `broker-<pid>` (Python `_LEADER_IDENTITY`).
+//! * identity — `HOSTNAME` env, else `broker-<pid>`.
 //! * duration — `BROKER_LEADER_DURATION_SECONDS` (default 15); a holder whose
 //!   `renewTime` is older than this is expired and another broker takes over.
 //! * renew cadence — `BROKER_LEADER_RENEW_SECONDS` (default 5); the loop sleeps
@@ -73,7 +73,7 @@ impl Default for LeaderGate {
 pub trait LeaseClient: Send + Sync {
     /// Acquire the lease if absent, renew it if we hold it, take it over if the
     /// current holder's claim has expired, or defer (return `false`) if another
-    /// live holder owns it. Mirrors the Python `_acquire_or_renew_lease`.
+    /// live holder owns it.
     async fn acquire_or_renew(&self) -> bool;
 
     /// Best-effort release of the lease on graceful shutdown so a fast restart
@@ -83,7 +83,6 @@ pub trait LeaseClient: Send + Sync {
 }
 
 /// Resolve the broker identity: `HOSTNAME` (set on every pod) or `broker-<pid>`.
-/// Mirrors the Python `_LEADER_IDENTITY = os.environ.get("HOSTNAME") or ...`.
 fn resolve_identity() -> String {
     std::env::var("HOSTNAME").unwrap_or_else(|_| format!("broker-{}", process::id()))
 }
@@ -313,7 +312,6 @@ impl LeaseClient for InMemoryLeaseClient {
 
 /// The leader loop: periodically acquire/renew the lease, reflect ownership into
 /// [`LeaderGate`], and on shutdown step down (release the lease + clear the gate).
-/// Mirrors the Python `_leader_loop` + the shutdown branch of `_stop_reaper`.
 ///
 /// The reaper loop is a *separate* always-alive task that no-ops while the gate
 /// is `false` (see [`crate::reaper::run_reaper_loop`]); this loop only owns the

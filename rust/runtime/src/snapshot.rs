@@ -2,7 +2,7 @@
 //!
 //! The broker is the sole S3 client; the runtime only streams a zstd-compressed
 //! tar of the whole workspace off (`GET /snapshot`) and back on (`PUT /restore`)
-//! over the per-session key, exactly like the Python runtime.
+//! over the per-session key.
 //!
 //! #94: the former `find`/`tar`/`zstd` **CLI child processes** (and all their
 //! plumbing — `hardened()` lockdown, inter-stage pipe copying, stderr capture,
@@ -69,7 +69,7 @@ use crate::error::ApiError;
 use crate::safe_path::request_base;
 use crate::state::AppState;
 
-/// Streaming read chunk (matches the Python `proc.stdout.read(1 << 20)`).
+/// Streaming read chunk (1 MiB).
 const CHUNK: usize = 1 << 20;
 /// Bounded frames in flight between the producer task and the response body.
 const BODY_CHANNEL_DEPTH: usize = 8;
@@ -204,8 +204,8 @@ fn build_archive(base: &Path, tx: mpsc::Sender<Bytes>) -> io::Result<()> {
         .into_iter()
         .filter_map(|e| match e {
             Ok(e) => Some(e.path().to_path_buf()),
-            // A vanished/unreadable entry during the walk is skipped best-effort,
-            // mirroring the Python `except OSError: continue` — a snapshot is not
+            // A vanished/unreadable entry during the walk is skipped best-effort
+            // (`except OSError: continue`-style) — a snapshot is not
             // failed because a single file raced out from under us.
             Err(e) => {
                 tracing::debug!(error = %e, "snapshot: skipping unreadable entry");
@@ -295,7 +295,7 @@ pub async fn restore(
     });
 
     // Stream the request body into the duplex, counting COMPRESSED bytes and
-    // aborting the instant the running total exceeds the cap (Python breaks before
+    // aborting the instant the running total exceeds the cap (the stream breaks before
     // writing the chunk that crosses the limit).
     let mut body = body;
     let mut received: u64 = 0;
@@ -588,7 +588,7 @@ impl Read for SyncChannelReader {
 /// Walks with `symlink_metadata` so a symlink counts its OWN (link) size, never
 /// its target's, and never recurses INTO a symlinked directory (matches the
 /// `os.walk(followlinks=False)` shape). Files that vanish mid-walk are skipped,
-/// mirroring the Python `except OSError: continue`.
+/// (`except OSError: continue`-style).
 fn workspace_size(base: &Path) -> u64 {
     fn walk(dir: &Path, total: &mut u64) {
         let Ok(entries) = std::fs::read_dir(dir) else {

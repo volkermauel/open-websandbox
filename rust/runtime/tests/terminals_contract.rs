@@ -1,16 +1,16 @@
-//! Interactive terminal (PTY) contract tests — port of the Python
-//! `tests/unit/runtime/test_terminal.py` + `test_terminal_extra.py` cases.
+//! Interactive terminal (PTY) contract tests — the terminal + extra-terminal
+//! cases.
 //!
-//! The wire contract is **strict 1:1 with the Python runtime** (D5 / D11): raw
+//! The wire contract is **strict 1:1** (D5 / D11): raw
 //! binary WS frames carry stdin/stdout, text JSON frames carry `resize` control,
-//! `POST/GET/DELETE /api/terminals[/{id}]` return the exact Python JSON shapes and
+//! `POST/GET/DELETE /api/terminals[/{id}]` return the exact JSON shapes and
 //! status codes (200, 429, 503, 404), and an unknown/dead session closes the socket
 //! with code **4004**.
 //!
 //! Because a WebSocket cannot be driven through `tower::ServiceExt::oneshot`, these
 //! stand up a real `axum::serve` listener (OS-assigned port) and speak HTTP/1.1 over
 //! the socket for the CRUD ops + `tokio-tungstenite` for the relay — every PTY here
-//! is real (no mocking of openpty/fork/ioctl), exactly like the Python suite.
+//! is real (no mocking of openpty/fork/ioctl).
 
 #![forbid(unsafe_code)]
 
@@ -210,7 +210,7 @@ async fn poll_cleaned(srv: &Server, id: &str, timeout: f64) -> bool {
 // --- HTTP contract -----------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
-async fn post_creates_session_with_python_shape() {
+async fn post_creates_session_with_expected_shape() {
     let srv = Server::start().await;
     let (status, body) = http(
         srv.port,

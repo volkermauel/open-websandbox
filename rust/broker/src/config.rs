@@ -9,7 +9,7 @@
 use std::net::SocketAddr;
 
 /// Default broker listen address (matches the chart's `containerPort` 8080 and
-/// the `servers` URL in `openapi_spec.py`).
+/// the `servers` URL in the OpenAPI spec).
 pub const DEFAULT_ADDR: SocketAddr = SocketAddr::V4(std::net::SocketAddrV4::new(
     std::net::Ipv4Addr::new(0, 0, 0, 0),
     8080,

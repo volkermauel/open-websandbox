@@ -1,8 +1,8 @@
 //! open-websandbox broker binary entry point.
 //!
 //! Boots the tokio runtime, loads the env-driven config (D12), refuses to start
-//! without a configured shared secret (fail-closed, mirroring the Python
-//! `_validate_config`), builds the kube-rs client, serves the axum router on
+//! without a configured shared secret (fail-closed boot guard), builds the
+//! kube-rs client, serves the axum router on
 //! `0.0.0.0:8080`, and spawns the PR-C-3 background tasks: leader election
 //! (`run_leader_loop`, maintains [`LeaderGate`] + releases the lease on shutdown)
 //! and the leader-gated idle reaper (`run_reaper_loop`, no-ops while not leader).
