@@ -12,7 +12,7 @@ path = "src/lib.rs"
 
 # OTLP exporter feature gate (issue #83). Forwarded to `shared`/`runtime` so the
 # slim opt-out build `cargo build -p broker --no-default-features` drops
-# tonic/prost/h2 (+ OTLP HTTP client) from the broker binary. `metrics` facade +
+# tonic/prost (OTel gRPC + protobuf; + OTLP HTTP client) from the broker binary. `metrics` facade +
 # Prometheus `/metrics` + tracing SDK stay always-on regardless.
 [features]
 default = ["telemetry-otlp"]
@@ -23,7 +23,15 @@ name = "broker"
 path = "src/main.rs"
 
 [dependencies]
-aws-sdk-s3 = "1"
+# Drop the SDK's default `rustls` feature (= aws-smithy-runtime/tls-rustls), which
+# drags in the LEGACY hyper-0.14 / rustls-0.21 / rustls-webpki-0.101 line hit by
+# RUSTSEC-2026-0098/0099/0104 (issue #80). The modern rustls-0.23 / aws-lc-rs /
+# hyper-1 HTTPS client is provided by `default-https-client`
+# (aws-smithy-http-client/rustls-aws-lc -> default-client) and is what the
+# `BehaviorVersion::latest()` client in src/s3.rs uses, so the legacy connector
+# is pure cruft. `default-features = false` + these four == the upstream
+# `default` set minus the legacy `rustls` feature (sigv4a / http-1x kept for parity).
+aws-sdk-s3 = { version = "1", default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
 # rustls 0.23 needs an explicit process-level CryptoProvider when multiple TLS
 # crates (kube-rs, reqwest rustls-tls, aws-sdk-s3) pull it in transitively;
 # declared here so broker/src/main.rs can install_default() at boot.
