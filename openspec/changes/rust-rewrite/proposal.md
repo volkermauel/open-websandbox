@@ -44,7 +44,7 @@ tree + drastically smaller/faster broker image.
 | D10 | OpenAPI | **`utoipa`-generated** from Rust types/endpoints; `broker/openapi_spec.py` **deleted**; frozen-snapshot test guards the OWUI-facing shape |
 | D11 | HTTP parity | **strict 1:1** — paths/methods/bodies/status/streaming/error-bodies/WS-close-codes; deviations are bugs |
 | D12 | config/env | **drop-in** — same env-var names/values; chart env blocks unchanged |
-| D13 | images | broker → multi-stage cargo → `gcr.io/distroless/cc-debian12` (~15–30 MB); runtime → **unchanged debian/python base** (keeps `tar`+`zstd` [D6] + tenant data-science toolchain [D16]); Rust server binary replaces `uvicorn`; same image names/tags |
+| D13 | images | broker → multi-stage cargo → `gcr.io/distroless/cc-debian12` (~40 MiB single executable; ~26 MiB stripped [accepted #83 — debug symbols kept for backtraces]); runtime → **unchanged debian/python base** (keeps `tar`+`zstd` [D6] + tenant data-science toolchain [D16]); Rust server binary replaces `uvicorn`; same image names/tags |
 | D14 | testing | Rust unit tests port ~314 Python unit tests (esp. 17 `test_safe_path`, `test_s3_tiered`, `test_leader`, `test_reaper`, `test_runtime_auth`); **keep the 13 black-box e2e tests in Python** (language-agnostic; run unchanged against Rust images × gVisor/runc + S3 + env); CI adds `cargo test`/`clippy`/`fmt`/`deny`/`audit` (+ Miri/fuzz) |
 | D15 | phasing | PR-A workspace+shared+CI → PR-B runtime → PR-C broker → PR-D chart swap + full e2e (**cutover**) → PR-E Python removal |
 | D16 | Python removal | delete broker/runtime `.py` + `openapi_spec.py` + `entrypoint.sh` + `requirements*` + Python Dockerfiles; **keep** `tests/e2e/*` (contract driver) + update `mkdocs` |

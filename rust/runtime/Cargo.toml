@@ -12,7 +12,7 @@ path = "src/lib.rs"
 
 # OTLP exporter feature gate (issue #83). Forwarded to `shared` so the slim
 # opt-out build `cargo build -p runtime --no-default-features` drops
-# tonic/prost/h2 (+ OTLP HTTP client) from the runtime binary. `metrics` facade +
+# tonic/prost (OTel gRPC + protobuf; + OTLP HTTP client) from the runtime binary. `metrics` facade +
 # Prometheus `/metrics` + tracing SDK stay always-on regardless.
 [features]
 default = ["telemetry-otlp"]

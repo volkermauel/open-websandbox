@@ -19,7 +19,7 @@ open-websandbox-platform/scripts/sandbox-status.sh -w     # + recent reaper/erro
 ## Observability: Prometheus metrics + OpenTelemetry tracing
 
 The Rust broker/runtime ship two independent observability surfaces (issue
-#83 / decision D9):
+# 83 / decision D9):
 
 - **Prometheus `/metrics` (always-on).** The `metrics` facade fronts a single
   per-process `metrics-exporter-prometheus` recorder. `/metrics` is served
@@ -63,9 +63,12 @@ cargo tree -p broker --no-default-features | grep -E 'tonic|prost|opentelemetry-
 
 ### Broker binary size (stripped, `--release`)
 
-Measured for the Rust broker on amd64 (issue #83). The OTLP exporter stack
-adds ≈1.9 MiB to the stripped binary; the opt-out (`--no-default-features`)
-is the documented way to slim D13 distroless images.
+Measured for the Rust broker on amd64 (issue #83). The production distroless image
+currently ships the binary **unstripped (~37–40 MiB)** — accepted as a single
+executable (debug symbols retained for prod backtraces; the D13 ~15–30 MiB target is
+revised to ~40 MiB accordingly). The stripped reference below is the floor reachable by
+adding `strip = true` to `[profile.release]` (or a Dockerfile strip step). The OTLP
+opt-out (`--no-default-features`) trims ~1.9 MiB stripped / ~2.8 MiB unstripped.
 
 | Build                              | Stripped size |
 | ---------------------------------- | ------------: |

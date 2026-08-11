@@ -29,7 +29,7 @@ async-trait = "0.1.89"
 # - `http-proto` + `reqwest-client`: OTLP/HTTP transport (issue #83), selected
 #   at runtime via `OTEL_EXPORTER_OTLP_PROTOCOL=http` (default `grpc`).
 # The OTLP exporter crate is feature-gated per member (`telemetry-otlp`, default
-# on) so slim builds can drop tonic/prost/h2 + the HTTP client entirely (issue
+# on) so slim builds can drop tonic/prost (OTel gRPC + protobuf) + the OTLP HTTP client entirely (issue
 # #83). The `metrics` facade + Prometheus `/metrics` and the `opentelemetry`
 # tracing SDK stay always-on; ONLY the OTLP exporter transport is conditional.
 # Tracing remains a no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset — boot+serve

@@ -12,7 +12,7 @@ path = "src/lib.rs"
 
 # OTLP exporter feature gate (issue #83). Default-on preserves the D9 behaviour
 # (OTLP wired in unconditionally). Disable with `--no-default-features` for slim
-# builds that drop tonic/prost/h2 + the OTLP HTTP client (reqwest). The `metrics`
+# builds that drop tonic/prost (OTel gRPC + protobuf) + the OTLP HTTP client (reqwest). The `metrics`
 # facade + Prometheus `/metrics` and the `opentelemetry` tracing SDK stay
 # always-on; ONLY the OTLP *exporter transport* is gated. broker/runtime forward
 # this feature so `cargo build -p broker --no-default-features` actually drops it.
