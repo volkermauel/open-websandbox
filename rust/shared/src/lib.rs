@@ -13,6 +13,7 @@
 pub mod auth;
 pub mod config;
 pub mod crd;
+pub mod openapi;
 
 pub use auth::constant_time_eq;
 pub use config::{
@@ -22,3 +23,4 @@ pub use crd::{
     OperatingMode, PodIpEntry, Sandbox, SandboxCondition, SandboxSpec, SandboxStatus,
     SandboxTemplate, SandboxTemplateSpec, ShutdownPolicy,
 };
+pub use openapi::{BearerAddon, ErrorResponse, BEARER_SCHEME};

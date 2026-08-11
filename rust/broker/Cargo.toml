@@ -32,6 +32,7 @@ serde.workspace = true
 serde_json.workspace = true
 bytes = "1"
 shared = { version = "0.1.0", path = "../shared" }
+runtime = { version = "0.1.0", path = "../runtime" }
 sha2 = "0.11"
 thiserror.workspace = true
 tokio = { version = "1", features = ["full"] }
@@ -39,6 +40,8 @@ tokio-tungstenite = "0.29"
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+utoipa.workspace = true
+utoipa-scalar = { version = "0.3", features = ["axum"] }
 
 [dev-dependencies]
 http = "1"

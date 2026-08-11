@@ -1,0 +1,2792 @@
+{
+  "components": {
+    "schemas": {
+      "ArchiveRequest": {
+        "properties": {
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "paths"
+        ],
+        "type": "object"
+      },
+      "ConfigResponse": {
+        "description": "`GET /api/config` body: feature flags the OWUI terminal UI connection-gates on.",
+        "properties": {
+          "features": {
+            "$ref": "#/components/schemas/Features"
+          }
+        },
+        "required": [
+          "features"
+        ],
+        "type": "object"
+      },
+      "CreateResponse": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "pid": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "pid"
+        ],
+        "type": "object"
+      },
+      "CreateSandboxRequest": {
+        "description": "`POST /api/sandboxes` body: instantiate a Sandbox from a template.",
+        "properties": {
+          "name": {
+            "description": "Desired `Sandbox` name (DNS-1123 label).",
+            "type": "string"
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Profile",
+                "description": "Persistence profile; defaults to `BROKER_DEFAULT_PROFILE` when omitted."
+              }
+            ]
+          },
+          "sessionId": {
+            "description": "Owning session/chat id (recorded as the `broker-session` annotation).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "templateName": {
+            "description": "Name of the backing `SandboxTemplate` to clone the pod blueprint from.",
+            "type": "string"
+          },
+          "userId": {
+            "description": "Owning user id (recorded as the `broker-user` annotation).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "templateName",
+          "name"
+        ],
+        "type": "object"
+      },
+      "CwdRequest": {
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "DeleteResponse": {
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Entry": {
+        "properties": {
+          "modified": {
+            "format": "double",
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "size",
+          "modified"
+        ],
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "description": "Error body both control planes return: `{\"detail\": \"...\"}` (FastAPI `HTTPException`\nshape, byte-for-byte parity — D11). Used as the error response `body` across the\nbroker and runtime OpenAPI surfaces.",
+        "properties": {
+          "detail": {
+            "description": "Human-readable error detail (the FastAPI `HTTPException.detail` value).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "type": "object"
+      },
+      "ExecuteRequest": {
+        "description": "`POST /execute` request body. `timeout` is clamped into `[1, MAX_TIMEOUT]`,\ndefaulting to `DEFAULT_TIMEOUT` (seconds).",
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "timeout": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      },
+      "ExecuteResponse": {
+        "description": "`POST /execute` response body (HTTP 200 even on non-zero exit).",
+        "properties": {
+          "exit_code": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "stderr": {
+            "type": "string"
+          },
+          "stdout": {
+            "type": "string"
+          },
+          "timed_out": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "stdout",
+          "stderr",
+          "exit_code",
+          "timed_out"
+        ],
+        "type": "object"
+      },
+      "Features": {
+        "properties": {
+          "desktop": {
+            "type": "boolean"
+          },
+          "notebooks": {
+            "type": "boolean"
+          },
+          "terminal": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "terminal",
+          "notebooks",
+          "desktop"
+        ],
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "`GET /healthz` and `GET /readyz` body: `{\"status\": \"...\"}`.",
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "ListResponse": {
+        "properties": {
+          "dir": {
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/Entry"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "dir",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "MoveRequest": {
+        "properties": {
+          "destination": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "destination"
+        ],
+        "type": "object"
+      },
+      "OperatingMode": {
+        "description": "`spec.operatingMode` — the upstream controller's lifecycle mode.\n\nSerializes as the upstream string literals `Running` / `Suspended` (serde's\ndefault unit-variant representation), matching the values the Python broker\npatches in `_set_sandbox_operating_mode`.",
+        "enum": [
+          "Running",
+          "Suspended"
+        ],
+        "type": "string"
+      },
+      "PathBody": {
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "Profile": {
+        "description": "Persistence profile — what backing volume a sandbox gets.\n\nSerializes as the lowercase literals `persistent` / `ephemeral` (D12 — same\nvalues the Python broker honours in `BROKER_DEFAULT_PROFILE` and the\n`X-Persistence` header). Defaults to [`Profile::Persistent`], matching the\nPython deploy default.",
+        "enum": [
+          "persistent",
+          "ephemeral"
+        ],
+        "type": "string"
+      },
+      "ReplaceRequest": {
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "replacements": {
+            "items": {
+              "$ref": "#/components/schemas/ReplacementChunk"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "path",
+          "replacements"
+        ],
+        "type": "object"
+      },
+      "ReplacementChunk": {
+        "properties": {
+          "allow_multiple": {
+            "type": "boolean"
+          },
+          "end_line": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "replacement": {
+            "type": "string"
+          },
+          "start_line": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "replacement"
+        ],
+        "type": "object"
+      },
+      "RestoreResponse": {
+        "properties": {
+          "bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "restored": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "restored",
+          "bytes"
+        ],
+        "type": "object"
+      },
+      "SandboxCondition": {
+        "description": "A status condition as surfaced in [`SandboxStatus::conditions`] (mirrors the\nupstream `meta.v1.Condition` subset the Python broker reads for readiness).",
+        "properties": {
+          "last_transition_time": {
+            "description": "Last transition time (RFC 3339), if surfaced.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "Human-readable message, if any.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "description": "Machine-readable reason, if any.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "Condition status (e.g. `True` / `False` / `Unknown`).",
+            "type": "string"
+          },
+          "type": {
+            "description": "Condition type (e.g. `Ready`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "status"
+        ],
+        "type": "object"
+      },
+      "SandboxObject": {
+        "description": "OpenAPI schema for a `Sandbox` object on the wire (`apiVersion`/`kind`/`metadata`/\n`spec`/`status`). The CRUD handlers return the kube-generated [`shared::Sandbox`] (an\nidentical shape); this broker-local schema surfaces the typed spec/status in the\ngenerated document (issue #75).",
+        "properties": {
+          "apiVersion": {
+            "description": "`agents.x-k8s.io/v1beta1`.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`Sandbox`.",
+            "type": "string"
+          },
+          "metadata": {
+            "description": "Kubernetes `ObjectMeta` (name, namespace, labels, annotations, …)."
+          },
+          "spec": {
+            "$ref": "#/components/schemas/SandboxSpec",
+            "description": "Sandbox spec (template, profile, operating mode, …)."
+          },
+          "status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SandboxStatus",
+                "description": "Last-observed status (conditions, pod IPs, …); absent until reconciled."
+              }
+            ]
+          }
+        },
+        "required": [
+          "apiVersion",
+          "kind",
+          "metadata",
+          "spec"
+        ],
+        "type": "object"
+      },
+      "SandboxSpec": {
+        "description": "Spec of a [`Sandbox`] — a running tenant sandbox managed by the broker.\n\n`operatingMode` / `shutdownPolicy` are typed because the broker parks a\nsandbox (`Suspended`) and resumes it (`Running`) and relies on\n`shutdownPolicy: Retain` to keep the object across a park. `podTemplate` is\nthe opaque per-instance pod blueprint cloned from the backing\n[`SandboxTemplate`] (see the module docs for why it is untyped).",
+        "properties": {
+          "operatingMode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OperatingMode",
+                "description": "Lifecycle mode the upstream controller honours. `Running` (default) keeps\nthe pod scheduled; `Suspended` parks it (pod deleted, object retained) so\na later resume reuses the same identity + per-session Secret."
+              }
+            ]
+          },
+          "podTemplate": {
+            "description": "Opaque per-instance pod blueprint, cloned from the backing\n[`SandboxTemplate`] and shuffled by the broker (volumes, labels)."
+          },
+          "shutdownPolicy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ShutdownPolicy",
+                "description": "Whether the `Sandbox` object is retained after its pod exits. The broker\nsets `Retain` so a parked sandbox survives to be resumed rather than\nrecreated."
+              }
+            ]
+          },
+          "templateName": {
+            "description": "Name of the [`SandboxTemplate`] backing this sandbox.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SandboxStatus": {
+        "description": "Status of a [`Sandbox`] — the subset of fields the broker reads (readiness +\npod IP) plus the common scalars it forwards. Authored here so readiness can\nbe computed in typed Rust rather than by poking raw JSON.",
+        "properties": {
+          "conditions": {
+            "description": "Status conditions; a `Ready`/`True` entry means the sandbox is serving.",
+            "items": {
+              "$ref": "#/components/schemas/SandboxCondition"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "Human-readable status message, if any.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phase": {
+            "description": "High-level lifecycle phase (`Running`, `Suspended`, ...).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "podIPs": {
+            "description": "Pod IPs assigned to the sandbox; `[0]` is the address the broker proxies to.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "ready": {
+            "description": "Convenience readiness flag, when the controller surfaces it.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ShutdownPolicy": {
+        "description": "`spec.shutdownPolicy` — whether the `Sandbox` object survives its pod exiting.",
+        "enum": [
+          "Retain",
+          "Delete"
+        ],
+        "type": "string"
+      },
+      "StatusResponse": {
+        "description": "`GET /api/status` body: static operator telemetry.",
+        "properties": {
+          "active_pods": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_pods": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pods": {
+            "items": {},
+            "type": "array"
+          }
+        },
+        "required": [
+          "active_pods",
+          "max_pods",
+          "pods"
+        ],
+        "type": "object"
+      },
+      "TermInfo": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "pid": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "pid"
+        ],
+        "type": "object"
+      },
+      "WriteRequest": {
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "brokerBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "contact": {
+      "name": "the open-websandbox contributors"
+    },
+    "description": "Open WebUI front door + Kubernetes Sandbox lifecycle. The runtime tool surface (/execute, /files/*, /snapshot, /restore, /api/terminals*) is proxied to the resolved sandbox pod and documented here as part of the OWUI-facing contract. The catch-all reverse proxy (/{*path}) and the /api/terminals/{id} WebSocket upgrade are opaque passthroughs omitted from this document (issue #75 Q5).",
+    "license": {
+      "identifier": "AGPL-3.0-only",
+      "name": "AGPL-3.0-only"
+    },
+    "title": "open-websandbox broker",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/config": {
+      "get": {
+        "operationId": "api_config",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigResponse"
+                }
+              }
+            },
+            "description": "Feature discovery flags"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid shared Bearer"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Shared secret not configured (fail-closed)"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /api/config` — feature discovery (terminal UI connection gate).",
+        "tags": [
+          "broker"
+        ]
+      }
+    },
+    "/api/sandboxes": {
+      "get": {
+        "operationId": "list_sandboxes",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "labelSelector",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SandboxObject"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Broker-owned sandboxes"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /api/sandboxes` — list broker-owned sandboxes.",
+        "tags": [
+          "sandboxes"
+        ]
+      },
+      "post": {
+        "operationId": "create_sandbox",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSandboxRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxObject"
+                }
+              }
+            },
+            "description": "Already existed (idempotent create)"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxObject"
+                }
+              }
+            },
+            "description": "Sandbox created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid shared Bearer"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Template not found"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Apiserver rejected the call"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Shared secret not configured"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`POST /api/sandboxes` — create a `Sandbox` from a `SandboxTemplate` (C-1\nfoundation; C-2's resolve-on-request reuses this path). 201 on create, 200\nwith the existing object on a 409 (idempotent, like the Python broker).",
+        "tags": [
+          "sandboxes"
+        ]
+      }
+    },
+    "/api/sandboxes/{name}": {
+      "delete": {
+        "operationId": "delete_sandbox",
+        "parameters": [
+          {
+            "description": "Sandbox name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted (404-tolerant → 204)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`DELETE /api/sandboxes/{name}` — delete a sandbox (404-tolerant → 204).",
+        "tags": [
+          "sandboxes"
+        ]
+      },
+      "get": {
+        "operationId": "get_sandbox",
+        "parameters": [
+          {
+            "description": "Sandbox name (DNS-1123 label)",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxObject"
+                }
+              }
+            },
+            "description": "Sandbox (status included)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sandbox not found"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /api/sandboxes/{name}` — get a single sandbox (status included).",
+        "tags": [
+          "sandboxes"
+        ]
+      }
+    },
+    "/api/status": {
+      "get": {
+        "operationId": "api_status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            },
+            "description": "Operator telemetry (static)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /api/status` — operator telemetry (static until C-2/C-4 make it real).",
+        "tags": [
+          "broker"
+        ]
+      }
+    },
+    "/api/terminals": {
+      "get": {
+        "operationId": "list_terminals",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TermInfo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Live sessions"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /api/terminals` — list live sessions, reaping any dead ones observed.",
+        "tags": [
+          "terminals"
+        ]
+      },
+      "post": {
+        "operationId": "create_terminal",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateResponse"
+                }
+              }
+            },
+            "description": "PTY session spawned (or recreated) — 200 per the Python contract"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "MAX_TERMINAL_SESSIONS reached"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "PTY spawn failure"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`POST /api/terminals` — spawn a new PTY shell session.",
+        "tags": [
+          "terminals"
+        ]
+      }
+    },
+    "/api/terminals/{id}": {
+      "delete": {
+        "operationId": "kill_terminal",
+        "parameters": [
+          {
+            "description": "Terminal session id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResponse"
+                }
+              }
+            },
+            "description": "Session killed (idempotent: unknown id → 200)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`DELETE /api/terminals/{id}` — kill + reap the session. Idempotent: an unknown id\nstill answers `200 {\"status\":\"deleted\"}` (Python parity).",
+        "tags": [
+          "terminals"
+        ]
+      },
+      "get": {
+        "operationId": "terminal_get_or_ws",
+        "parameters": [
+          {
+            "description": "Terminal session id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TermInfo"
+                }
+              }
+            },
+            "description": "Session info for non-upgrade requests (the WebSocket upgrade relay is omitted from this document)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unknown/ended session"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /api/terminals/{id}` — either the JSON info endpoint, or (when the request\ncarries the WebSocket upgrade headers) the PTY relay. `Authed` runs first, so a\nmissing/invalid Bearer is rejected with 401 BEFORE the socket is accepted.",
+        "tags": [
+          "terminals"
+        ]
+      }
+    },
+    "/docs": {
+      "get": {
+        "operationId": "docs",
+        "responses": {
+          "200": {
+            "description": "Scalar API reference UI (HTML)"
+          }
+        },
+        "summary": "`GET /docs` — the Scalar API reference UI, served by `utoipa-scalar` and inlining\n`/openapi.json` (issue #75 Q3).",
+        "tags": [
+          "docs"
+        ]
+      }
+    },
+    "/download/{file_path}": {
+      "get": {
+        "operationId": "tool_download",
+        "parameters": [
+          {
+            "description": "Workspace-relative file path",
+            "in": "path",
+            "name": "file_path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw file bytes (attachment)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "File not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/execute": {
+      "post": {
+        "description": "`Authed` authenticates the per-session key; `HeaderMap` carries the optional\n`X-Workspace-Subdir`; `Json` parses the body (body-consuming extractor last).",
+        "operationId": "execute",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecuteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecuteResponse"
+                }
+              }
+            },
+            "description": "Captured stdout/stderr + exit code (HTTP 200 even on non-zero exit; timeout → exit_code 124)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Failed to reap the command"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "The `/execute` handler.",
+        "tags": [
+          "execute"
+        ]
+      }
+    },
+    "/exists/{file_path}": {
+      "get": {
+        "operationId": "tool_exists",
+        "parameters": [
+          {
+            "description": "Workspace-relative path",
+            "in": "path",
+            "name": "file_path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Existence probe"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/files/archive": {
+      "post": {
+        "operationId": "archive",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Zip archive (application/zip, attachment)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A listed path not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`POST /files/archive` — zip the listed paths and stream the archive back.\nDirs recurse (files archived as `<basename>/<rel>`); a single file archives\nas its basename. `application/zip` + `Content-Disposition: attachment`.",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/cwd": {
+      "get": {
+        "operationId": "get_cwd",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Workspace cwd + home"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace subdir"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "files"
+        ]
+      },
+      "post": {
+        "operationId": "set_cwd",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CwdRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Resolved cwd"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Directory not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/delete": {
+      "delete": {
+        "operationId": "delete_entry",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Deleted entry"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Path not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/glob": {
+      "get": {
+        "operationId": "glob_search",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pattern",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "max_results",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Glob matches"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Search directory not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/grep": {
+      "get": {
+        "operationId": "grep",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "regex",
+            "required": true,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "case_insensitive",
+            "required": true,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "include",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "max_results",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Search matches"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Search path not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/list": {
+      "get": {
+        "operationId": "list_dir",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "directory",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            },
+            "description": "Directory listing"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Directory not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/mkdir": {
+      "post": {
+        "operationId": "mkdir",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PathBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Created path"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/move": {
+      "post": {
+        "operationId": "move_entry",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Moved source→destination"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Source not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Destination already exists"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/read": {
+      "get": {
+        "operationId": "read_file",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File content (JSON) or raw image bytes"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "File not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/replace": {
+      "post": {
+        "operationId": "replace",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Bytes written"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "File not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/upload": {
+      "post": {
+        "operationId": "upload",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "directory",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {}
+          },
+          "description": "multipart `file` field(s) written to `directory`/<basename>"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Saved path + size"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`POST /files/upload` — multipart `file` field written to `directory/<basename>`\n(default the workspace base). The runtime streams the body straight to disk;\n`X-Workspace-Subdir` selects the base, like every other `/files/*` handler.",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/view": {
+      "get": {
+        "operationId": "view_file",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw file bytes (content-type/disposition)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "File not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/write": {
+      "post": {
+        "operationId": "write_file",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Bytes written"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Broker process is up"
+          }
+        },
+        "summary": "`GET /healthz` — broker process is up (always 200; never proxied).",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/list": {
+      "get": {
+        "operationId": "tool_list_root",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Workspace-root entries"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /list` + `GET /list/` — list the workspace root. Python's FastAPI route\n`/list/{file_path:path}` matches the empty path (lists root); axum's\n`/list/{*file_path}` catch-all requires ≥1 segment, so these explicit routes\ncover the empty-path case (parity, D11).",
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/list/{file_path}": {
+      "get": {
+        "operationId": "tool_list",
+        "parameters": [
+          {
+            "description": "Workspace-relative directory path",
+            "in": "path",
+            "name": "file_path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Directory entries"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Directory not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/metrics": {
+      "get": {
+        "operationId": "metrics",
+        "responses": {
+          "200": {
+            "description": "Prometheus exposition (text/plain)"
+          }
+        },
+        "summary": "`GET /metrics` — Prometheus exposition. PR-C-1 serves a minimal stub so the\nscrape path exists and is open; PR-C-3 wires the `open_websandbox_broker_*`\nmetric set (D9).",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "description": "Generated by utoipa (D10) from the broker + runtime handler annotations, merged into\none document. `info.version` is pinned to the crate version (issue #75 Q4) and the\nstructural shape is guarded by a frozen-snapshot test (issue #75 Q2).",
+        "operationId": "openapi_json",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3 document (JSON)"
+          }
+        },
+        "summary": "`GET /openapi.json` — the curated method surface OWUI discovers tools from.",
+        "tags": [
+          "docs"
+        ]
+      }
+    },
+    "/ports": {
+      "get": {
+        "operationId": "list_ports",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Host ports (restricted runtime → always empty)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "ports"
+        ]
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "readyz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Apiserver reachable"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Apiserver unreachable"
+          }
+        },
+        "summary": "`GET /readyz` — the apiserver (hard dependency for sandbox resolution) is\nreachable. 503 when not, so the Service stops routing to a broker that would\nonly 500.",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/restore": {
+      "put": {
+        "operationId": "restore",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreResponse"
+                }
+              }
+            },
+            "description": "Workspace restored"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Restore stream exceeds MAX_WORKSPACE_BYTES"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Pipeline failure"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "snapshot"
+        ]
+      }
+    },
+    "/snapshot": {
+      "get": {
+        "operationId": "snapshot",
+        "responses": {
+          "200": {
+            "description": "Workspace as a zstd-compressed tar stream (application/zstd)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Workspace exceeds MAX_WORKSPACE_BYTES"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Pipeline failure"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "tags": [
+          "snapshot"
+        ]
+      }
+    },
+    "/upload": {
+      "post": {
+        "operationId": "tool_upload",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {}
+          },
+          "description": "multipart `file` field written to the workspace base"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Saved path + bytes"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`POST /upload` — the LLM-tool upload alias (multipart `file` to the workspace\nbase). Returns `{\"saved\": path, \"bytes\": n}`, the shape the broker's curated\n`upload_file` tool resolves against.",
+        "tags": [
+          "tools"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "description": "Liveness / readiness / metrics probes",
+      "name": "health"
+    },
+    {
+      "description": "OpenAPI document + Scalar UI",
+      "name": "docs"
+    },
+    {
+      "description": "Broker-served gated surface (/api/config, /api/status)",
+      "name": "broker"
+    },
+    {
+      "description": "Sandbox lifecycle CRUD",
+      "name": "sandboxes"
+    },
+    {
+      "description": "Hardened command execution (runtime, proxied)",
+      "name": "execute"
+    },
+    {
+      "description": "Workspace filesystem surface (runtime, proxied)",
+      "name": "files"
+    },
+    {
+      "description": "Host-port introspection (runtime, proxied; restricted)",
+      "name": "ports"
+    },
+    {
+      "description": "S3-tiered workspace offload/restore (runtime, proxied)",
+      "name": "snapshot"
+    },
+    {
+      "description": "Interactive PTY terminals HTTP CRUD (runtime, proxied)",
+      "name": "terminals"
+    },
+    {
+      "description": "LLM-tool download/list/exists/upload (runtime, proxied)",
+      "name": "tools"
+    }
+  ]
+}

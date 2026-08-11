@@ -114,21 +114,21 @@ impl Drop for Session {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TermInfo {
     id: String,
     created_at: String,
     pid: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CreateResponse {
     id: String,
     created_at: String,
     pid: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteResponse {
     status: &'static str,
 }
@@ -169,6 +169,18 @@ async fn teardown_one(session: Arc<Mutex<Session>>) {
 // ---------------------------------------------------------------------------
 
 /// `POST /api/terminals` — spawn a new PTY shell session.
+#[utoipa::path(
+    post,
+    path = "/api/terminals",
+    tag = "terminals",
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "PTY session spawned (or recreated) — 200 per the Python contract", body = CreateResponse),
+        (status = 401, description = "Missing/invalid per-session Bearer", body = shared::ErrorResponse),
+        (status = 429, description = "MAX_TERMINAL_SESSIONS reached", body = shared::ErrorResponse),
+        (status = 503, description = "PTY spawn failure", body = shared::ErrorResponse)
+    )
+)]
 pub async fn create_terminal(
     _auth: Authed,
     State(state): State<AppState>,
@@ -275,6 +287,16 @@ fn spawn_pty(shell: &str, cwd: &Path) -> Result<Session, String> {
 // ---------------------------------------------------------------------------
 
 /// `GET /api/terminals` — list live sessions, reaping any dead ones observed.
+#[utoipa::path(
+    get,
+    path = "/api/terminals",
+    tag = "terminals",
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Live sessions", body = Vec<TermInfo>),
+        (status = 401, description = "Missing/invalid per-session Bearer", body = shared::ErrorResponse)
+    )
+)]
 pub async fn list_terminals(
     _auth: Authed,
     State(state): State<AppState>,
@@ -315,6 +337,18 @@ pub async fn list_terminals(
 /// `GET /api/terminals/{id}` — either the JSON info endpoint, or (when the request
 /// carries the WebSocket upgrade headers) the PTY relay. `Authed` runs first, so a
 /// missing/invalid Bearer is rejected with 401 BEFORE the socket is accepted.
+#[utoipa::path(
+    get,
+    path = "/api/terminals/{id}",
+    tag = "terminals",
+    params(("id" = String, Path, description = "Terminal session id")),
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Session info for non-upgrade requests (the WebSocket upgrade relay is omitted from this document)", body = TermInfo),
+        (status = 401, description = "Missing/invalid per-session Bearer", body = shared::ErrorResponse),
+        (status = 404, description = "Unknown/ended session", body = shared::ErrorResponse)
+    )
+)]
 pub async fn terminal_get_or_ws(
     _auth: Authed,
     State(state): State<AppState>,
@@ -354,6 +388,17 @@ async fn get_terminal(state: AppState, id: String) -> Result<Json<TermInfo>, Api
 
 /// `DELETE /api/terminals/{id}` — kill + reap the session. Idempotent: an unknown id
 /// still answers `200 {"status":"deleted"}` (Python parity).
+#[utoipa::path(
+    delete,
+    path = "/api/terminals/{id}",
+    tag = "terminals",
+    params(("id" = String, Path, description = "Terminal session id")),
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Session killed (idempotent: unknown id → 200)", body = DeleteResponse),
+        (status = 401, description = "Missing/invalid per-session Bearer", body = shared::ErrorResponse)
+    )
+)]
 pub async fn kill_terminal(
     _auth: Authed,
     State(state): State<AppState>,
