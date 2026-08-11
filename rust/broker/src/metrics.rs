@@ -1,6 +1,6 @@
-//! D9 — Prometheus metrics for the broker: the registry + non-HTTP gauges /
-//! counters, the templated-route label normaliser, and the axum HTTP
-//! middleware that records rate / latency.
+//! D9 — Prometheus metrics for the broker: the frozen metric names, the
+//! templated-route label normaliser, and the axum HTTP middleware that records
+//! rate / latency through the `metrics` facade (issue #74 Q4).
 //!
 //! ## Metric catalogue (frozen names — Grafana dashboard contract)
 //!
@@ -15,9 +15,10 @@
 //! - `open_websandbox_broker_sandboxes_deleted_total` (counter)
 //! - `open_websandbox_broker_runtime_hop_errors_total` (counter)
 //!
-//! The HTTP counter / histogram live in [`shared::HttpMetrics`]; everything
-//! here is broker-specific. The `path` label is the **templated** matched
-//! route (bounded cardinality) — see [`route_label`].
+//! HTTP rate/latency is recorded via [`shared::HttpMetrics`]; the lifecycle
+//! counters/gauge are recorded with `metrics::counter!` / `metrics::gauge!` at
+//! their call sites (api / reaper / resolve / proxy). The `path` label is the
+//! **templated** matched route (bounded cardinality) — see [`route_label`].
 
 #![forbid(unsafe_code)]
 
@@ -27,78 +28,77 @@ use std::time::Instant;
 use axum::extract::{MatchedPath, Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
-use prometheus::{IntCounter, IntGauge, Opts, Registry};
 use shared::HttpMetrics;
 use tracing::Instrument;
 
 use crate::state::AppState;
 
-/// Frozen metric-name stem for every broker metric.
-pub const PREFIX: &str = "open_websandbox_broker";
+// ---- Frozen metric names (Grafana dashboard contract; issue #74) ----
+/// Frozen HTTP rate counter name.
+pub(crate) const HTTP_REQUESTS_TOTAL: &str = "open_websandbox_broker_http_requests_total";
+/// Frozen HTTP latency histogram name.
+pub(crate) const HTTP_REQUEST_DURATION: &str =
+    "open_websandbox_broker_http_request_duration_seconds";
+/// Frozen active-sandbox gauge name.
+pub(crate) const ACTIVE_SANDBOXES: &str = "open_websandbox_broker_active_sandboxes";
+/// Frozen sandbox-create counter name.
+pub(crate) const SANDBOXES_CREATED_TOTAL: &str = "open_websandbox_broker_sandboxes_created_total";
+/// Frozen sandbox-delete counter name.
+pub(crate) const SANDBOXES_DELETED_TOTAL: &str = "open_websandbox_broker_sandboxes_deleted_total";
+/// Frozen runtime-hop-error counter name.
+pub(crate) const RUNTIME_HOP_ERRORS_TOTAL: &str = "open_websandbox_broker_runtime_hop_errors_total";
 
-/// All broker Prometheus collectors + the registry that owns them.
+/// Broker HTTP rate/latency holder + the install point for the global
+/// recorder.
 ///
-/// One instance lives on [`AppState`] (shared by every handler + the reaper
-/// background task) so a single scrape gathers the full catalogue.
+/// One instance lives on [`AppState`] so a single scrape gathers the full
+/// catalogue. The lifecycle counters/gauge are recorded through the facade
+/// directly at their call sites; this holder owns only the HTTP pair (whose
+/// templated labels + buckets are shared with the runtime).
 #[derive(Clone)]
 pub struct BrokerMetrics {
-    pub registry: Registry,
     pub http: HttpMetrics,
-    pub active_sandboxes: IntGauge,
-    pub sandboxes_created_total: IntCounter,
-    pub sandboxes_deleted_total: IntCounter,
-    pub runtime_hop_errors_total: IntCounter,
 }
 
 impl BrokerMetrics {
-    /// Construct + register the full broker catalogue on a fresh registry.
+    /// Install the global recorder, describe + seed the lifecycle metrics, and
+    /// construct the HTTP rate/latency pair.
     #[must_use]
     pub fn new() -> Arc<Self> {
-        let registry = Registry::new();
-        let http = HttpMetrics::new(PREFIX, &registry);
-        let active_sandboxes = IntGauge::with_opts(Opts::new(
-            format!("{PREFIX}_active_sandboxes"),
+        // Install the single `metrics-exporter-prometheus` recorder for this
+        // process (idempotent) before any describe/macro call.
+        let _ = shared::install();
+
+        // Describe + seed each lifecycle metric so it materialises a live
+        // series immediately (parity with the raw `prometheus` crate's eager
+        // register: the facade only emits a series once a value is recorded).
+        metrics::describe_gauge!(
+            ACTIVE_SANDBOXES,
             "Broker-owned sandboxes currently observed by the elected leader \
-             (updated each leader reaper tick).",
-        ))
-        .expect("active_sandboxes: valid opts");
-        let sandboxes_created_total = IntCounter::with_opts(Opts::new(
-            format!("{PREFIX}_sandboxes_created_total"),
+             (updated each leader reaper tick)."
+        );
+        metrics::gauge!(ACTIVE_SANDBOXES).set(0.0);
+        metrics::describe_counter!(
+            SANDBOXES_CREATED_TOTAL,
             "Sandboxes created via the broker (resolve get-or-create + explicit \
-             POST /api/sandboxes).",
-        ))
-        .expect("sandboxes_created_total: valid opts");
-        let sandboxes_deleted_total = IntCounter::with_opts(Opts::new(
-            format!("{PREFIX}_sandboxes_deleted_total"),
+             POST /api/sandboxes)."
+        );
+        metrics::counter!(SANDBOXES_CREATED_TOTAL).increment(0);
+        metrics::describe_counter!(
+            SANDBOXES_DELETED_TOTAL,
             "Sandboxes deleted via the broker (reaper reap + explicit DELETE \
-             /api/sandboxes/{name}).",
-        ))
-        .expect("sandboxes_deleted_total: valid opts");
-        let runtime_hop_errors_total = IntCounter::with_opts(Opts::new(
-            format!("{PREFIX}_runtime_hop_errors_total"),
+             /api/sandboxes/{name})."
+        );
+        metrics::counter!(SANDBOXES_DELETED_TOTAL).increment(0);
+        metrics::describe_counter!(
+            RUNTIME_HOP_ERRORS_TOTAL,
             "Reverse-proxy hops to a resolved runtime pod that failed \
-             (transport / connect / send errors).",
-        ))
-        .expect("runtime_hop_errors_total: valid opts");
-        registry
-            .register(Box::new(active_sandboxes.clone()))
-            .expect("fresh registry has no duplicate collectors");
-        registry
-            .register(Box::new(sandboxes_created_total.clone()))
-            .expect("fresh registry has no duplicate collectors");
-        registry
-            .register(Box::new(sandboxes_deleted_total.clone()))
-            .expect("fresh registry has no duplicate collectors");
-        registry
-            .register(Box::new(runtime_hop_errors_total.clone()))
-            .expect("fresh registry has no duplicate collectors");
+             (transport / connect / send errors)."
+        );
+        metrics::counter!(RUNTIME_HOP_ERRORS_TOTAL).increment(0);
+
         Arc::new(Self {
-            registry,
-            http,
-            active_sandboxes,
-            sandboxes_created_total,
-            sandboxes_deleted_total,
-            runtime_hop_errors_total,
+            http: HttpMetrics::new(HTTP_REQUESTS_TOTAL, HTTP_REQUEST_DURATION),
         })
     }
 }
@@ -236,38 +236,25 @@ mod tests {
 
     #[test]
     fn catalogue_registers_all_frozen_names() {
+        // Constructing the catalogue seeds each metric so the facade emits a
+        // live series for every frozen name immediately (the global recorder
+        // is shared across this test binary; presence — not value — is what we
+        // assert here).
         let m = BrokerMetrics::new();
-        let out = shared::gather(&m.registry);
-        // The four non-HTTP collectors appear at zero immediately (single-child
-        // gauges / counters are emitted on registration); the HTTP counter /
-        // histogram families only materialise once observed, so the frozen-name
-        // guard for those lives in the in-process app test (see `app.rs` tests).
-        assert!(
-            out.contains("open_websandbox_broker_active_sandboxes"),
-            "{out}"
-        );
-        assert!(
-            out.contains("open_websandbox_broker_sandboxes_created_total"),
-            "{out}"
-        );
-        assert!(
-            out.contains("open_websandbox_broker_sandboxes_deleted_total"),
-            "{out}"
-        );
-        assert!(
-            out.contains("open_websandbox_broker_runtime_hop_errors_total"),
-            "{out}"
-        );
-        // HTTP metric families exist once observed.
+        // The HTTP rate/latency pair is a labelled vector — like the raw
+        // `prometheus` crate it emits no child series until first observation,
+        // so drive one templated observation to materialise it.
         m.http.observe("/healthz", "GET", 200, 0.001);
-        let out2 = shared::gather(&m.registry);
-        assert!(
-            out2.contains("open_websandbox_broker_http_requests_total"),
-            "{out2}"
-        );
-        assert!(
-            out2.contains("open_websandbox_broker_http_request_duration_seconds"),
-            "{out2}"
-        );
+        let out = shared::gather();
+        for name in [
+            HTTP_REQUESTS_TOTAL,
+            HTTP_REQUEST_DURATION,
+            ACTIVE_SANDBOXES,
+            SANDBOXES_CREATED_TOTAL,
+            SANDBOXES_DELETED_TOTAL,
+            RUNTIME_HOP_ERRORS_TOTAL,
+        ] {
+            assert!(out.contains(name), "missing frozen metric {name}:\n{out}");
+        }
     }
 }

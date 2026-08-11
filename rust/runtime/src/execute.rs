@@ -25,6 +25,7 @@ use tokio::io::AsyncReadExt;
 
 use crate::auth::Authed;
 use crate::error::ApiError;
+use crate::metrics::{EXECUTE_COMMANDS_TOTAL, EXECUTE_TIMEOUTS_TOTAL};
 use crate::safe_path::request_base;
 use crate::state::AppState;
 
@@ -113,7 +114,7 @@ pub(crate) async fn run_command(
     let preview: String = command.chars().take(200).collect();
     tracing::info!("exec (timeout={timeout_secs}s): {preview}");
     // D9: count every executed command (timeouts recorded separately).
-    state.metrics.execute_commands_total.inc();
+    metrics::counter!(EXECUTE_COMMANDS_TOTAL).increment(1);
 
     let mut cmd = tokio::process::Command::new(&cfg.shell);
     cmd.arg("-c")
@@ -168,7 +169,7 @@ pub(crate) async fn run_command(
         }
         Err(_) => {
             // D9: this run hit the /execute timeout.
-            state.metrics.execute_timeouts_total.inc();
+            metrics::counter!(EXECUTE_TIMEOUTS_TOTAL).increment(1);
             // Timeout: SIGKILL the whole process group, reap the direct child.
             if pid > 0 {
                 // Best-effort; ESRCH (already gone) is ignored.

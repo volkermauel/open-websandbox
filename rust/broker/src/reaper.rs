@@ -37,7 +37,7 @@ use kube::ResourceExt;
 use shared::{OperatingMode, Profile, Sandbox};
 
 use crate::leaser::LeaderGate;
-use crate::metrics::BrokerMetrics;
+use crate::metrics::{ACTIVE_SANDBOXES, SANDBOXES_DELETED_TOTAL};
 use crate::sandbox::{LAST_USED_KEY, PROFILE_LABEL_KEY};
 use crate::store::SandboxStore;
 
@@ -279,7 +279,6 @@ pub async fn run_reaper_loop(
     store: Arc<dyn SandboxStore>,
     offload: Arc<dyn ReapOffload>,
     cfg: Arc<shared::BrokerConfig>,
-    metrics: Arc<BrokerMetrics>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
     // Floor at 1s so a misconfigured 0 never hot-loops the apiserver.
@@ -300,9 +299,9 @@ pub async fn run_reaper_loop(
         //        stats here (`maybe_reap_once` no-ops off-leader), so we mirror
         //        that guard to avoid a non-leader zeroing the gauge.
         if gate.is_leader() {
-            metrics.active_sandboxes.set(stats.scanned as i64);
+            metrics::gauge!(ACTIVE_SANDBOXES).set(stats.scanned as f64);
             if stats.reaped > 0 {
-                metrics.sandboxes_deleted_total.inc_by(stats.reaped);
+                metrics::counter!(SANDBOXES_DELETED_TOTAL).increment(stats.reaped as u64);
             }
         }
         // Cooperatively await the next tick OR a shutdown signal.

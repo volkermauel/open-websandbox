@@ -43,7 +43,13 @@ kube = { version = "4.2.0", features = ["derive"] }
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-prometheus = "0.14"
+# D9 metrics facade (issue #74 Q4): the `metrics` crate fronts the
+# `metrics-exporter-prometheus` recorder. Pinned once here (D8) and consumed
+# via `workspace = true`; call sites use the `metrics::counter!` /
+# `metrics::histogram!` / `metrics::gauge!` macros against the single
+# per-process recorder installed by `shared`.
+metrics = "0.24"
+metrics-exporter-prometheus = "0.18"
 subtle = "2.6.1"
 thiserror = "2.0.20"
 utoipa = "5.5.0"

@@ -21,6 +21,7 @@ use sha2::{Digest, Sha256};
 use shared::{Profile, Sandbox, SandboxStatus};
 
 use crate::error::ApiError;
+use crate::metrics::SANDBOXES_CREATED_TOTAL;
 use crate::sandbox::{build_sandbox, extract_pod_template};
 use crate::state::AppState;
 use crate::store::StoreError;
@@ -167,7 +168,7 @@ pub async fn resolve_sandbox(
         match state.store.create_sandbox(sandbox).await {
             Ok(_) => {
                 // D9: a new sandbox was actually created (resolve path).
-                state.metrics.sandboxes_created_total.inc();
+                metrics::counter!(SANDBOXES_CREATED_TOTAL).increment(1);
             }
             // A concurrent resolve won the create race — poll for the winner.
             Err(StoreError::Conflict) => {}

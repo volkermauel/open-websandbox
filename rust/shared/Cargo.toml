@@ -14,7 +14,8 @@ path = "src/lib.rs"
 # (../Cargo.toml) so the whole tree stays single-version and auditable (D8).
 [dependencies]
 anyhow.workspace = true
-prometheus.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
 opentelemetry.workspace = true
 opentelemetry_sdk.workspace = true
 opentelemetry-otlp.workspace = true
@@ -29,3 +30,14 @@ serde_json.workspace = true
 subtle.workspace = true
 thiserror.workspace = true
 utoipa.workspace = true
+
+[dev-dependencies]
+# OTel test support (issue #74): the in-memory span exporter + synchronous
+# SimpleSpanProcessor live behind opentelemetry_sdk's `testing` feature. These
+# are test-only; `testing` never reaches broker/runtime production builds
+# (dev-dependencies are not propagated to dependents).
+opentelemetry.workspace = true
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+tracing.workspace = true
+tracing-opentelemetry.workspace = true
+tracing-subscriber.workspace = true

@@ -24,7 +24,7 @@ axum = { version = "0.8", features = ["ws", "multipart"] }
 # from a producer task).
 http-body-util = { version = "0.1", features = ["channel"] }
 mime_guess = "2"
-prometheus.workspace = true
+metrics.workspace = true
 regex = "1"
 nix = { version = "0.31", features = ["resource", "signal", "process"] }
 percent-encoding = "2"

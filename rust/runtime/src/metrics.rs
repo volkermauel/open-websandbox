@@ -1,7 +1,7 @@
-//! D9 — Prometheus metrics for the runtime: the registry + HTTP rate/latency
-//! (via [`shared::HttpMetrics`]) + execute-specific counters, the templated
-//! route label normaliser, the axum HTTP middleware, and the `/metrics`
-//! handler.
+//! D9 — Prometheus metrics for the runtime: the frozen metric names, the HTTP
+//! rate/latency pair (via [`shared::HttpMetrics`]) + execute-specific counters,
+//! the templated route label normaliser, the axum HTTP middleware, and the
+//! `/metrics` handler.
 //!
 //! ## Metric catalogue (frozen names)
 //!
@@ -27,52 +27,55 @@ use axum::extract::{MatchedPath, Request, State};
 use axum::http::header;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use prometheus::{IntCounter, Opts, Registry};
 use shared::HttpMetrics;
 use tracing::Instrument;
 
 use crate::state::AppState;
 
-/// Frozen metric-name stem for every runtime metric.
-pub const PREFIX: &str = "open_websandbox_runtime";
+// ---- Frozen metric names (Grafana dashboard contract; issue #74) ----
+/// Frozen HTTP rate counter name.
+pub(crate) const HTTP_REQUESTS_TOTAL: &str = "open_websandbox_runtime_http_requests_total";
+/// Frozen HTTP latency histogram name.
+pub(crate) const HTTP_REQUEST_DURATION: &str =
+    "open_websandbox_runtime_http_request_duration_seconds";
+/// Frozen execute-commands counter name.
+pub(crate) const EXECUTE_COMMANDS_TOTAL: &str = "open_websandbox_runtime_execute_commands_total";
+/// Frozen execute-timeouts counter name.
+pub(crate) const EXECUTE_TIMEOUTS_TOTAL: &str = "open_websandbox_runtime_execute_timeouts_total";
 
-/// All runtime Prometheus collectors + the registry that owns them.
+/// Runtime HTTP rate/latency holder + the execute-specific counters + the
+/// install point for the global recorder.
 #[derive(Clone)]
 pub struct RuntimeMetrics {
-    pub registry: Registry,
     pub http: HttpMetrics,
-    pub execute_commands_total: IntCounter,
-    pub execute_timeouts_total: IntCounter,
 }
 
 impl RuntimeMetrics {
-    /// Construct + register the runtime catalogue on a fresh registry.
+    /// Install the global recorder, describe + seed the execute counters, and
+    /// construct the HTTP rate/latency pair.
     #[must_use]
     pub fn new() -> Arc<Self> {
-        let registry = Registry::new();
-        let http = HttpMetrics::new(PREFIX, &registry);
-        let execute_commands_total = IntCounter::with_opts(Opts::new(
-            format!("{PREFIX}_execute_commands_total"),
-            "Commands executed via POST /execute (exits 124 on timeout, \
-             recorded separately by execute_timeouts_total).",
-        ))
-        .expect("execute_commands_total: valid opts");
-        let execute_timeouts_total = IntCounter::with_opts(Opts::new(
-            format!("{PREFIX}_execute_timeouts_total"),
-            "Commands killed by the /execute timeout (exit_code 124).",
-        ))
-        .expect("execute_timeouts_total: valid opts");
-        registry
-            .register(Box::new(execute_commands_total.clone()))
-            .expect("fresh registry has no duplicate collectors");
-        registry
-            .register(Box::new(execute_timeouts_total.clone()))
-            .expect("fresh registry has no duplicate collectors");
+        // Install the single `metrics-exporter-prometheus` recorder for this
+        // process (idempotent) before any describe/macro call.
+        let _ = shared::install();
+
+        // Describe + seed each execute counter so it materialises a live series
+        // immediately (parity with the raw `prometheus` crate's eager register:
+        // the facade only emits a series once a value is recorded).
+        metrics::describe_counter!(
+            EXECUTE_COMMANDS_TOTAL,
+            "Commands executed via POST /execute (exits 124 on timeout, recorded \
+             separately by execute_timeouts_total)."
+        );
+        metrics::counter!(EXECUTE_COMMANDS_TOTAL).increment(0);
+        metrics::describe_counter!(
+            EXECUTE_TIMEOUTS_TOTAL,
+            "Commands killed by the /execute timeout (exit_code 124)."
+        );
+        metrics::counter!(EXECUTE_TIMEOUTS_TOTAL).increment(0);
+
         Arc::new(Self {
-            registry,
-            http,
-            execute_commands_total,
-            execute_timeouts_total,
+            http: HttpMetrics::new(HTTP_REQUESTS_TOTAL, HTTP_REQUEST_DURATION),
         })
     }
 }
@@ -150,10 +153,10 @@ pub async fn http_metrics_layer(
 
 /// `GET /metrics` — Prometheus exposition (D9). Renders the runtime catalogue
 /// (`open_websandbox_runtime_*`) in `text/plain; version=0.0.4`.
-pub async fn metrics(State(state): State<AppState>) -> Response {
+pub async fn metrics() -> Response {
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
-        shared::gather(&state.metrics.registry),
+        shared::gather(),
     )
         .into_response()
 }
@@ -195,25 +198,22 @@ mod tests {
 
     #[test]
     fn catalogue_registers_all_frozen_names() {
+        // Constructing the catalogue seeds each metric so the facade emits a
+        // live series for every frozen name immediately (the global recorder is
+        // shared across this test binary; presence — not value — is asserted).
         let m = RuntimeMetrics::new();
-        let out = shared::gather(&m.registry);
-        assert!(
-            out.contains("open_websandbox_runtime_execute_commands_total"),
-            "{out}"
-        );
-        assert!(
-            out.contains("open_websandbox_runtime_execute_timeouts_total"),
-            "{out}"
-        );
+        // The HTTP rate/latency pair is a labelled vector — like the raw
+        // `prometheus` crate it emits no child series until first observation,
+        // so drive one templated observation to materialise it.
         m.http.observe("/execute", "POST", 200, 0.5);
-        let out2 = shared::gather(&m.registry);
-        assert!(
-            out2.contains("open_websandbox_runtime_http_requests_total"),
-            "{out2}"
-        );
-        assert!(
-            out2.contains("open_websandbox_runtime_http_request_duration_seconds"),
-            "{out2}"
-        );
+        let out = shared::gather();
+        for name in [
+            HTTP_REQUESTS_TOTAL,
+            HTTP_REQUEST_DURATION,
+            EXECUTE_COMMANDS_TOTAL,
+            EXECUTE_TIMEOUTS_TOTAL,
+        ] {
+            assert!(out.contains(name), "missing frozen metric {name}:\n{out}");
+        }
     }
 }

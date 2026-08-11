@@ -31,6 +31,7 @@ use shared::{Profile, Sandbox};
 
 use crate::auth::Authed;
 use crate::error::ApiError;
+use crate::metrics::{SANDBOXES_CREATED_TOTAL, SANDBOXES_DELETED_TOTAL};
 use crate::sandbox::{build_sandbox, extract_pod_template};
 use crate::state::AppState;
 use crate::store::{StoreError, StoreError::*};
@@ -180,10 +181,10 @@ pub async fn readyz(State(state): State<AppState>) -> Result<Json<HealthResponse
         (status = 200, description = "Prometheus exposition (text/plain)")
     )
 )]
-pub async fn metrics(State(state): State<AppState>) -> Response {
+pub async fn metrics() -> Response {
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
-        shared::gather(&state.metrics.registry),
+        shared::gather(),
     )
         .into_response()
 }
@@ -319,7 +320,7 @@ pub async fn create_sandbox(
     match state.store.create_sandbox(sandbox).await {
         Ok(created) => {
             // D9: a brand-new sandbox was created (explicit POST path).
-            state.metrics.sandboxes_created_total.inc();
+            metrics::counter!(SANDBOXES_CREATED_TOTAL).increment(1);
             Ok((StatusCode::CREATED, Json(created)))
         }
         Err(Conflict) => {
@@ -422,7 +423,7 @@ pub async fn delete_sandbox(
         .await
         .map_err(map_store_err)?
     {
-        state.metrics.sandboxes_deleted_total.inc();
+        metrics::counter!(SANDBOXES_DELETED_TOTAL).increment(1);
     }
     Ok(StatusCode::NO_CONTENT)
 }

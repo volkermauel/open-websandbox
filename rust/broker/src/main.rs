@@ -99,9 +99,6 @@ async fn main() -> ExitCode {
 
     // --- PR-C-3 background: leader election + leader-gated idle reaper --------
     let gate = Arc::new(LeaderGate::new());
-    // D9: capture the metrics handle before `state` moves into the router; the
-    //      leader-gated reaper owns the active-sandboxes gauge + delete counter.
-    let metrics = state.metrics.clone();
     let lease: Arc<dyn LeaseClient> = Arc::new(KubeLease::new(kube_client, &cfg_arc));
     let app = build_router(state);
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -119,11 +116,10 @@ async fn main() -> ExitCode {
         let store = store.clone();
         let offload = offload.clone();
         let cfg = cfg_arc.clone();
-        let metrics = metrics.clone();
         let gate = gate.clone();
         let rx = shutdown_rx.clone();
         tokio::spawn(async move {
-            run_reaper_loop(gate, store, offload, cfg, metrics, rx).await;
+            run_reaper_loop(gate, store, offload, cfg, rx).await;
         })
     };
 

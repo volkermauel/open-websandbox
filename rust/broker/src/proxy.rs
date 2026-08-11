@@ -31,6 +31,7 @@ use shared::Profile;
 
 use crate::auth::Authed;
 use crate::error::ApiError;
+use crate::metrics::RUNTIME_HOP_ERRORS_TOTAL;
 use crate::resolve::{resolve_sandbox, ResolvedSandbox};
 use crate::state::AppState;
 use tracing::Instrument;
@@ -270,7 +271,7 @@ pub async fn proxy_catch_all(
         .await
         .map_err(|e| {
             // D9: a runtime hop transport/connect/send failure.
-            state.metrics.runtime_hop_errors_total.inc();
+            metrics::counter!(RUNTIME_HOP_ERRORS_TOTAL).increment(1);
             ApiError::BadGateway(format!("runtime hop to {url} failed: {e}"))
         })?;
 
