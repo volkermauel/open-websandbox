@@ -167,8 +167,7 @@ impl AwsColdStore {
             bucket: cfg.s3_bucket.clone(),
             // SSE-S3 only when the operator opted in (BROKER_S3_SSE non-empty / not
             // "none"); empty is required for dev MinIO (no SSE backend).
-            sse_enabled: !cfg.s3_sse.is_empty()
-                && !cfg.s3_sse.eq_ignore_ascii_case("none"),
+            sse_enabled: !cfg.s3_sse.is_empty() && !cfg.s3_sse.eq_ignore_ascii_case("none"),
         }
     }
 }
@@ -198,9 +197,7 @@ impl ColdStore for AwsColdStore {
         if self.sse_enabled {
             req = req.server_side_encryption(ServerSideEncryption::Aes256);
         }
-        req.send()
-            .await
-            .map_err(|e| ColdError::S3(e.to_string()))?;
+        req.send().await.map_err(|e| ColdError::S3(e.to_string()))?;
         Ok(())
     }
 
@@ -461,7 +458,9 @@ impl S3Offload {
             match store.read_runtime_key(name).await {
                 Ok(Some(k)) => return k,
                 Ok(None) => {}
-                Err(e) => tracing::warn!(sandbox = %name, %e, "read_runtime_key failed; falling back to shared key"),
+                Err(e) => {
+                    tracing::warn!(sandbox = %name, %e, "read_runtime_key failed; falling back to shared key")
+                }
             }
         }
         self.runtime_api_key.clone()
@@ -685,7 +684,10 @@ mod tests {
 
     #[test]
     fn namespace_is_prefix_user_chats_session() {
-        assert_eq!(s3_namespace("users", "alice", "chat1"), "users/alice/chats/chat1/");
+        assert_eq!(
+            s3_namespace("users", "alice", "chat1"),
+            "users/alice/chats/chat1/"
+        );
         // Surrounding slashes on the prefix are canonicalised away.
         assert_eq!(
             s3_namespace("//prod/users//", "bob", "s2"),

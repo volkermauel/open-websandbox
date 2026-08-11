@@ -10,8 +10,8 @@ use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use broker::{build_router, resolve_sandbox, sandbox_name, ApiError, AppState, StubSandboxStore};
 use shared::{
-    BrokerConfig, Profile, Sandbox, SandboxCondition, SandboxSpec, SandboxStatus,
-    SandboxTemplate, SandboxTemplateSpec,
+    BrokerConfig, Profile, Sandbox, SandboxCondition, SandboxSpec, SandboxStatus, SandboxTemplate,
+    SandboxTemplateSpec,
 };
 use tower::ServiceExt;
 use wiremock::matchers::{header, method, path};
@@ -210,7 +210,10 @@ async fn proxy_forwards_method_path_body_and_injects_runtime_bearer() {
     let store = store_with_template();
     // PR-C-5 / #4: seed the per-session runtime key so the proxy injects RT_KEY
     // (otherwise ensure_runtime_key mints a random one the mock wouldn't match).
-    store.set_runtime_key(&sandbox_name("user-1", "chat-1", Profile::Persistent), RT_KEY);
+    store.set_runtime_key(
+        &sandbox_name("user-1", "chat-1", Profile::Persistent),
+        RT_KEY,
+    );
     let state = proxy_env(&server.uri(), store).await;
     let app = build_router(state);
     let resp = app

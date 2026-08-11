@@ -911,6 +911,9 @@ pub async fn upload(
                     .await
                     .map_err(|e| ApiError::BadRequest(format!("write: {e}")))?;
             }
+            file.sync_all()
+                .await
+                .map_err(|e| ApiError::BadRequest(format!("sync: {e}")))?;
             let canon = std::fs::canonicalize(&full).unwrap_or_else(|_| full.clone());
             return Ok(Json(serde_json::json!({ "path": canon, "size": size })));
         }
@@ -953,6 +956,9 @@ pub async fn tool_upload(
                     .await
                     .map_err(|e| ApiError::BadRequest(format!("write: {e}")))?;
             }
+            file.sync_all()
+                .await
+                .map_err(|e| ApiError::BadRequest(format!("sync: {e}")))?;
             let canon = std::fs::canonicalize(&full).unwrap_or_else(|_| full.clone());
             return Ok(Json(serde_json::json!({ "saved": canon, "bytes": bytes })));
         }
