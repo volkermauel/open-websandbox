@@ -49,7 +49,7 @@ const CHUNK: usize = 1 << 20;
 /// Bounded frames in flight between the producer task and the response body.
 const BODY_CHANNEL_DEPTH: usize = 8;
 
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RestoreResponse {
     restored: bool,
     bytes: u64,
@@ -157,10 +157,23 @@ pub async fn snapshot(_auth: Authed, State(state): State<AppState>) -> Result<Re
                         break;
                     }
                 }
-                Err(_) => break,
+                Err(e) => {
+                    tracing::warn!(error = %e, "snapshot: zstd stdout read error");
+                    break;
+                }
             }
         }
-        reap_pipeline([zstd_c, tar_c, find_c]).await;
+        // Reap (kill+wait) every stage so no orphaned tar/zstd leaks. A non-zero
+        // exit here means the client received a TRUNCATED archive: the 200 status
+        // was already committed before streaming began (HTTP/1.1 chunked encoding
+        // cannot retroactively become a 5xx — see module docs), so we surface the
+        // failure loudly and let the body stream end.
+        if reap_pipeline([zstd_c, tar_c, find_c]).await {
+            tracing::error!(
+                "snapshot pipeline exited non-zero after streaming began; \
+                 client received a truncated workspace archive (200 already committed)"
+            );
+        }
     });
 
     Response::builder()
@@ -341,14 +354,14 @@ fn workspace_size(base: &Path) -> u64 {
     total
 }
 
-/// Kill (if still running) then wait every child, returning nothing — the
-/// individual exit codes are only consulted by the caller where they matter.
+/// Kill (if still running) then wait every child, returning `true` if any stage
+/// exited non-zero (or failed to wait) — callers use that as the failure signal.
 ///
 /// Kill-before-wait matters on the disconnect/abort paths: a stage can be
 /// blocked writing into a pipe nobody is draining, in which case a bare `wait`
 /// would hang. `kill` on an already-exited child is a benign no-op, so this is
 /// safe on the clean-EOF path too.
-async fn reap_pipeline(children: impl IntoIterator<Item = Child>) {
+async fn reap_pipeline(children: impl IntoIterator<Item = Child>) -> bool {
     let mut kids: Vec<Child> = children.into_iter().collect();
     for c in &mut kids {
         // `Child::kill` is async and returns a future; awaiting it actually
@@ -367,6 +380,7 @@ async fn reap_pipeline(children: impl IntoIterator<Item = Child>) {
     if any_nonzero {
         tracing::warn!("snapshot/restore pipeline exited non-zero");
     }
+    any_nonzero
 }
 
 /// Read a piped stream to EOF into a buffer (best-effort; errors ignored).
@@ -391,4 +405,95 @@ fn first_err(a: &[u8], b: &[u8]) -> String {
         }
     }
     combined.chars().take(200).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::SessionKeyStore;
+    use crate::config::RuntimeConfig;
+    use crate::state::AppState;
+    use axum::body::Body;
+    use http_body_util::BodyExt;
+    use tempfile::TempDir;
+
+    fn make_state(dir: &TempDir) -> AppState {
+        AppState::new(
+            RuntimeConfig {
+                workdir: dir.path().to_path_buf(),
+                ..Default::default()
+            },
+            SessionKeyStore::new(dir.path().join("api-key")),
+        )
+    }
+
+    /// #82 error path: a mid-stream zstd failure on `/restore` (the
+    /// `zstd_in.write_all` pipe) must propagate as a 500, NOT a silent 200 with
+    /// a truncated body. Bytes without the zstd magic make `zstd -d` exit
+    /// non-zero mid-stream, which the restore handler must turn into
+    /// `ApiError::Internal`.
+    #[tokio::test]
+    async fn restore_invalid_zstd_returns_error_not_ok() {
+        let dir = TempDir::new().unwrap();
+        let state = make_state(&dir);
+        // Definitely-not-zstd body (no 0x28B52FFD magic).
+        let garbage = b"this is definitely not a zstd stream".to_vec();
+        let res = restore(Authed, State(state), Body::from(garbage)).await;
+        assert!(
+            matches!(res, Err(ApiError::Internal(_))),
+            "expected Err(Internal) (500) on invalid zstd, got {res:?}"
+        );
+    }
+
+    /// Happy-path anchor + error-path regression: a real workspace snapshots to
+    /// a valid zstd frame and restores cleanly; a corrupt restore still fails
+    /// with a 500. Anchors the success path so the test above is meaningful.
+    #[tokio::test]
+    async fn snapshot_restore_roundtrip_and_error_path() {
+        let dir = TempDir::new().unwrap();
+        tokio::fs::write(dir.path().join("a.txt"), b"alpha")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("b.txt"), b"beta beta")
+            .await
+            .unwrap();
+        let state = make_state(&dir);
+
+        // snapshot -> collect the streamed body.
+        let resp = snapshot(Authed, State(state.clone()))
+            .await
+            .expect("snapshot ok");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp
+            .into_body()
+            .collect()
+            .await
+            .expect("collect body")
+            .to_bytes();
+        assert!(body.len() >= 4, "snapshot body too small");
+        // zstd magic: 0x28 0xB5 0x2F 0xFD.
+        assert_eq!(
+            &body[..4],
+            &[0x28, 0xB5, 0x2F, 0xFD],
+            "snapshot body is not a zstd stream"
+        );
+
+        // Restore the valid archive back into the workspace — must succeed.
+        let ok = restore(Authed, State(state.clone()), Body::from(body.to_vec()))
+            .await
+            .expect("restore ok");
+        assert!(ok.restored, "restore reported not restored");
+
+        // Corrupt restore — must be a 500, not a silent success (#82).
+        let bad = restore(
+            Authed,
+            State(state),
+            Body::from(b"not zstd garbage".to_vec()),
+        )
+        .await;
+        assert!(
+            matches!(bad, Err(ApiError::Internal(_))),
+            "expected Err(Internal) on corrupt restore, got {bad:?}"
+        );
+    }
 }

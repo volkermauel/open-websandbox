@@ -285,10 +285,17 @@ pub async fn write_file(
     let data = req.content.into_bytes();
     if let Some(parent) = full.parent() {
         if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| ApiError::BadRequest(format!("{e}")))?;
+            // Non-blocking I/O (issue #82): `tokio::fs` runs the syscall on the
+            // blocking pool so this async handler never stalls its tokio worker.
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| ApiError::BadRequest(format!("{e}")))?;
         }
     }
-    std::fs::write(&full, &data).map_err(|e| ApiError::BadRequest(format!("{e}")))?;
+    // Non-blocking write (issue #82): was `std::fs::write`.
+    tokio::fs::write(&full, &data)
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("{e}")))?;
     Ok(Json(
         serde_json::json!({ "path": full, "size": data.len() }),
     ))
@@ -682,13 +689,19 @@ pub async fn replace(
         return Err(ApiError::NotFound("File not found".to_string()));
     }
     // Python reads with `errors="replace"` (lossy UTF-8).
-    let bytes = std::fs::read(&full).map_err(|e| ApiError::BadRequest(format!("{e}")))?;
+    // Non-blocking read (issue #82): was `std::fs::read`.
+    let bytes = tokio::fs::read(&full)
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("{e}")))?;
     let mut content = String::from_utf8_lossy(&bytes).into_owned();
     for chunk in &req.replacements {
         content = apply_replacement(content, chunk)?;
     }
     let data = content.into_bytes();
-    std::fs::write(&full, &data).map_err(|e| ApiError::BadRequest(format!("{e}")))?;
+    // Non-blocking write (issue #82): was `std::fs::write`.
+    tokio::fs::write(&full, &data)
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("{e}")))?;
     Ok(Json(
         serde_json::json!({ "path": full, "size": data.len() }),
     ))
@@ -1335,4 +1348,120 @@ fn collect_files_for_zip(root: &Path, out: &mut Vec<PathBuf>) -> std::io::Result
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::SessionKeyStore;
+    use crate::config::RuntimeConfig;
+    use crate::state::AppState;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    fn make_state(dir: &TempDir) -> AppState {
+        AppState::new(
+            RuntimeConfig {
+                workdir: dir.path().to_path_buf(),
+                ..Default::default()
+            },
+            SessionKeyStore::new(dir.path().join("api-key")),
+        )
+    }
+
+    /// Regression for #82: `/files/write` must not block its tokio worker. On a
+    /// single-worker (`current_thread`) runtime a synchronous `std::fs::write` is
+    /// the ONLY thing that worker does for the whole syscall, so at most one write
+    /// is ever in flight. Routing the write through `tokio::fs` offloads the
+    /// syscall to the blocking pool: each `write_file` future parks at the
+    /// `.await`, many are pending simultaneously, and we observe peak in-flight
+    /// concurrency strictly greater than 1.
+    #[tokio::test(flavor = "current_thread")]
+    async fn write_paths_do_not_block_the_runtime() {
+        let dir = TempDir::new().unwrap();
+        let state = make_state(&dir);
+
+        // Writes currently parked inside `tokio::fs`. With inline `std::fs` on ONE
+        // worker this never exceeds 1 (the worker runs each write to completion
+        // before polling the next); with `tokio::fs` it climbs as writes pile up
+        // on the blocking pool.
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = Vec::new();
+        for i in 0..16u32 {
+            let state = state.clone();
+            let in_flight = in_flight.clone();
+            let peak = peak.clone();
+            let path = format!("file_{i}.txt");
+            let content = "x".repeat(256 * 1024);
+            handles.push(tokio::spawn(async move {
+                let cur = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(cur, Ordering::SeqCst);
+                let _ = write_file(
+                    Authed,
+                    State(state),
+                    HeaderMap::new(),
+                    Json(WriteRequest { path, content }),
+                )
+                .await
+                .unwrap();
+                in_flight.fetch_sub(1, Ordering::SeqCst);
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        // `tokio::fs` lets many writes be pending at once on the single worker; an
+        // inline blocking `std::fs` would keep this at 1. (16 × 256 KiB writes give
+        // a wide window, so this is comfortably > 1 rather than a race.)
+        let peak_concurrency = peak.load(Ordering::SeqCst);
+        assert!(
+            peak_concurrency > 1,
+            "writes never overlapped (peak in-flight = {peak_concurrency}); \"
+             write_file appears to block the single worker"
+        );
+
+        // Correctness: every file landed at the right size.
+        for i in 0..16u32 {
+            let len = std::fs::metadata(dir.path().join(format!("file_{i}.txt")))
+                .expect("file exists")
+                .len();
+            assert_eq!(len, 256 * 1024, "file {i} has wrong size");
+        }
+    }
+
+    /// `replace` now reads+writes via `tokio::fs` (issue #82); verify it still
+    /// substitutes text correctly end-to-end.
+    #[tokio::test]
+    async fn replace_uses_async_io() {
+        let dir = TempDir::new().unwrap();
+        let state = make_state(&dir);
+        tokio::fs::write(dir.path().join("note.md"), "hello world hello")
+            .await
+            .unwrap();
+        let _ = replace(
+            Authed,
+            State(state),
+            HeaderMap::new(),
+            Json(ReplaceRequest {
+                path: "note.md".to_string(),
+                replacements: vec![ReplacementChunk {
+                    target: "hello".to_string(),
+                    replacement: "bye".to_string(),
+                    start_line: None,
+                    end_line: None,
+                    allow_multiple: true,
+                }],
+            }),
+        )
+        .await
+        .expect("replace succeeds");
+        let after = tokio::fs::read_to_string(dir.path().join("note.md"))
+            .await
+            .unwrap();
+        assert_eq!(after, "bye world bye");
+    }
 }
