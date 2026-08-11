@@ -1,0 +1,33 @@
+# cargo-audit policy for the open-websandbox Rust control plane (D8 — vetted deps).
+#
+# cargo-audit reads THIS file (`audit.toml`), NOT `deny.toml`; the two are kept
+# in lock-step. `rust/audit.toml` + `rust/deny.toml` together back the
+# `.github/workflows/rust.yml` supply-chain job (issue #80).
+#
+# Same philosophy as deny.toml: the advisory allow-list is intentionally tight,
+# and every ignored advisory carries a documented reason + expiry so the
+# exception is explicit and time-boxed.
+
+[advisories]
+# All three entries below hit rustls-webpki 0.101.7, pulled ONLY by the legacy
+# rustls 0.21.12 / hyper 0.14 line — itself pulled solely by the AWS SDK
+# subtree (broker's `aws-sdk-s3` -> aws-smithy-runtime -> aws-smithy-http-client
+# -> rustls 0.21.12 / hyper-rustls 0.24.2). The D9 telemetry subtree
+# (tonic / hyper-1 / opentelemetry / metrics-exporter-prometheus) uses the
+# patched rustls-webpki 0.103.13 and is NOT affected.
+#
+# Patched versions require rustls-webpki >= 0.103.x; no 0.101.x patch exists
+# and 0.103.x is unreachable without bumping aws-sdk-s3 off the legacy
+# hyper-0.14/rustls-0.21 line — a dependency-version bump explicitly out of
+# scope for #80 (dedup/allowlist/ignore only). cargo-audit's `ignore` is a bare
+# ID list, so the per-advisory reason+expiry is documented here and in
+# deny.toml. Expiry for all three: 2026-07-31.
+#
+# TRACKING: a follow-up should bump aws-sdk-s3 to a hyper-1/rustls-0.23-native
+# release so the entire webpki-0.101 / h2-0.3 / hyper-0.14 chain drops out and
+# these ignores (here + in deny.toml) can be removed.
+ignore = [
+    "RUSTSEC-2026-0098", # webpki 0.101.7 URI name-constraints; reachable only with a misissued cert (post-signature) -> low severity
+    "RUSTSEC-2026-0099", # webpki 0.101.7 wildcard name-constraints; reachable only with a misissued cert (post-signature) -> low severity
+    "RUSTSEC-2026-0104", # webpki 0.101.7 CRL-parse panic; reachable only when parsing CRLs, which broker/runtime never do -> not affected
+]
