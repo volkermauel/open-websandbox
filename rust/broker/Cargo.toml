@@ -10,6 +10,14 @@ description = "Sandbox broker (axum + tokio + kube-rs): Open WebUI front door + 
 [lib]
 path = "src/lib.rs"
 
+# OTLP exporter feature gate (issue #83). Forwarded to `shared`/`runtime` so the
+# slim opt-out build `cargo build -p broker --no-default-features` drops
+# tonic/prost/h2 (+ OTLP HTTP client) from the broker binary. `metrics` facade +
+# Prometheus `/metrics` + tracing SDK stay always-on regardless.
+[features]
+default = ["telemetry-otlp"]
+telemetry-otlp = ["shared/telemetry-otlp", "runtime/telemetry-otlp"]
+
 [[bin]]
 name = "broker"
 path = "src/main.rs"
@@ -32,8 +40,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 serde.workspace = true
 serde_json.workspace = true
 bytes = "1"
-shared = { version = "0.1.0", path = "../shared" }
-runtime = { version = "0.1.0", path = "../runtime" }
+shared = { version = "0.1.0", path = "../shared", default-features = false }
+runtime = { version = "0.1.0", path = "../runtime", default-features = false }
 sha2 = "0.11"
 thiserror.workspace = true
 tokio = { version = "1", features = ["full"] }

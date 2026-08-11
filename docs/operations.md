@@ -16,6 +16,66 @@ open-websandbox-platform/scripts/sandbox-status.sh        # snapshot
 open-websandbox-platform/scripts/sandbox-status.sh -w     # + recent reaper/error events
 ```
 
+## Observability: Prometheus metrics + OpenTelemetry tracing
+
+The Rust broker/runtime ship two independent observability surfaces (issue
+#83 / decision D9):
+
+- **Prometheus `/metrics` (always-on).** The `metrics` facade fronts a single
+  per-process `metrics-exporter-prometheus` recorder. `/metrics` is served
+  unconditionally — it is **not** affected by the OTLP feature flag below.
+- **OpenTelemetry tracing (always-on SDK, opt-in exporter).** A `tracing`
+  subscriber with a `fmt` layer is always installed. An OTLP span exporter is
+  wired in **only** when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. With the
+  endpoint unset, tracing degrades to a no-op (fmt-only) — boot/serve never
+  depend on a collector being reachable.
+
+### OTLP transport: `OTEL_EXPORTER_OTLP_PROTOCOL`
+
+When the OTLP exporter is opted into (`OTEL_EXPORTER_OTLP_ENDPOINT` set), the
+transport is selected by `OTEL_EXPORTER_OTLP_PROTOCOL`:
+
+| Value              | Transport                                   |
+| ------------------ | ------------------------------------------- |
+| `grpc` (default)   | OTLP/gRPC over tonic (`:4317`)              |
+| `http`             | OTLP/HTTP-protobuf over reqwest (`:4318`)   |
+| `http/protobuf`    | alias of `http`                             |
+
+Any other value makes the broker fall back to fmt-only tracing (the build
+error is logged; it is never fatal). `grpc` stays the default to preserve the
+D9 behaviour (issue #83 Q2).
+
+### Feature flag: `telemetry-otlp` (default-on) & slim builds
+
+The OTLP exporter crate (`opentelemetry-otlp`, which pulls tonic/prost/h2 for
+gRPC and reqwest for HTTP) is behind the **default-on** `telemetry-otlp`
+feature. Slim/no-OTel control-plane images compile it out to drop the whole
+gRPC/HTTP exporter stack (the `metrics` facade + `/metrics` and the
+`opentelemetry` tracing SDK remain always-on):
+
+```bash
+# From rust/ — build the broker WITHOUT the OTLP stack (tonic/prost/h2 absent):
+cargo build --release -p broker --no-default-features
+
+# Prove the gRPC stack is gone (prints nothing):
+cargo tree -p broker --no-default-features | grep -E 'tonic|prost|opentelemetry-otlp'
+```
+
+### Broker binary size (stripped, `--release`)
+
+Measured for the Rust broker on amd64 (issue #83). The OTLP exporter stack
+adds ≈1.9 MiB to the stripped binary; the opt-out (`--no-default-features`)
+is the documented way to slim D13 distroless images.
+
+| Build                              | Stripped size |
+| ---------------------------------- | ------------: |
+| default (`telemetry-otlp` ON)      |  27,667,656 B (~26.4 MiB) |
+| `--no-default-features` (OFF)      |  25,695,024 B (~24.5 MiB) |
+| **Delta (OTLP gRPC+HTTP stack)**   |  **1,972,632 B (~1.9 MiB)** |
+
+`cargo fmt` / `cargo clippy -- -D warnings` / `cargo test --all` are green in
+**both** feature configurations (default and `--no-default-features`).
+
 ## Warm pool tuning
 
 The warm pool pre-warms `N` sandboxes from `code-standard-v1` so a fresh
