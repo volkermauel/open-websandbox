@@ -8,6 +8,11 @@ name: release
 # CI uses the built-in GITHUB_TOKEN; no owner secret required.
 
 on:
+  # Issue #100 (B2): trivy image scans also run on PRs (report-only) so CVEs
+  # surface before a tag. The heavy build/publish/release jobs stay tag-only
+  # via per-job `if:` guards below.
+  pull_request:
+    branches: [main]
   push:
     tags: ["v*.*.*"]
 
@@ -21,6 +26,8 @@ env:
 
 jobs:
   build-broker:
+    # Tag-only: image build/publish/sign belongs to releases, not PRs.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -67,6 +74,7 @@ jobs:
           upload-artifact: true
 
   build-runtime:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -109,7 +117,8 @@ jobs:
           upload-artifact: true
 
   build-router:
-    # Self-build from upstream kubernetes-sigs/agent-sandbox (pinned tag).
+    # Self-build from upstream agent-sandbox (pinned tag).
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout upstream agent-sandbox@v0.5.3
@@ -158,6 +167,82 @@ jobs:
           output-file: open-websandbox-router-${{ github.ref_name }}.spdx.json
           artifact-name: open-websandbox-router-sbom
           upload-artifact: true
+
+  trivy-release:
+    # Issue #100 (B2): scan the just-published tag images for HIGH/CRITICAL
+    # CVEs. REPORT-ONLY (continue-on-error + exit-code 0) per maintainer decision:
+    # surfacing only, does not gate a release. Scans the images built above.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-broker, build-runtime, build-router]
+    name: trivy image (release, report-only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [open-websandbox-broker, open-websandbox-runtime, open-websandbox-router]
+    steps:
+      - uses: actions/checkout@v7
+      - name: trivy image (HIGH,CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        env:
+          # Private ghcr.io read auth for the published images.
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.ref_name }}
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+          format: table
+
+  trivy-pr:
+    # Issue #100 (B2): on PRs, build each image locally (load, no push) and scan
+    # it for HIGH/CRITICAL CVEs. REPORT-ONLY: never blocks a PR. This catches
+    # vulnerable base images / deps before a tag, without publishing anything.
+    if: github.event_name == 'pull_request'
+    name: trivy image (PR, report-only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: open-websandbox-broker
+            context: rust
+            dockerfile: rust/broker/Dockerfile
+          - image: open-websandbox-runtime
+            context: rust
+            dockerfile: rust/runtime/Dockerfile
+          - image: open-websandbox-router
+            context: agent-sandbox
+            dockerfile: agent-sandbox/sandbox-router/Dockerfile
+            upstream: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: Checkout upstream agent-sandbox@v0.5.3
+        if: matrix.upstream
+        uses: actions/checkout@v7
+        with:
+          repository: kubernetes-sigs/agent-sandbox
+          ref: v0.5.3
+          path: agent-sandbox
+      - uses: docker/setup-buildx-action@v4
+      - name: Build image (load, no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:pr-scan
+          cache-from: type=gha,scope=${{ matrix.image }}
+      - name: trivy image (HIGH,CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:pr-scan
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+          format: table
 
   chart-release:
     # Publish the Helm chart to OCI and cut a GitHub Release; tags only.
