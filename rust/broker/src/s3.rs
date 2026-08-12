@@ -22,7 +22,7 @@
 //! ## Testability
 //!
 //! [`ColdStore`] is a small `dyn`-safe trait; [`AwsColdStore`] is the real
-//! `aws-sdk-s3` backend (D4) and [`InMemoryColdStore`] is a map-backed double,
+//! `aws-sdk-s3` backend (D4) and [`test_fakes::InMemoryColdStore`] is a map-backed double,
 //! so the offload/restore logic (key scheme, upload-then-delete ordering,
 //! restore-skip-when-no-object, error→keep-alive) is exercised **without a live
 //! S3 or cluster**. `wiremock` (dev-dep) stands in for the runtime's
@@ -30,8 +30,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -93,7 +92,7 @@ pub enum ColdError {
 }
 
 /// The cold-tier object store the broker offloads to / restores from, behind a
-/// `dyn`-safe trait so unit tests use an in-memory double ([`InMemoryColdStore`])
+/// `dyn`-safe trait so unit tests use an in-memory double ([`test_fakes::InMemoryColdStore`])
 /// instead of a live S3. [`AwsColdStore`] wraps `aws-sdk-s3` (decision D4).
 #[async_trait]
 pub trait ColdStore: Send + Sync {
@@ -269,111 +268,123 @@ impl ColdStore for AwsColdStore {
     }
 }
 
-/// In-memory [`ColdStore`] double for tests and local dev (no live S3). Records
-/// the ordered call log so upload-then-delete ordering + keep-latest retention
-/// are asserted without a cluster.
-pub struct InMemoryColdStore {
-    inner: Mutex<InMemoryInner>,
-}
+pub mod test_fakes {
+    // In-memory doubles for tests / local dev. Kept under a clearly-named
+    // `test_fakes` namespace so they do not clutter the production module
+    // surface, but `pub` so integration tests in `tests/` can reuse them via
+    // `broker::test_fakes`.
+    use super::{ColdError, ColdStore};
+    use async_trait::async_trait;
+    use bytes::Bytes;
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
 
-#[derive(Default)]
-struct InMemoryInner {
-    objects: BTreeMap<String, Bytes>,
-    /// Ordered operation log: `put:<key>` / `delete:<key>` / `get:<key>`.
-    log: Vec<String>,
-}
+    /// In-memory [`ColdStore`] double for tests and local dev (no live S3). Records
+    /// the ordered call log so upload-then-delete ordering + keep-latest retention
+    /// are asserted without a cluster.
+    pub struct InMemoryColdStore {
+        inner: Mutex<InMemoryInner>,
+    }
 
-impl InMemoryColdStore {
-    /// New empty store.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            inner: Mutex::new(InMemoryInner::default()),
+    #[derive(Default)]
+    struct InMemoryInner {
+        objects: BTreeMap<String, Bytes>,
+        /// Ordered operation log: `put:<key>` / `delete:<key>` / `get:<key>`.
+        log: Vec<String>,
+    }
+
+    impl InMemoryColdStore {
+        /// New empty store.
+        #[must_use]
+        pub fn new() -> Self {
+            Self {
+                inner: Mutex::new(InMemoryInner::default()),
+            }
+        }
+
+        /// Seed a pre-existing object (e.g. to simulate a prior snapshot).
+        pub fn seed(&self, key: &str, body: impl Into<Bytes>) {
+            let mut g = self.inner.lock().expect("in-memory cold store");
+            g.objects.insert(key.to_string(), body.into());
+        }
+
+        /// Ordered call log (for upload-then-delete ordering assertions).
+        #[must_use]
+        pub fn log(&self) -> Vec<String> {
+            self.inner.lock().expect("in-memory cold store").log.clone()
+        }
+
+        /// Current object keys (sorted).
+        #[must_use]
+        pub fn keys(&self) -> Vec<String> {
+            self.inner
+                .lock()
+                .expect("in-memory cold store")
+                .objects
+                .keys()
+                .cloned()
+                .collect()
         }
     }
 
-    /// Seed a pre-existing object (e.g. to simulate a prior snapshot).
-    pub fn seed(&self, key: &str, body: impl Into<Bytes>) {
-        let mut g = self.inner.lock().expect("in-memory cold store");
-        g.objects.insert(key.to_string(), body.into());
-    }
-
-    /// Ordered call log (for upload-then-delete ordering assertions).
-    #[must_use]
-    pub fn log(&self) -> Vec<String> {
-        self.inner.lock().expect("in-memory cold store").log.clone()
-    }
-
-    /// Current object keys (sorted).
-    #[must_use]
-    pub fn keys(&self) -> Vec<String> {
-        self.inner
-            .lock()
-            .expect("in-memory cold store")
-            .objects
-            .keys()
-            .cloned()
-            .collect()
-    }
-}
-
-impl Default for InMemoryColdStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl ColdStore for InMemoryColdStore {
-    async fn put_object(
-        &self,
-        key: &str,
-        body: Bytes,
-        _retention_days: u32,
-    ) -> Result<(), ColdError> {
-        let mut g = self.inner.lock().expect("in-memory cold store");
-        g.log.push(format!("put:{key}"));
-        g.objects.insert(key.to_string(), body);
-        Ok(())
-    }
-
-    async fn latest_key(&self, prefix: &str) -> Result<Option<String>, ColdError> {
-        let g = self.inner.lock().expect("in-memory cold store");
-        Ok(g.objects
-            .keys()
-            .filter(|k| k.starts_with(prefix))
-            .max()
-            .cloned())
-    }
-
-    async fn get_object(&self, key: &str) -> Result<Bytes, ColdError> {
-        let mut g = self.inner.lock().expect("in-memory cold store");
-        g.log.push(format!("get:{key}"));
-        g.objects
-            .get(key)
-            .cloned()
-            .ok_or_else(|| ColdError::S3(format!("not found: {key}")))
-    }
-
-    async fn delete_prefix_except(
-        &self,
-        prefix: &str,
-        skip: Option<&str>,
-    ) -> Result<u64, ColdError> {
-        let mut g = self.inner.lock().expect("in-memory cold store");
-        let victims: Vec<String> = g
-            .objects
-            .keys()
-            .filter(|k| k.starts_with(prefix))
-            .filter(|k| skip != Some(k.as_str()))
-            .cloned()
-            .collect();
-        let n = victims.len() as u64;
-        for k in &victims {
-            g.log.push(format!("delete:{k}"));
-            g.objects.remove(k);
+    impl Default for InMemoryColdStore {
+        fn default() -> Self {
+            Self::new()
         }
-        Ok(n)
+    }
+
+    #[async_trait]
+    impl ColdStore for InMemoryColdStore {
+        async fn put_object(
+            &self,
+            key: &str,
+            body: Bytes,
+            _retention_days: u32,
+        ) -> Result<(), ColdError> {
+            let mut g = self.inner.lock().expect("in-memory cold store");
+            g.log.push(format!("put:{key}"));
+            g.objects.insert(key.to_string(), body);
+            Ok(())
+        }
+
+        async fn latest_key(&self, prefix: &str) -> Result<Option<String>, ColdError> {
+            let g = self.inner.lock().expect("in-memory cold store");
+            Ok(g.objects
+                .keys()
+                .filter(|k| k.starts_with(prefix))
+                .max()
+                .cloned())
+        }
+
+        async fn get_object(&self, key: &str) -> Result<Bytes, ColdError> {
+            let mut g = self.inner.lock().expect("in-memory cold store");
+            g.log.push(format!("get:{key}"));
+            g.objects
+                .get(key)
+                .cloned()
+                .ok_or_else(|| ColdError::S3(format!("not found: {key}")))
+        }
+
+        async fn delete_prefix_except(
+            &self,
+            prefix: &str,
+            skip: Option<&str>,
+        ) -> Result<u64, ColdError> {
+            let mut g = self.inner.lock().expect("in-memory cold store");
+            let victims: Vec<String> = g
+                .objects
+                .keys()
+                .filter(|k| k.starts_with(prefix))
+                .filter(|k| skip != Some(k.as_str()))
+                .cloned()
+                .collect();
+            let n = victims.len() as u64;
+            for k in &victims {
+                g.log.push(format!("delete:{k}"));
+                g.objects.remove(k);
+            }
+            Ok(n)
+        }
     }
 }
 
@@ -676,6 +687,7 @@ fn now_unix() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use super::test_fakes::InMemoryColdStore;
     use super::*;
     use shared::{SandboxCondition, SandboxSpec, SandboxStatus};
 

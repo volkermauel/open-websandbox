@@ -18,9 +18,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use broker::reaper::ReapOffload;
+use broker::test_fakes::{InMemoryColdStore, StubSandboxStore};
 use broker::{
     resolve_sandbox, s3_namespace, s3_object_key, sandbox_name, AppState, ColdStore,
-    InMemoryColdStore, RestoreOutcome, S3Offload, StubSandboxStore,
+    RestoreOutcome, S3Offload,
 };
 use shared::{
     OperatingMode, Profile, Sandbox, SandboxSpec, SandboxStatus, SandboxTemplate,

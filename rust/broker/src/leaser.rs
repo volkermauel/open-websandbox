@@ -209,6 +209,7 @@ impl LeaseClient for KubeLease {
 // with an injectable clock so expiry/take-over is deterministic, no apiserver.
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
 /// A clock the in-memory lease reads "now" from (epoch seconds); tests inject
 /// a controllable one so expiry/take-over is deterministic.
 type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
@@ -238,6 +239,7 @@ impl InMemoryLease {
 
 /// A [`LeaseClient`] over a shared [`InMemoryLease`] with a fixed identity and
 /// an injectable clock — the unit-test backend for the leader gate.
+#[cfg(test)]
 #[derive(Clone)]
 pub struct InMemoryLeaseClient {
     state: InMemoryLease,
@@ -246,6 +248,7 @@ pub struct InMemoryLeaseClient {
     now: Clock,
 }
 
+#[cfg(test)]
 impl InMemoryLeaseClient {
     /// Test client: `identity` is this broker, `duration_seconds` its lease TTL,
     /// `now` the injected clock (epoch seconds).
@@ -271,6 +274,7 @@ impl InMemoryLeaseClient {
     }
 }
 
+#[cfg(test)]
 #[async_trait]
 impl LeaseClient for InMemoryLeaseClient {
     async fn acquire_or_renew(&self) -> bool {

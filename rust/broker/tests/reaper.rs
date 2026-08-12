@@ -13,7 +13,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use broker::reaper::{maybe_reap_once, reap_once, NoopOffload, OffloadError, ReapOffload};
-use broker::{LeaderGate, SandboxStore, StubSandboxStore};
+use broker::test_fakes::StubSandboxStore;
+use broker::{LeaderGate, SandboxStore};
 use shared::{OperatingMode, Sandbox, SandboxSpec, ShutdownPolicy};
 
 /// Build a broker-owned seed sandbox with the given profile / last-used / mode.
