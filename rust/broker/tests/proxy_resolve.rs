@@ -316,3 +316,37 @@ async fn proxy_requires_bearer_auth() {
 fn crate_body() -> Vec<u8> {
     b"{}".to_vec()
 }
+
+#[tokio::test]
+async fn proxy_rejects_when_no_per_session_runtime_key() {
+    // #98: a pre-existing Ready sandbox WITHOUT a per-session runtime key must be
+    // rejected (502) rather than falling back to the shared BROKER_RUNTIME_API_KEY.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/files/list"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("must-not-reach"))
+        .mount(&server)
+        .await;
+
+    let store = store_with_template();
+    // Insert a Ready sandbox directly (no creation -> no ensure_runtime_key minting),
+    // and deliberately do NOT seed a runtime key.
+    let name = sandbox_name("user-1", "chat-1", Profile::Persistent);
+    let mut existing = Sandbox::new(&name, SandboxSpec::default());
+    existing.metadata.namespace = Some("agent-sandbox-runtime".into());
+    existing.status = Some(ready_status("10.0.0.9"));
+    store.insert_sandbox(existing);
+
+    let state = proxy_env(&server.uri(), store).await;
+    let app = build_router(state);
+    let resp = app
+        .oneshot(authed_req("GET", "/files/list", b""))
+        .await
+        .expect("router");
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    assert!(body_string(resp)
+        .await
+        .contains("shared-key fallback removed"));
+    // The upstream runtime was never contacted.
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
