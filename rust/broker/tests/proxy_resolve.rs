@@ -350,3 +350,71 @@ async fn proxy_rejects_when_no_per_session_runtime_key() {
     // The upstream runtime was never contacted.
     assert!(server.received_requests().await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn rate_limit_returns_429_per_user_when_burst_exhausted() {
+    // #98 A3: a per-user token-bucket caps the gated surface. With burst=2 the
+    // first two requests from user-1 pass; the third is rejected with 429. A
+    // second user's bucket is independent (their first request still passes), and
+    // the open probe /healthz is never throttled.
+    let mut cfg = config(1);
+    cfg.rate_limit_per_second = 1;
+    cfg.rate_limit_burst = 2;
+    let state = state(store_with_template(), cfg);
+    let app = build_router(state);
+
+    // Two requests from user-1 within the burst window.
+    for i in 0..2u32 {
+        let resp = app
+            .clone()
+            .oneshot(authed_req("GET", "/api/config", b""))
+            .await
+            .expect("router");
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "within-burst request {i} must pass"
+        );
+    }
+    // Third from the same user, same instant → 429.
+    let over = app
+        .clone()
+        .oneshot(authed_req("GET", "/api/config", b""))
+        .await
+        .expect("router");
+    assert_eq!(over.status(), StatusCode::TOO_MANY_REQUESTS);
+    // tower-governor's use_headers() emits rate-limit metadata on the 429
+    // (Retry-After and/or x-ratelimit-*). At least one must be present.
+    let has_rate_meta = over.headers().contains_key("retry-after")
+        || over
+            .headers()
+            .keys()
+            .any(|k| k.as_str().starts_with("x-ratelimit-"));
+    assert!(
+        has_rate_meta,
+        "429 must carry rate-limit metadata; got headers: {:?}",
+        over.headers().keys().collect::<Vec<_>>()
+    );
+
+    // A different user's bucket is independent.
+    let mut other = authed_req("GET", "/api/config", b"");
+    other
+        .headers_mut()
+        .insert("x-user-id", "user-2".parse().expect("header"));
+    let resp = app.clone().oneshot(other).await.expect("router");
+    assert_eq!(resp.status(), StatusCode::OK, "per-user isolation");
+
+    // Open probes (/healthz) sit on the unlimited router.
+    let probe = Request::builder()
+        .method("GET")
+        .uri("/healthz")
+        .body(Body::empty())
+        .expect("request");
+    let resp = app.oneshot(probe).await.expect("router");
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "open probes are not rate-limited"
+    );
+}
+}

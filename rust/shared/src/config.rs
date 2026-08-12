@@ -182,6 +182,23 @@ pub struct BrokerConfig {
     #[serde(default = "default_reaper_poll_seconds")]
     pub reaper_poll_seconds: u64,
 
+    /// Per-user rate limiting (env `BROKER_RATE_LIMIT_ENABLED`, default `true`).
+    /// When enabled, a token-bucket per `X-User-Id` caps create / execute / file /
+    /// terminal traffic on the broker's gated routes (`429` + `Retry-After` when the
+    /// bucket is empty); open probes (`/healthz`, `/readyz`, `/metrics`) stay unlimited.
+    #[serde(default = "default_rate_limit_enabled")]
+    pub rate_limit_enabled: bool,
+
+    /// Token-bucket refill rate, requests per second per user (env
+    /// `BROKER_RATE_LIMIT_PER_SECOND`, default `20`).
+    #[serde(default = "default_rate_limit_per_second")]
+    pub rate_limit_per_second: u32,
+
+    /// Token-bucket capacity / burst size per user (env
+    /// `BROKER_RATE_LIMIT_BURST`, default `40`).
+    #[serde(default = "default_rate_limit_burst")]
+    pub rate_limit_burst: u32,
+
     /// Namespace holding the broker leader-election `Lease` (env
     /// `BROKER_LEADER_NAMESPACE`). Defaults to [`Self::runtime_ns`] when unset.
     #[serde(default = "default_runtime_ns")]
@@ -297,6 +314,19 @@ const fn default_reaper_poll_seconds() -> u64 {
     60
 }
 
+/// Default: rate limiting enabled (#98 A3).
+const fn default_rate_limit_enabled() -> bool {
+    true
+}
+/// Default: 20 requests/sec/user (#98 A3).
+const fn default_rate_limit_per_second() -> u32 {
+    20
+}
+/// Default: burst of 40/user (#98 A3).
+const fn default_rate_limit_burst() -> u32 {
+    40
+}
+
 fn default_leader_lease() -> String {
     "owui-broker-leader".to_string()
 }
@@ -340,6 +370,9 @@ impl Default for BrokerConfig {
             park_idle_seconds: default_park_idle_seconds(),
             reap_seconds: default_reap_seconds(),
             reaper_poll_seconds: default_reaper_poll_seconds(),
+            rate_limit_enabled: default_rate_limit_enabled(),
+            rate_limit_per_second: default_rate_limit_per_second(),
+            rate_limit_burst: default_rate_limit_burst(),
             leader_namespace: default_runtime_ns(),
             leader_lease: default_leader_lease(),
             leader_duration_seconds: default_leader_duration_seconds(),
@@ -414,6 +447,13 @@ impl BrokerConfig {
                 .unwrap_or_else(default_reap_seconds),
             reaper_poll_seconds: env_value("BROKER_REAPER_POLL_SECONDS", &get)?
                 .unwrap_or_else(default_reaper_poll_seconds),
+            rate_limit_enabled: get("BROKER_RATE_LIMIT_ENABLED")
+                .map(|raw| parse_bool(&raw))
+                .unwrap_or(true),
+            rate_limit_per_second: env_value("BROKER_RATE_LIMIT_PER_SECOND", &get)?
+                .unwrap_or_else(default_rate_limit_per_second),
+            rate_limit_burst: env_value("BROKER_RATE_LIMIT_BURST", &get)?
+                .unwrap_or_else(default_rate_limit_burst),
             leader_namespace,
             leader_lease: get("BROKER_LEADER_LEASE").unwrap_or_else(default_leader_lease),
             leader_duration_seconds: env_value("BROKER_LEADER_DURATION_SECONDS", &get)?
