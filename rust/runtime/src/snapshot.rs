@@ -392,7 +392,7 @@ fn extract_archive<R: Read>(base: &Path, reader: R) -> io::Result<()> {
         let header = entry.header();
         let is_link = header.entry_type().is_symlink() || header.entry_type().is_hard_link();
         let link: Option<PathBuf> = if is_link {
-            header.link_name()?.map(|cow| cow.into_owned())
+            header.link_name()?.map(std::borrow::Cow::into_owned)
         } else {
             None
         };
@@ -669,8 +669,8 @@ mod tests {
         header[157..157 + linkname.len()].copy_from_slice(linkname);
         header[257..263].copy_from_slice(b"ustar\0"); // magic
         header[263..265].copy_from_slice(b"00"); // version
-        let cksum: u64 = header.iter().map(|&b| b as u64).sum();
-        header[148..156].copy_from_slice(format!("{:06o}\0 ", cksum).as_bytes());
+        let cksum: u64 = header.iter().map(|&b| u64::from(b)).sum();
+        header[148..156].copy_from_slice(format!("{cksum:06o}\0 ").as_bytes());
         let mut out = header.to_vec();
         out.extend_from_slice(data);
         let pad = (512 - (data.len() % 512)) % 512;
@@ -820,7 +820,7 @@ mod tests {
             .expect("restore ok");
         assert!(ok.restored);
         // Empty workspace stays empty (no entries written).
-        assert!(std::fs::read_dir(dir.path()).unwrap().count() == 0);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[tokio::test]
@@ -961,7 +961,7 @@ mod tests {
         assert!(
             std::fs::read_dir(jail.path())
                 .unwrap()
-                .filter_map(|e| e.ok())
+                .filter_map(std::result::Result::ok)
                 .all(|e| e.file_name() == "workspace" || e.file_name() == "api-key"),
             "jail directory gained unexpected entries outside base"
         );

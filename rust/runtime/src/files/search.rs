@@ -24,6 +24,12 @@ pub struct GrepQuery {
     max_results: Option<usize>,
 }
 
+/// Grep the workspace for a literal or regex query.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace or the
+/// regex is invalid, and [`ApiError::NotFound`] if the search path is missing.
 #[utoipa::path(
     get,
     path = "/files/grep",
@@ -120,8 +126,7 @@ fn collect_files(dir: &Path, include: Option<&[String]>, out: &mut Vec<PathBuf>)
         let path = e.path();
         // os.path.isdir follows symlinks; metadata failure → treat as non-dir.
         let is_dir = std::fs::metadata(&path)
-            .map(|m| m.is_dir())
-            .unwrap_or(false);
+            .is_ok_and(|m| m.is_dir());
         if is_dir {
             collect_files(&path, include, out);
         } else {
@@ -147,6 +152,12 @@ pub struct GlobQuery {
     max_results: Option<usize>,
 }
 
+/// Glob-match workspace entries by pattern and optional type.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace and
+/// [`ApiError::NotFound`] if the search directory is missing.
 #[utoipa::path(
     get,
     path = "/files/glob",
@@ -200,7 +211,7 @@ pub async fn glob_search(
     })))
 }
 
-/// Walk `dir` like os.walk, pushing matching entries (relpath, is_dir, size, mtime).
+/// Walk `dir` like os.walk, pushing matching entries (relpath, `is_dir`, size, mtime).
 fn glob_collect(
     root: &Path,
     dir: &Path,
@@ -215,8 +226,7 @@ fn glob_collect(
     for e in rd.flatten() {
         let path = e.path();
         let is_dir = std::fs::metadata(&path)
-            .map(|m| m.is_dir())
-            .unwrap_or(false);
+            .is_ok_and(|m| m.is_dir());
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -249,17 +259,19 @@ fn glob_collect(
 /// Shell-style fnmatch (`fnmatch.fnmatch`, case-sensitive on Linux):
 /// translates `*`→`.*`, `?`→`.`, `[...]`→char class, anchors the whole string.
 fn fnmatch(name: &str, pattern: &str) -> bool {
-    let Some(re_src) = fnmatch_translate(pattern) else {
-        return false;
-    };
+    let re_src = fnmatch_translate(pattern);
     regex::Regex::new(&re_src)
-        .map(|re| re.is_match(name))
-        .unwrap_or(false)
+        .is_ok_and(|re| re.is_match(name))
 }
 
 /// Translate a shell glob into an anchored regex
 /// (`fnmatch.translate`, classic form). Returns `^...$`.
-fn fnmatch_translate(pat: &str) -> Option<String> {
+//
+// reason: char-by-char port of CPython's `fnmatch.translate`; the single-letter
+// names (`c` char, `i`/`j`/`n` indices, `s` builder, `sc` char iterator) mirror
+// the reference algorithm and aid side-by-side review.
+#[allow(clippy::many_single_char_names)]
+fn fnmatch_translate(pat: &str) -> String {
     let chars: Vec<char> = pat.chars().collect();
     let n = chars.len();
     let mut i = 0usize;
@@ -317,5 +329,5 @@ fn fnmatch_translate(pat: &str) -> Option<String> {
             }
         }
     }
-    Some(format!("^{res}$"))
+    format!("^{res}$")
 }

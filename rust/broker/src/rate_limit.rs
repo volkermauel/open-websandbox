@@ -40,9 +40,7 @@ impl KeyExtractor for XUserIdKey {
             .get("x-user-id")
             .and_then(|v| v.to_str().ok())
             .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
-            .unwrap_or_else(|| "anonymous".to_owned()))
+            .filter(|s| !s.is_empty()).map_or_else(|| "anonymous".to_owned(), str::to_owned))
     }
 }
 
@@ -54,7 +52,7 @@ pub(crate) fn apply(router: Router<AppState>, state: &AppState) -> Router<AppSta
     }
     // governor rejects a zero refill/burst; clamp to 1 so a misconfigured 0 falls
     // back to the most permissive valid bucket rather than panicking at startup.
-    let per_second = state.config.rate_limit_per_second.max(1) as u64;
+    let per_second = u64::from(state.config.rate_limit_per_second.max(1));
     let burst = state.config.rate_limit_burst.max(1);
     let conf = GovernorConfigBuilder::default()
         .per_second(per_second)

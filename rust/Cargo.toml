@@ -68,3 +68,14 @@ metrics-exporter-prometheus = "0.18"
 subtle = "2.6.1"
 thiserror = "2.0.20"
 utoipa = "5.5.0"
+
+# Workspace-wide lint configuration (issue #100 / B5). `clippy::pedantic` is
+# enabled at `warn` with a *negative* priority so individual crate/item-level
+# `allow` attributes (which default to priority 0) still compose on top of it
+# and can override a single lint locally. Each member crate opts in via
+# `[lints] workspace = true` in its own manifest. CI runs
+# `cargo clippy -- -D warnings`, so a pedantic warning is a build failure there.
+# NOTE: `missing_docs` (rustc) is intentionally NOT enabled here — it is a large
+# doc-only diff tracked separately and would break `-D warnings` until done.
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }

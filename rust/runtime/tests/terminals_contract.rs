@@ -168,7 +168,7 @@ async fn wait_for(stream: &mut WsStream, marker: &[u8], timeout: f64) -> bool {
             return true;
         }
         tokio::select! {
-            _ = &mut deadline => return window_contains(&buf, marker),
+            () = &mut deadline => return window_contains(&buf, marker),
             msg = stream.next() => match msg {
                 Some(Ok(Message::Binary(b))) => buf.extend_from_slice(&b),
                 Some(Ok(Message::Text(t))) => buf.extend_from_slice(t.as_bytes()),
@@ -201,8 +201,8 @@ async fn poll_cleaned(srv: &Server, id: &str, timeout: f64) -> bool {
             return true;
         }
         tokio::select! {
-            _ = &mut deadline => return false,
-            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+            () = &mut deadline => return false,
+            () = tokio::time::sleep(Duration::from_millis(100)) => {}
         }
     }
 }

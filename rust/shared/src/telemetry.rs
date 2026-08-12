@@ -52,7 +52,7 @@ pub const DEFAULT_OTLP_PROTOCOL: &str = "grpc";
 ///
 /// Installs a `fmt` layer always; adds the OTel/OTLP bridge only when
 /// [`OTEL_ENDPOINT_ENV`] is set (and the `telemetry-otlp` feature is enabled).
-/// Returns the provider (so the caller can flush on shutdown) when OTel is
+/// Returns the provider (so the caller can flush on shutdown) when `OTel` is
 /// active, else `None`.
 ///
 /// # Panics
@@ -107,9 +107,7 @@ pub fn init(service_name: &str, default_filter: &str) -> Option<SdkTracerProvide
 fn build_provider(service_name: &str, endpoint: &str) -> Result<SdkTracerProvider, String> {
     let protocol = std::env::var(OTEL_PROTOCOL_ENV)
         .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.trim().to_ascii_lowercase())
-        .unwrap_or_else(|| DEFAULT_OTLP_PROTOCOL.to_string());
+        .filter(|s| !s.trim().is_empty()).map_or_else(|| DEFAULT_OTLP_PROTOCOL.to_string(), |s| s.trim().to_ascii_lowercase());
 
     let exporter = match protocol.as_str() {
         "http" | "http/protobuf" => build_http_exporter(endpoint)?,

@@ -132,7 +132,7 @@ pub struct AwsColdStore {
     client: aws_sdk_s3::Client,
     bucket: String,
     /// Whether to request SSE-S3 (AES256) at rest. Disabled for stores without a
-    /// KMS/SSE backend (dev MinIO) — driven by `BrokerConfig::s3_sse`.
+    /// KMS/SSE backend (dev `MinIO`) — driven by `BrokerConfig::s3_sse`.
     sse_enabled: bool,
 }
 
@@ -229,7 +229,7 @@ impl ColdStore for AwsColdStore {
             .collect()
             .await
             .map_err(|e| ColdError::S3(e.to_string()))
-            .map(|b| b.into_bytes())
+            .map(aws_sdk_s3::primitives::AggregatedBytes::into_bytes)
     }
 
     async fn delete_prefix_except(
@@ -469,7 +469,7 @@ impl S3Offload {
                 Ok(Some(k)) => return k,
                 Ok(None) => {}
                 Err(e) => {
-                    tracing::warn!(sandbox = %name, %e, "read_runtime_key failed; falling back to shared key")
+                    tracing::warn!(sandbox = %name, %e, "read_runtime_key failed; falling back to shared key");
                 }
             }
         }
@@ -681,8 +681,7 @@ fn annotation(sbx: &Sandbox, key: &str) -> String {
 fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 #[cfg(test)]

@@ -110,7 +110,7 @@ pub struct BrokerConfig {
     #[serde(default = "default_max_output_bytes")]
     pub max_output_bytes: u64,
 
-    /// Shared Bearer secret authenticating Open WebUI ↔ broker requests (env
+    /// Shared Bearer secret authenticating Open `WebUI` ↔ broker requests (env
     /// `BROKER_SHARED_SECRET`). Empty or a known placeholder counts as "not
     /// configured" → the broker fails closed (boot refuses, requests get 503).
     #[serde(default)]
@@ -230,7 +230,7 @@ pub struct BrokerConfig {
     pub s3_enabled: bool,
 
     /// S3-compatible endpoint URL (env `BROKER_S3_ENDPOINT`). Empty ⇒ the AWS
-    /// default (https://s3.<region>.amazonaws.com). Set for MinIO/R2/Proxmox
+    /// default (<https://s3>.<region>.amazonaws.com). Set for MinIO/R2/Proxmox
     /// (e.g. `http://minio:9000`).
     #[serde(default)]
     pub s3_endpoint: String,
@@ -265,7 +265,7 @@ pub struct BrokerConfig {
     pub s3_path_style: bool,
     /// Server-side encryption mode (env `BROKER_S3_SSE`; e.g. `"AES256"` for
     /// SSE-S3). Empty or `"none"` disables SSE — required for stores without a
-    /// KMS/SSE backend (dev MinIO) (D12).
+    /// KMS/SSE backend (dev `MinIO`) (D12).
     #[serde(default)]
     pub s3_sse: String,
 }
@@ -444,8 +444,7 @@ impl BrokerConfig {
             reaper_poll_seconds: env_value("BROKER_REAPER_POLL_SECONDS", &get)?
                 .unwrap_or_else(default_reaper_poll_seconds),
             rate_limit_enabled: get("BROKER_RATE_LIMIT_ENABLED")
-                .map(|raw| parse_bool(&raw))
-                .unwrap_or(true),
+                .is_none_or(|raw| parse_bool(&raw)),
             rate_limit_per_second: env_value("BROKER_RATE_LIMIT_PER_SECOND", &get)?
                 .unwrap_or_else(default_rate_limit_per_second),
             rate_limit_burst: env_value("BROKER_RATE_LIMIT_BURST", &get)?
@@ -457,20 +456,16 @@ impl BrokerConfig {
             leader_renew_seconds: env_value("BROKER_LEADER_RENEW_SECONDS", &get)?
                 .unwrap_or_else(default_leader_renew_seconds),
             s3_enabled: get("BROKER_S3_ENABLED")
-                .map(|raw| parse_bool(&raw))
-                .unwrap_or(false),
+                .is_some_and(|raw| parse_bool(&raw)),
             s3_endpoint: get("BROKER_S3_ENDPOINT").unwrap_or_default(),
             s3_region: get("BROKER_S3_REGION").unwrap_or_else(default_s3_region),
             s3_bucket: get("BROKER_S3_BUCKET").unwrap_or_default(),
-            s3_prefix: get("BROKER_S3_PREFIX")
-                .map(|raw| trim_prefix(&raw))
-                .unwrap_or_else(default_s3_prefix),
+            s3_prefix: get("BROKER_S3_PREFIX").map_or_else(default_s3_prefix, |raw| trim_prefix(&raw)),
             s3_sse: get("BROKER_S3_SSE").unwrap_or_default(),
             s3_access_key_id,
             s3_secret_access_key,
             s3_path_style: get("BROKER_S3_PATH_STYLE")
-                .map(|raw| parse_bool(&raw))
-                .unwrap_or(true),
+                .is_none_or(|raw| parse_bool(&raw)),
         })
     }
 }

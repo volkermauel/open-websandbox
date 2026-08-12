@@ -100,6 +100,10 @@ impl SessionKeyStore {
     /// Returns `""` when the file is absent/empty/unreadable. The mtime is
     /// cached so re-reads are cheap, and a rotated file (new mtime) is reflected
     /// without a restart.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal cache mutex is poisoned (a thread holding it panicked).
     pub fn load(&self) -> String {
         let mut cache = self.cache.lock().expect("key cache mutex poisoned");
         let mtime = match fs::metadata(&self.key_file).and_then(|m| m.modified()) {
@@ -123,12 +127,21 @@ impl SessionKeyStore {
 
     /// Force the next [`SessionKeyStore::load`] to re-stat/re-read. Used on a
     /// mismatch so rotate-on-resume is honoured on the very next request.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal cache mutex is poisoned (a thread holding it panicked).
     pub fn invalidate(&self) {
         let mut cache = self.cache.lock().expect("key cache mutex poisoned");
         cache.mtime = None;
     }
 
     /// Fail-closed boot guard: refuse to start with a missing/placeholder key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BootError`] if the per-session runtime API key is missing or still
+    /// a placeholder value, which would otherwise allow unauthenticated access.
     pub fn validate(&self) -> Result<(), BootError> {
         let key = self.load();
         if is_placeholder(&key) {

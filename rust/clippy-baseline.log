@@ -1,0 +1,2936 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+    Checking cfg-if v1.0.4
+   Compiling libc v0.2.189
+    Checking smallvec v1.15.2
+    Checking bytes v1.12.1
+    Checking pin-project-lite v0.2.17
+    Checking zeroize v1.9.0
+    Checking memchr v2.8.3
+    Checking itoa v1.0.18
+    Checking once_cell v1.21.4
+    Checking scopeguard v1.2.0
+    Checking futures-core v0.3.33
+   Compiling parking_lot_core v0.9.12
+    Checking log v0.4.33
+    Checking futures-sink v0.3.33
+    Checking slab v0.4.12
+   Compiling serde_core v1.0.229
+    Checking lock_api v0.4.14
+    Checking futures-io v0.3.33
+    Checking futures-channel v0.3.33
+    Checking futures-task v0.3.33
+   Compiling version_check v0.9.5
+    Checking subtle v2.6.1
+    Checking tracing-core v0.1.36
+    Checking typenum v1.20.1
+    Checking fnv v1.0.7
+    Checking equivalent v1.0.2
+   Compiling find-msvc-tools v0.1.10
+   Compiling shlex v2.0.1
+    Checking percent-encoding v2.3.2
+    Checking hashbrown v0.17.1
+    Checking const-oid v0.9.6
+   Compiling httparse v1.10.1
+    Checking base64 v0.22.1
+   Compiling pkg-config v0.3.33
+    Checking tower-service v0.3.3
+   Compiling autocfg v1.5.1
+   Compiling generic-array v0.14.7
+    Checking ryu v1.0.23
+    Checking try-lock v0.2.5
+    Checking atomic-waker v1.1.2
+    Checking http v1.5.0
+   Compiling zmij v1.0.23
+   Compiling getrandom v0.3.4
+    Checking want v0.3.1
+    Checking httpdate v1.0.3
+   Compiling zerocopy v0.8.56
+    Checking ipnet v2.12.1
+    Checking stable_deref_trait v1.2.1
+    Checking form_urlencoded v1.2.2
+    Checking tower-layer v0.3.3
+   Compiling serde v1.0.229
+   Compiling thiserror v2.0.20
+    Checking bitflags v2.13.1
+   Compiling num-traits v0.2.19
+    Checking sync_wrapper v1.0.2
+   Compiling serde_json v1.0.151
+   Compiling fs_extra v1.3.0
+    Checking either v1.17.0
+   Compiling dunce v1.0.5
+   Compiling syn v2.0.119
+   Compiling syn v3.0.3
+    Checking mime v0.3.17
+    Checking litemap v0.8.2
+   Compiling aws-lc-rs v1.18.0
+    Checking cpufeatures v0.2.17
+    Checking writeable v0.6.3
+    Checking rustls-pki-types v1.15.1
+   Compiling icu_normalizer_data v2.2.0
+    Checking utf8_iter v1.0.4
+   Compiling icu_properties_data v2.2.0
+    Checking http-body v1.1.0
+    Checking untrusted v0.9.0
+    Checking encoding_rs v0.8.35
+   Compiling rustls v0.23.43
+   Compiling anyhow v1.0.104
+   Compiling crossbeam-utils v0.8.22
+    Checking openssl-probe v0.2.1
+   Compiling multer v3.1.0
+    Checking data-encoding v2.11.1
+    Checking aho-corasick v1.1.5
+    Checking rustls-native-certs v0.8.4
+    Checking webpki-roots v1.0.9
+    Checking spin v0.9.9
+    Checking regex-syntax v0.8.11
+   Compiling rustversion v1.0.23
+    Checking matchit v0.8.4
+   Compiling jobserver v0.1.35
+    Checking block-buffer v0.10.4
+    Checking crypto-common v0.1.7
+   Compiling ucd-trie v0.1.7
+    Checking digest v0.10.7
+   Compiling itertools v0.14.0
+    Checking allocator-api2 v0.2.21
+    Checking foldhash v0.2.0
+   Compiling cc v1.4.2
+    Checking sha1 v0.10.7
+    Checking errno v0.3.14
+    Checking mio v1.2.2
+    Checking socket2 v0.6.5
+    Checking signal-hook-registry v1.4.8
+    Checking getrandom v0.2.17
+    Checking hashbrown v0.16.1
+    Checking parking_lot v0.12.5
+   Compiling pest v2.8.8
+    Checking rand_core v0.9.5
+   Compiling crc32fast v1.5.0
+    Checking indexmap v2.14.0
+    Checking serde_path_to_error v0.1.20
+   Compiling ref-cast v1.0.26
+    Checking raw-cpuid v11.6.0
+   Compiling ahash v0.8.12
+   Compiling k8s-openapi v0.28.0
+    Checking jiff-core v0.1.0
+    Checking lazy_static v1.5.0
+   Compiling strsim v0.11.1
+   Compiling ident_case v1.0.1
+    Checking ordered-float v2.10.1
+    Checking dyn-clone v1.0.20
+    Checking arraydeque v0.5.1
+    Checking unicode-width v0.2.2
+   Compiling cmake v0.1.58
+    Checking anstyle v1.0.14
+   Compiling crossbeam-epoch v0.9.20
+    Checking granit-parser v0.0.7
+    Checking regex-automata v0.4.18
+    Checking annotate-snippets v0.12.16
+    Checking rapidhash v4.5.1
+    Checking encoding_rs_io v0.1.8
+    Checking nohash-hasher v0.2.0
+   Compiling pest_meta v2.8.8
+    Checking jiff v0.2.35
+    Checking metrics v0.24.6
+    Checking sharded-slab v0.1.7
+    Checking rand_xoshiro v0.7.0
+    Checking left-right v0.11.8
+    Checking pem v3.0.6
+   Compiling serde_derive_internals v0.30.0
+    Checking tracing-log v0.2.0
+    Checking secrecy v0.10.3
+    Checking thread_local v1.1.10
+   Compiling aws-lc-sys v0.44.0
+   Compiling ring v0.17.14
+   Compiling zstd-sys v2.0.16+zstd.1.5.7
+    Checking sketches-ddsketch v0.3.1
+    Checking nu-ansi-term v0.50.3
+    Checking hashbag v0.1.13
+   Compiling metrics-exporter-prometheus v0.18.3
+    Checking evmap v11.0.0
+   Compiling thiserror v1.0.69
+    Checking quanta v0.12.6
+   Compiling zstd-safe v7.2.4
+   Compiling rustix v1.1.4
+   Compiling cfg_aliases v0.1.1
+    Checking linux-raw-sys v0.12.1
+   Compiling nix v0.28.0
+    Checking http v0.2.12
+    Checking outref v0.5.2
+    Checking ppv-lite86 v0.2.21
+    Checking num-conv v0.2.2
+   Compiling unicase v2.9.0
+    Checking deranged v0.5.8
+    Checking serde-saphyr v0.0.29
+    Checking time-core v0.1.9
+    Checking rand_chacha v0.9.0
+    Checking powerfmt v0.2.0
+   Compiling cfg_aliases v0.2.2
+   Compiling synstructure v0.13.2
+   Compiling darling_core v0.23.0
+    Checking rand v0.9.5
+   Compiling pest_generator v2.8.8
+    Checking vsimd v0.8.0
+   Compiling tokio-macros v2.7.2
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.20
+   Compiling displaydoc v0.2.7
+   Compiling async-trait v0.1.92
+   Compiling ref-cast-impl v1.0.26
+    Checking regex v1.13.1
+   Compiling schemars_derive v1.2.2
+    Checking tokio v1.53.1
+    Checking matchers v0.2.0
+    Checking metrics-util v0.20.4
+    Checking time v0.3.55
+    Checking base64-simd v0.8.0
+    Checking http-body v0.4.6
+   Compiling nix v0.31.3
+   Compiling mime_guess v2.0.5
+    Checking num-integer v0.1.46
+    Checking bytes-utils v0.1.4
+    Checking pin-utils v0.1.0
+    Checking fastrand v2.5.0
+    Checking compression-core v0.4.32
+   Compiling getrandom v0.4.3
+    Checking rand_core v0.10.1
+    Checking simd-adler32 v0.3.10
+    Checking zlib-rs v0.6.7
+    Checking bumpalo v3.20.3
+   Compiling tracing-attributes v0.1.31
+   Compiling futures-macro v0.3.33
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling zerovec-derive v0.11.3
+   Compiling pin-project-internal v1.1.13
+    Checking tungstenite v0.29.0
+   Compiling prost-derive v0.14.4
+    Checking futures-util v0.3.33
+   Compiling derive_more-impl v2.1.1
+   Compiling pest_derive v2.8.8
+   Compiling utoipa-gen v5.5.0
+   Compiling thiserror-impl v1.0.69
+    Checking pin-project v1.1.13
+    Checking tracing v0.1.44
+    Checking flate2 v1.1.9
+    Checking zerofrom v0.1.8
+    Checking zopfli v0.8.3
+   Compiling darling_macro v0.23.0
+    Checking yoke v0.8.3
+    Checking jsonpath-rust v1.0.8
+    Checking opentelemetry v0.32.0
+    Checking zerovec v0.11.6
+    Checking zerotrie v0.2.4
+   Compiling darling v0.23.0
+    Checking tracing-subscriber v0.3.23
+    Checking derive_more v2.1.1
+    Checking xattr v1.6.1
+    Checking filetime v0.2.29
+    Checking serial2 v0.2.38
+    Checking downcast-rs v1.2.1
+    Checking same-file v1.0.6
+    Checking typed-path v0.12.3
+    Checking prost v0.14.4
+    Checking shell-words v1.1.1
+    Checking tinystr v0.8.3
+    Checking potential_utf v0.1.5
+    Checking icu_collections v2.2.0
+    Checking icu_locale_core v2.2.0
+    Checking prost-types v0.14.4
+    Checking filedescriptor v0.8.3
+    Checking walkdir v2.5.0
+    Checking tar v0.4.46
+    Checking serde_urlencoded v0.7.1
+    Checking schemars v1.2.2
+    Checking serde-value v0.7.0
+    Checking tracing-opentelemetry v0.33.0
+   Compiling kube-derive v4.2.0
+    Checking portable-pty v0.9.0
+    Checking icu_provider v2.2.0
+   Compiling aws-smithy-runtime-api-macros v1.1.0
+    Checking zip v8.6.0
+    Checking tower-http v0.7.0
+    Checking base64ct v1.8.3
+    Checking icu_properties v2.2.0
+    Checking icu_normalizer v2.2.0
+    Checking rand_core v0.6.4
+    Checking hybrid-array v0.4.14
+    Checking cmov v0.5.4
+    Checking const-oid v0.10.2
+    Checking pem-rfc7468 v0.7.0
+    Checking tokio-util v0.7.19
+    Checking http-body-util v0.1.4
+    Checking tokio-tungstenite v0.29.0
+    Checking futures-executor v0.3.33
+    Checking tokio-stream v0.1.19
+    Checking aws-smithy-async v1.3.0
+    Checking der v0.7.10
+    Checking futures v0.3.33
+    Checking ctutils v0.4.2
+    Checking axum-core v0.5.6
+    Checking ff v0.13.1
+    Checking base16ct v0.2.0
+    Checking cpufeatures v0.3.0
+    Checking group v0.13.0
+    Checking crypto-bigint v0.5.5
+    Checking hmac v0.12.1
+   Compiling semver v1.0.28
+    Checking signature v2.2.0
+    Checking crypto-common v0.2.2
+    Checking block-buffer v0.12.1
+    Checking rfc6979 v0.4.0
+    Checking opentelemetry_sdk v0.32.1
+    Checking sha2 v0.10.9
+   Compiling portable-atomic v1.15.0
+    Checking hex v0.4.3
+    Checking h2 v0.4.15
+    Checking tower v0.5.3
+    Checking aws-smithy-types v1.6.1
+   Compiling rustc_version v0.4.1
+    Checking idna_adapter v1.2.2
+    Checking hashbrown v0.14.5
+    Checking idna v1.1.0
+    Checking spin v0.10.1
+    Checking digest v0.11.3
+    Checking spki v0.7.3
+   Compiling aws-types v1.5.0
+    Checking crc-fast v1.10.0
+    Checking sha2 v0.11.0
+    Checking pkcs8 v0.10.2
+    Checking url v2.5.8
+    Checking hmac v0.13.0
+    Checking sec1 v0.7.3
+    Checking md-5 v0.11.0
+    Checking dashmap v6.2.1
+    Checking sha1 v0.11.0
+    Checking aws-smithy-runtime-api v1.14.0
+    Checking elliptic-curve v0.13.8
+    Checking aws-smithy-eventstream v0.61.1
+    Checking spinning_top v0.3.0
+    Checking nonempty v0.7.0
+    Checking futures-timer v3.0.4
+    Checking uuid v1.24.0
+    Checking web-time v1.1.0
+    Checking xmlparser v0.13.6
+    Checking nonzero_ext v0.3.0
+    Checking tower-http v0.6.11
+    Checking forwarded-header-value v0.1.1
+    Checking chacha20 v0.10.1
+    Checking arc-swap v1.9.2
+    Checking ecdsa v0.16.9
+    Checking primeorder v0.13.6
+    Checking lru v0.16.4
+    Checking regex-lite v0.1.9
+    Checking governor v0.10.4
+    Checking rand v0.10.2
+    Checking tempfile v3.27.0
+    Checking num_cpus v1.17.0
+    Checking deadpool-runtime v0.1.4
+    Checking assert-json-diff v2.0.2
+    Checking deadpool v0.12.3
+    Checking p256 v0.13.2
+    Checking aws-smithy-schema v0.2.0
+    Checking aws-smithy-http v0.64.0
+    Checking aws-credential-types v1.3.0
+    Checking aws-smithy-observability v0.3.0
+    Checking aws-sigv4 v1.5.1
+    Checking aws-smithy-json v0.63.0
+    Checking aws-smithy-xml v0.62.0
+    Checking aws-smithy-checksums v0.65.0
+    Checking utoipa v5.5.0
+    Checking zstd v0.13.3
+    Checking compression-codecs v0.4.38
+    Checking async-compression v0.4.43
+    Checking hyper v1.11.0
+    Checking hyper-util v0.1.20
+    Checking hyper-timeout v0.5.2
+    Checking axum v0.8.9
+    Checking reqwest v0.13.4
+    Checking wiremock v0.6.5
+    Checking opentelemetry-http v0.32.0
+    Checking tonic v0.14.6
+    Checking utoipa-scalar v0.3.0
+    Checking rustls-webpki v0.103.13
+    Checking kube-core v4.2.0
+    Checking tonic-prost v0.14.6
+    Checking tonic-types v0.14.6
+    Checking tower_governor v0.8.0
+    Checking opentelemetry-proto v0.32.0
+    Checking opentelemetry-otlp v0.32.0
+    Checking tokio-rustls v0.26.4
+    Checking rustls-platform-verifier v0.7.0
+    Checking hyper-rustls v0.27.9
+    Checking kube-client v4.2.0
+    Checking aws-smithy-http-client v1.2.0
+    Checking reqwest v0.12.28
+    Checking aws-smithy-runtime v1.12.1
+    Checking kube v4.2.0
+    Checking shared v0.1.0 (/tmp/pi-agent-aa9c0659-5395-42e-dfc85209/rust/shared)
+warning: item in documentation is missing backticks
+ --> shared/src/lib.rs:9:58
+  |
+9 | //! PR-A is intentionally representative: the full CRD / OpenAPI type sets and
+  |                                                          ^^^^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+  = note: `-W clippy::doc-markdown` implied by `-W clippy::pedantic`
+  = help: to override `-W clippy::pedantic` add `#[allow(clippy::doc_markdown)]`
+help: try
+  |
+9 - //! PR-A is intentionally representative: the full CRD / OpenAPI type sets and
+9 + //! PR-A is intentionally representative: the full CRD / `OpenAPI` type sets and
+  |
+
+warning: item in documentation is missing backticks
+   --> shared/src/config.rs:113:50
+    |
+113 |     /// Shared Bearer secret authenticating Open WebUI ↔ broker requests (env
+    |                                                  ^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+    |
+113 -     /// Shared Bearer secret authenticating Open WebUI ↔ broker requests (env
+113 +     /// Shared Bearer secret authenticating Open `WebUI` ↔ broker requests (env
+    |
+
+warning: possible broken doc link: broken across multiple lines
+   --> shared/src/config.rs:227:43
+    |
+227 |     /// `on`). When false the reaper uses [`NoopOffload`](../../broker/reaper
+    |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_broken_link
+    = note: `-W clippy::doc-broken-link` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::doc_broken_link)]`
+
+warning: you should put bare URLs between `<`/`>` or make a proper Markdown link
+   --> shared/src/config.rs:233:18
+    |
+233 |     /// default (https://s3.<region>.amazonaws.com). Set for MinIO/R2/Proxmox
+    |                  ^^^^^^^^^^ help: try: `<https://s3>`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+
+warning: item in documentation is missing backticks
+   --> shared/src/config.rs:268:30
+    |
+268 |     /// KMS/SSE backend (dev MinIO) (D12).
+    |                              ^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+    |
+268 -     /// KMS/SSE backend (dev MinIO) (D12).
+268 +     /// KMS/SSE backend (dev `MinIO`) (D12).
+    |
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> shared/src/config.rs:398:5
+    |
+398 |     pub fn from_env() -> Result<Self, ConfigError> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+    = note: `-W clippy::missing-errors-doc` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::missing_errors_doc)]`
+
+warning: called `map(<f>).unwrap_or(<a>)` on an `Option` value
+   --> shared/src/config.rs:446:33
+    |
+446 |               rate_limit_enabled: get("BROKER_RATE_LIMIT_ENABLED")
+    |  _________________________________^
+447 | |                 .map(|raw| parse_bool(&raw))
+448 | |                 .unwrap_or(true),
+    | |________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+    = note: `-W clippy::map-unwrap-or` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::map_unwrap_or)]`
+help: use `map_or(<a>, <f>)` instead
+    |
+447 -                 .map(|raw| parse_bool(&raw))
+448 -                 .unwrap_or(true),
+447 +                 .map_or(true, |raw| parse_bool(&raw)),
+    |
+
+warning: called `map(<f>).unwrap_or(false)` on an `Option` value
+   --> shared/src/config.rs:459:25
+    |
+459 |               s3_enabled: get("BROKER_S3_ENABLED")
+    |  _________________________^
+460 | |                 .map(|raw| parse_bool(&raw))
+461 | |                 .unwrap_or(false),
+    | |_________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: use `is_some_and(<f>)` instead
+    |
+460 -                 .map(|raw| parse_bool(&raw))
+461 -                 .unwrap_or(false),
+460 +                 .is_some_and(|raw| parse_bool(&raw)),
+    |
+
+warning: called `map(<f>).unwrap_or_else(<g>)` on an `Option` value
+   --> shared/src/config.rs:465:24
+    |
+465 |               s3_prefix: get("BROKER_S3_PREFIX")
+    |  ________________________^
+466 | |                 .map(|raw| trim_prefix(&raw))
+467 | |                 .unwrap_or_else(default_s3_prefix),
+    | |__________________________________________________^ help: try: `get("BROKER_S3_PREFIX").map_or_else(default_s3_prefix, |raw| trim_prefix(&raw))`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+
+warning: called `map(<f>).unwrap_or(<a>)` on an `Option` value
+   --> shared/src/config.rs:471:28
+    |
+471 |               s3_path_style: get("BROKER_S3_PATH_STYLE")
+    |  ____________________________^
+472 | |                 .map(|raw| parse_bool(&raw))
+473 | |                 .unwrap_or(true),
+    | |________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: use `map_or(<a>, <f>)` instead
+    |
+472 -                 .map(|raw| parse_bool(&raw))
+473 -                 .unwrap_or(true),
+472 +                 .map_or(true, |raw| parse_bool(&raw)),
+    |
+
+warning: docs for function which may panic missing `# Panics` section
+  --> shared/src/metrics.rs:44:1
+   |
+44 | pub fn install() -> PrometheusHandle {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: first possible panic found here
+  --> shared/src/metrics.rs:47:13
+   |
+47 | /             PrometheusBuilder::new()
+48 | |                 .set_buckets(DEFAULT_HTTP_BUCKETS)
+49 | |                 .expect("default histogram buckets are finite + sorted")
+50 | |                 .install_recorder()
+51 | |                 .expect("install Prometheus exporter recorder")
+   | |_______________________________________________________________^
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+   = note: `-W clippy::missing-panics-doc` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::missing_panics_doc)]`
+
+warning: this function could have a `#[must_use]` attribute
+  --> shared/src/metrics.rs:58:8
+   |
+58 | pub fn gather() -> String {
+   |        ^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#must_use_candidate
+   = note: `-W clippy::must-use-candidate` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::must_use_candidate)]`
+help: add the attribute
+   |
+58 + #[must_use]
+59 | pub fn gather() -> String {
+   |
+
+warning: item in documentation is missing backticks
+ --> shared/src/openapi.rs:1:17
+  |
+1 | //! Cross-crate OpenAPI helpers shared by the broker and runtime crates (D10).
+  |                 ^^^^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+  |
+1 - //! Cross-crate OpenAPI helpers shared by the broker and runtime crates (D10).
+1 + //! Cross-crate `OpenAPI` helpers shared by the broker and runtime crates (D10).
+  |
+
+warning: item in documentation is missing backticks
+  --> shared/src/openapi.rs:17:75
+   |
+17 | /// per-session key — both ride the same `HTTP Bearer` scheme name so the OpenAPI 🔒
+   |                                                                           ^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+   |
+17 - /// per-session key — both ride the same `HTTP Bearer` scheme name so the OpenAPI 🔒
+17 + /// per-session key — both ride the same `HTTP Bearer` scheme name so the `OpenAPI` 🔒
+   |
+
+warning: item in documentation is missing backticks
+  --> shared/src/openapi.rs:43:57
+   |
+43 | /// error response `body` across the broker and runtime OpenAPI surfaces.
+   |                                                         ^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+   |
+43 - /// error response `body` across the broker and runtime OpenAPI surfaces.
+43 + /// error response `body` across the broker and runtime `OpenAPI` surfaces.
+   |
+
+warning: item in documentation is missing backticks
+  --> shared/src/telemetry.rs:55:69
+   |
+55 | /// Returns the provider (so the caller can flush on shutdown) when OTel is
+   |                                                                     ^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+   |
+55 - /// Returns the provider (so the caller can flush on shutdown) when OTel is
+55 + /// Returns the provider (so the caller can flush on shutdown) when `OTel` is
+   |
+
+warning: called `map(<f>).unwrap_or_else(<g>)` on an `Option` value
+   --> shared/src/telemetry.rs:108:20
+    |
+108 |       let protocol = std::env::var(OTEL_PROTOCOL_ENV)
+    |  ____________________^
+109 | |         .ok()
+110 | |         .filter(|s| !s.trim().is_empty())
+111 | |         .map(|s| s.trim().to_ascii_lowercase())
+112 | |         .unwrap_or_else(|| DEFAULT_OTLP_PROTOCOL.to_string());
+    | |_____________________________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: try
+    |
+108 ~     let protocol = std::env::var(OTEL_PROTOCOL_ENV)
+109 +         .ok()
+110 ~         .filter(|s| !s.trim().is_empty()).map_or_else(|| DEFAULT_OTLP_PROTOCOL.to_string(), |s| s.trim().to_ascii_lowercase());
+    |
+
+warning: `shared` (lib) generated 17 warnings (run `cargo clippy --fix --lib -p shared -- ` to apply 14 suggestions)
+    Checking runtime v0.1.0 (/tmp/pi-agent-aa9c0659-5395-42e-dfc85209/rust/runtime)
+warning: item in documentation is missing backticks
+ --> shared/tests/telemetry_span_emission.rs:1:5
+  |
+1 | //! OTel span-emission contract (issue #74 Q3 → "support both"; the
+  |     ^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+  = note: `-W clippy::doc-markdown` implied by `-W clippy::pedantic`
+  = help: to override `-W clippy::pedantic` add `#[allow(clippy::doc_markdown)]`
+help: try
+  |
+1 - //! OTel span-emission contract (issue #74 Q3 → "support both"; the
+1 + //! `OTel` span-emission contract (issue #74 Q3 → "support both"; the
+  |
+
+warning: item in documentation is missing backticks
+ --> shared/tests/telemetry_span_emission.rs:4:17
+  |
+4 | //! Asserts the OTel layer actually **produces spans**: spans emitted via
+  |                 ^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+  |
+4 - //! Asserts the OTel layer actually **produces spans**: spans emitted via
+4 + //! Asserts the `OTel` layer actually **produces spans**: spans emitted via
+  |
+
+warning: item in documentation is missing backticks
+  --> shared/tests/telemetry_span_emission.rs:20:54
+   |
+20 | /// Spans emitted through `tracing` are bridged into OTel and exported; the
+   |                                                      ^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+   |
+20 - /// Spans emitted through `tracing` are bridged into OTel and exported; the
+20 + /// Spans emitted through `tracing` are bridged into `OTel` and exported; the
+   |
+
+warning: item in documentation is missing backticks
+ --> shared/tests/telemetry_noop.rs:1:5
+  |
+1 | //! OTel no-op-when-unset contract (issue #74 Q3 → "support both"; the
+  |     ^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+  = note: `-W clippy::doc-markdown` implied by `-W clippy::pedantic`
+  = help: to override `-W clippy::pedantic` add `#[allow(clippy::doc_markdown)]`
+help: try
+  |
+1 - //! OTel no-op-when-unset contract (issue #74 Q3 → "support both"; the
+1 + //! `OTel` no-op-when-unset contract (issue #74 Q3 → "support both"; the
+  |
+
+    Checking aws-runtime v1.9.1
+warning: `shared` (test "telemetry_span_emission") generated 3 warnings (run `cargo clippy --fix --test "telemetry_span_emission" -p shared -- ` to apply 3 suggestions)
+warning: `shared` (test "telemetry_noop") generated 1 warning (run `cargo clippy --fix --test "telemetry_noop" -p shared -- ` to apply 1 suggestion)
+warning: `shared` (lib test) generated 17 warnings (17 duplicates)
+warning: 5 bindings with single-character names in scope
+   --> runtime/src/files/search.rs:264:9
+    |
+264 |     let n = chars.len();
+    |         ^
+265 |     let mut i = 0usize;
+    |             ^
+...
+268 |         let c = chars[i];
+    |             ^
+...
+274 |                 let mut j = i;
+    |                         ^
+...
+289 |                     let mut s = String::new();
+    |                             ^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#many_single_char_names
+    = note: `-W clippy::many-single-char-names` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::many_single_char_names)]`
+
+warning: unnested or-patterns
+   --> runtime/src/terminals.rs:499:17
+    |
+499 |                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#unnested_or_patterns
+    = note: `-W clippy::unnested-or-patterns` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::unnested_or_patterns)]`
+help: nest the patterns
+    |
+499 -                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+499 +                 Some(Ok(Message::Close(_)) | Err(_)) | None => break,
+    |
+
+    Checking aws-sdk-s3 v1.141.0
+warning: docs for function which may panic missing `# Panics` section
+   --> runtime/src/auth.rs:103:5
+    |
+103 |     pub fn load(&self) -> String {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> runtime/src/auth.rs:104:25
+    |
+104 |         let mut cache = self.cache.lock().expect("key cache mutex poisoned");
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+    = note: `-W clippy::missing-panics-doc` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::missing_panics_doc)]`
+
+warning: docs for function which may panic missing `# Panics` section
+   --> runtime/src/auth.rs:126:5
+    |
+126 |     pub fn invalidate(&self) {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> runtime/src/auth.rs:127:25
+    |
+127 |         let mut cache = self.cache.lock().expect("key cache mutex poisoned");
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/auth.rs:132:5
+    |
+132 |     pub fn validate(&self) -> Result<(), BootError> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+    = note: `-W clippy::missing-errors-doc` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::missing_errors_doc)]`
+
+warning: this method could have a `#[must_use]` attribute
+  --> runtime/src/config.rs:79:12
+   |
+79 |     pub fn from_env() -> Self {
+   |            ^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#must_use_candidate
+   = note: `-W clippy::must-use-candidate` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::must_use_candidate)]`
+help: add the attribute
+   |
+79 ~     #[must_use]
+80 ~     pub fn from_env() -> Self {
+   |
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> runtime/src/execute.rs:79:1
+   |
+79 | / pub async fn execute(
+80 | |     _auth: Authed,
+81 | |     State(state): State<AppState>,
+82 | |     headers: HeaderMap,
+83 | |     Json(req): Json<ExecuteRequest>,
+84 | | ) -> Result<Json<ExecuteResponse>, ApiError> {
+   | |____________________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: casting `u32` to `i32` may wrap around the value
+   --> runtime/src/execute.rs:141:15
+    |
+141 |     let pid = child.id().unwrap_or(0) as i32;
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, use `cast_signed()` instead: `child.id().unwrap_or(0).cast_signed()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_wrap
+    = note: `-W clippy::cast-possible-wrap` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_possible_wrap)]`
+
+warning: you seem to be trying to use `match` for destructuring a single pattern. Consider using `if let`
+   --> runtime/src/execute.rs:151:5
+    |
+151 | /     match tokio::time::timeout(Duration::from_secs(timeout_secs), read).await {
+152 | |         Ok((out_bytes, err_bytes)) => {
+153 | |             let status = child
+154 | |                 .wait()
+...   |
+186 | |     }
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#single_match_else
+    = note: `-W clippy::single-match-else` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::single_match_else)]`
+help: try
+    |
+151 ~     if let Ok((out_bytes, err_bytes)) = tokio::time::timeout(Duration::from_secs(timeout_secs), read).await {
+152 +         let status = child
+153 +             .wait()
+154 +             .await
+155 +             .map_err(|e| ApiError::Internal(format!("failed to reap command: {e}")))?;
+156 +         let stdout = out_bytes
+157 +             .map(|b| String::from_utf8_lossy(&b).into_owned())
+158 +             .unwrap_or_default();
+159 +         let stderr = err_bytes
+160 +             .map(|b| String::from_utf8_lossy(&b).into_owned())
+161 +             .unwrap_or_default();
+162 +         Ok(ExecuteResponse {
+163 +             stdout: cap(&stdout, max),
+164 +             stderr: cap(&stderr, max),
+165 +             exit_code: status.code().unwrap_or(0),
+166 +             timed_out: false,
+167 +         })
+168 +     } else {
+169 +         // D9: this run hit the /execute timeout.
+170 +         metrics::counter!(EXECUTE_TIMEOUTS_TOTAL).increment(1);
+171 +         // Timeout: SIGKILL the whole process group, reap the direct child.
+172 +         if pid > 0 {
+173 +             // Best-effort; ESRCH (already gone) is ignored.
+174 +             let _ = killpg(Pid::from_raw(pid), Signal::SIGKILL);
+175 +         }
+176 +         let _ = child.wait().await;
+177 +         Ok(ExecuteResponse {
+178 +             stdout: String::new(),
+179 +             stderr: String::new(),
+180 +             exit_code: 124,
+181 +             timed_out: true,
+182 +         })
+183 +     }
+    |
+
+warning: called `map(<f>).unwrap_or(<a>)` on an `Option` value
+  --> runtime/src/files/archive.rs:57:13
+   |
+57 |     let d = directory.map(str::trim).unwrap_or("");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+   = note: `-W clippy::map-unwrap-or` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::map_unwrap_or)]`
+help: use `map_or(<a>, <f>)` instead
+   |
+57 -     let d = directory.map(str::trim).unwrap_or("");
+57 +     let d = directory.map_or("", str::trim);
+   |
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> runtime/src/files/archive.rs:81:1
+   |
+81 | / pub async fn upload(
+82 | |     _auth: Authed,
+83 | |     State(state): State<AppState>,
+84 | |     headers: HeaderMap,
+85 | |     Query(q): Query<UploadQuery>,
+86 | |     mut multipart: Multipart,
+87 | | ) -> Result<Json<serde_json::Value>, ApiError> {
+   | |______________________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/files/archive.rs:145:1
+    |
+145 | / pub async fn tool_upload(
+146 | |     _auth: Authed,
+147 | |     State(state): State<AppState>,
+148 | |     headers: HeaderMap,
+149 | |     mut multipart: Multipart,
+150 | | ) -> Result<Json<serde_json::Value>, ApiError> {
+    | |______________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function which may panic missing `# Panics` section
+   --> runtime/src/files/archive.rs:204:1
+    |
+204 | / pub async fn archive(
+205 | |     _auth: Authed,
+206 | |     State(state): State<AppState>,
+207 | |     headers: HeaderMap,
+208 | |     Json(req): Json<ArchiveRequest>,
+209 | | ) -> Result<Response, ApiError> {
+    | |_______________________________^
+    |
+note: first possible panic found here
+   --> runtime/src/files/archive.rs:244:9
+    |
+244 |         "application/zip".parse().expect("static header"),
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/files/archive.rs:204:1
+    |
+204 | / pub async fn archive(
+205 | |     _auth: Authed,
+206 | |     State(state): State<AppState>,
+207 | |     headers: HeaderMap,
+208 | |     Json(req): Json<ArchiveRequest>,
+209 | | ) -> Result<Response, ApiError> {
+    | |_______________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: redundant closure
+   --> runtime/src/files/archive.rs:289:25
+    |
+289 |     entries.sort_by_key(|e| e.file_name());
+    |                         ^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `std::fs::DirEntry::file_name`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#redundant_closure_for_method_calls
+    = note: `-W clippy::redundant-closure-for-method-calls` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::redundant_closure_for_method_calls)]`
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> runtime/src/files/io.rs:45:1
+   |
+45 | / pub async fn get_cwd(
+46 | |     _auth: Authed,
+47 | |     State(state): State<AppState>,
+48 | |     headers: HeaderMap,
+49 | | ) -> Result<Json<serde_json::Value>, ApiError> {
+   | |______________________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> runtime/src/files/io.rs:75:1
+   |
+75 | / pub async fn set_cwd(
+76 | |     _auth: Authed,
+77 | |     State(state): State<AppState>,
+78 | |     headers: HeaderMap,
+79 | |     Json(req): Json<CwdRequest>,
+80 | | ) -> Result<Json<serde_json::Value>, ApiError> {
+   | |______________________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/files/io.rs:110:1
+    |
+110 | / pub async fn list_dir(
+111 | |     _auth: Authed,
+112 | |     State(state): State<AppState>,
+113 | |     headers: HeaderMap,
+114 | |     Query(q): Query<ListQuery>,
+115 | | ) -> Result<Json<ListResponse>, ApiError> {
+    | |_________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: redundant closure
+   --> runtime/src/files/io.rs:132:21
+    |
+132 |         .filter_map(|e| e.ok())
+    |                     ^^^^^^^^^^ help: replace the closure with the method itself: `std::result::Result::ok`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#redundant_closure_for_method_calls
+
+warning: called `map(<f>).unwrap_or(false)` on a `Result` value
+   --> runtime/src/files/io.rs:158:9
+    |
+158 |         std::fs::metadata(p).map(|m| m.is_dir()).unwrap_or(false)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: use `is_ok_and(<f>)` instead
+    |
+158 -         std::fs::metadata(p).map(|m| m.is_dir()).unwrap_or(false)
+158 +         std::fs::metadata(p).is_ok_and(|m| m.is_dir())
+    |
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/files/io.rs:191:1
+    |
+191 | / pub async fn read_file(
+192 | |     _auth: Authed,
+193 | |     State(state): State<AppState>,
+194 | |     headers: HeaderMap,
+195 | |     Query(q): Query<PathQuery>,
+196 | | ) -> Result<Response, ApiError> {
+    | |_______________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/files/io.rs:254:1
+    |
+254 | / pub async fn write_file(
+255 | |     _auth: Authed,
+256 | |     State(state): State<AppState>,
+257 | |     headers: HeaderMap,
+258 | |     Json(req): Json<WriteRequest>,
+259 | | ) -> Result<Json<serde_json::Value>, ApiError> {
+    | |______________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/files/io.rs:302:1
+    |
+302 | / pub async fn mkdir(
+303 | |     _auth: Authed,
+304 | |     State(state): State<AppState>,
+305 | |     headers: HeaderMap,
+306 | |     Json(req): Json<PathBody>,
+307 | | ) -> Result<Json<serde_json::Value>, ApiError> {
+    | |______________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/files/io.rs:341:1
+    |
+341 | / pub async fn move_entry(
+342 | |     _auth: Authed,
+343 | |     State(state): State<AppState>,
+344 | |     headers: HeaderMap,
+345 | |     Json(req): Json<MoveRequest>,
+346 | | ) -> Result<Json<serde_json::Value>, ApiError> {
+    | |______________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/files/io.rs:377:1
+    |
+377 | / pub async fn delete_entry(
+378 | |     _auth: Authed,
+379 | |     State(state): State<AppState>,
+380 | |     headers: HeaderMap,
+381 | |     Query(q): Query<PathQuery>,
+382 | | ) -> Result<Json<serde_json::Value>, ApiError> {
+    | |______________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: this could be rewritten as `let...else`
+   --> runtime/src/files/io.rs:385:5
+    |
+385 | /     let meta = match std::fs::symlink_metadata(&full) {
+386 | |         Ok(m) => m,
+387 | |         Err(_) => return Err(ApiError::NotFound("Path not found".to_string())),
+388 | |     };
+    | |______^ help: consider writing: `let Ok(meta) = std::fs::symlink_metadata(&full) else { return Err(ApiError::NotFound("Path not found".to_string())) };`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#manual_let_else
+    = note: `-W clippy::manual-let-else` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::manual_let_else)]`
+
+warning: called `map(<f>).unwrap_or(false)` on a `Result` value
+   --> runtime/src/files/io.rs:390:9
+    |
+390 | /         std::fs::metadata(&full)
+391 | |             .map(|m| m.is_dir())
+392 | |             .unwrap_or(false)
+    | |_____________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: use `is_ok_and(<f>)` instead
+    |
+391 -             .map(|m| m.is_dir())
+392 -             .unwrap_or(false)
+391 +             .is_ok_and(|m| m.is_dir())
+    |
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/files/io.rs:424:1
+    |
+424 | / pub async fn view_file(
+425 | |     _auth: Authed,
+426 | |     State(state): State<AppState>,
+427 | |     headers: HeaderMap,
+428 | |     Query(q): Query<PathQuery>,
+429 | | ) -> Result<Response, ApiError> {
+    | |_______________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/files/io.rs:469:1
+    |
+469 | / pub async fn replace(
+470 | |     _auth: Authed,
+471 | |     State(state): State<AppState>,
+472 | |     headers: HeaderMap,
+473 | |     Json(req): Json<ReplaceRequest>,
+474 | | ) -> Result<Json<serde_json::Value>, ApiError> {
+    | |______________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> runtime/src/files/search.rs:40:1
+   |
+40 | / pub async fn grep(
+41 | |     _auth: Authed,
+42 | |     State(state): State<AppState>,
+43 | |     headers: HeaderMap,
+44 | |     Query(q): Query<GrepQuery>,
+45 | | ) -> Result<Json<serde_json::Value>, ApiError> {
+   | |______________________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: called `map(<f>).unwrap_or(false)` on a `Result` value
+   --> runtime/src/files/search.rs:122:22
+    |
+122 |           let is_dir = std::fs::metadata(&path)
+    |  ______________________^
+123 | |             .map(|m| m.is_dir())
+124 | |             .unwrap_or(false);
+    | |_____________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: use `is_ok_and(<f>)` instead
+    |
+123 -             .map(|m| m.is_dir())
+124 -             .unwrap_or(false);
+123 +             .is_ok_and(|m| m.is_dir());
+    |
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/files/search.rs:163:1
+    |
+163 | / pub async fn glob_search(
+164 | |     _auth: Authed,
+165 | |     State(state): State<AppState>,
+166 | |     headers: HeaderMap,
+167 | |     Query(q): Query<GlobQuery>,
+168 | | ) -> Result<Json<serde_json::Value>, ApiError> {
+    | |______________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: item in documentation is missing backticks
+   --> runtime/src/files/search.rs:203:65
+    |
+203 | /// Walk `dir` like os.walk, pushing matching entries (relpath, is_dir, size, mtime).
+    |                                                                 ^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+    = note: `-W clippy::doc-markdown` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::doc_markdown)]`
+help: try
+    |
+203 - /// Walk `dir` like os.walk, pushing matching entries (relpath, is_dir, size, mtime).
+203 + /// Walk `dir` like os.walk, pushing matching entries (relpath, `is_dir`, size, mtime).
+    |
+
+warning: called `map(<f>).unwrap_or(false)` on a `Result` value
+   --> runtime/src/files/search.rs:217:22
+    |
+217 |           let is_dir = std::fs::metadata(&path)
+    |  ______________________^
+218 | |             .map(|m| m.is_dir())
+219 | |             .unwrap_or(false);
+    | |_____________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: use `is_ok_and(<f>)` instead
+    |
+218 -             .map(|m| m.is_dir())
+219 -             .unwrap_or(false);
+218 +             .is_ok_and(|m| m.is_dir());
+    |
+
+warning: called `map(<f>).unwrap_or(false)` on a `Result` value
+   --> runtime/src/files/search.rs:255:5
+    |
+255 | /     regex::Regex::new(&re_src)
+256 | |         .map(|re| re.is_match(name))
+257 | |         .unwrap_or(false)
+    | |_________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: use `is_ok_and(<f>)` instead
+    |
+256 -         .map(|re| re.is_match(name))
+257 -         .unwrap_or(false)
+256 +         .is_ok_and(|re| re.is_match(name))
+    |
+
+warning: this function's return value is unnecessarily wrapped by `Option`
+   --> runtime/src/files/search.rs:262:1
+    |
+262 | fn fnmatch_translate(pat: &str) -> Option<String> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#unnecessary_wraps
+    = note: `-W clippy::unnecessary-wraps` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::unnecessary_wraps)]`
+help: remove `Option` from the return type...
+    |
+262 - fn fnmatch_translate(pat: &str) -> Option<String> {
+262 + fn fnmatch_translate(pat: &str) -> std::string::String {
+    |
+help: ...and then remove the surrounding `Some()` from returning expressions
+    |
+320 -     Some(format!("^{res}$"))
+320 +     format!("^{res}$")
+    |
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> runtime/src/files/tools.rs:48:1
+   |
+48 | / pub async fn tool_download(
+49 | |     _auth: Authed,
+50 | |     State(state): State<AppState>,
+51 | |     headers: HeaderMap,
+52 | |     axum::extract::Path(file_path): axum::extract::Path<String>,
+53 | | ) -> Result<Response, ApiError> {
+   | |_______________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> runtime/src/files/tools.rs:78:1
+   |
+78 | / pub async fn tool_list(
+79 | |     _auth: Authed,
+80 | |     State(state): State<AppState>,
+81 | |     headers: HeaderMap,
+82 | |     axum::extract::Path(file_path): axum::extract::Path<String>,
+83 | | ) -> Result<Json<serde_json::Value>, ApiError> {
+   | |______________________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/files/tools.rs:102:1
+    |
+102 | / pub async fn tool_list_root(
+103 | |     _auth: Authed,
+104 | |     State(state): State<AppState>,
+105 | |     headers: HeaderMap,
+106 | | ) -> Result<Json<serde_json::Value>, ApiError> {
+    | |______________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: this `continue` expression is redundant
+   --> runtime/src/files/tools.rs:141:23
+    |
+141 |             Err(_) => continue,
+    |                       ^^^^^^^^
+    |
+    = help: consider dropping the `continue` expression
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#needless_continue
+    = note: `-W clippy::needless-continue` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::needless_continue)]`
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/files/tools.rs:163:1
+    |
+163 | / pub async fn tool_exists(
+164 | |     _auth: Authed,
+165 | |     State(state): State<AppState>,
+166 | |     headers: HeaderMap,
+167 | |     axum::extract::Path(file_path): axum::extract::Path<String>,
+168 | | ) -> Result<Json<serde_json::Value>, ApiError> {
+    | |______________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: called `map(<f>).unwrap_or(<a>)` on an `Option` value
+  --> runtime/src/files/mod.rs:50:5
+   |
+50 | /     meta.modified()
+51 | |         .ok()
+52 | |         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+53 | |         .map(|d| d.as_secs_f64())
+54 | |         .unwrap_or(0.0)
+   | |_______________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: use `map_or(<a>, <f>)` instead
+   |
+53 -         .map(|d| d.as_secs_f64())
+54 -         .unwrap_or(0.0)
+53 +         .map_or(0.0, |d| d.as_secs_f64())
+   |
+
+warning: item in documentation is missing backticks
+ --> runtime/src/openapi.rs:1:22
+  |
+1 | //! utoipa-generated OpenAPI document for the runtime's tool surface (D10).
+  |                      ^^^^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+  |
+1 - //! utoipa-generated OpenAPI document for the runtime's tool surface (D10).
+1 + //! utoipa-generated `OpenAPI` document for the runtime's tool surface (D10).
+  |
+
+warning: item in documentation is missing backticks
+  --> runtime/src/openapi.rs:27:30
+   |
+27 | /// The runtime tool-surface OpenAPI document (merged into the broker's).
+   |                              ^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+   |
+27 - /// The runtime tool-surface OpenAPI document (merged into the broker's).
+27 + /// The runtime tool-surface `OpenAPI` document (merged into the broker's).
+   |
+
+warning: item in documentation is missing backticks
+  --> runtime/src/openapi.rs:75:36
+   |
+75 | /// Build the runtime tool-surface OpenAPI document (consumed by the broker's
+   |                                    ^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+   |
+75 - /// Build the runtime tool-surface OpenAPI document (consumed by the broker's
+75 + /// Build the runtime tool-surface `OpenAPI` document (consumed by the broker's
+   |
+
+warning: these match arms have identical bodies
+  --> runtime/src/safe_path.rs:69:13
+   |
+69 |             Component::CurDir => {}
+   |             ^^^^^^^^^^^^^^^^^^^^^^^
+...
+73 |             Component::Prefix(_) => {}
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: if this is unintentional make the arms return different values
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#match_same_arms
+   = note: `-W clippy::match-same-arms` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::match_same_arms)]`
+help: otherwise merge the patterns into a single arm
+   |
+69 ~             Component::CurDir | Component::Prefix(_) => {}
+70 |             Component::ParentDir => {
+71 |                 result.pop();
+72 |             }
+73 ~             Component::Normal(name) => {
+   |
+
+warning: called `map(<f>).unwrap_or_else(<g>)` on an `Option` value
+  --> runtime/src/safe_path.rs:87:25
+   |
+87 | /                         result
+88 | |                             .parent()
+89 | |                             .map(Path::to_path_buf)
+90 | |                             .unwrap_or_else(|| PathBuf::from("/"))
+   | |__________________________________________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: try
+   |
+87 ~                         result
+88 +                             .parent().map_or_else(|| PathBuf::from("/"), Path::to_path_buf)
+   |
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/safe_path.rs:122:1
+    |
+122 | pub fn safe_path(rel: &str, base: &Path) -> Result<PathBuf, ApiError> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/safe_path.rs:143:1
+    |
+143 | pub fn request_base(workdir: &Path, subdir: Option<&str>) -> Result<PathBuf, ApiError> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/safe_path.rs:247:1
+    |
+247 | pub fn open_read(resolved: &Path, base: &Path) -> Result<File, ApiError> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/safe_path.rs:257:1
+    |
+257 | / pub fn open_write(
+258 | |     resolved: &Path,
+259 | |     base: &Path,
+260 | |     create: bool,
+261 | |     truncate: bool,
+262 | | ) -> Result<File, ApiError> {
+    | |___________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/snapshot.rs:108:1
+    |
+108 | pub async fn snapshot(_auth: Authed, State(state): State<AppState>) -> Result<Response, ApiError> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/snapshot.rs:252:1
+    |
+252 | / pub async fn restore(
+253 | |     _auth: Authed,
+254 | |     State(state): State<AppState>,
+255 | |     body: Body,
+256 | | ) -> Result<Json<RestoreResponse>, ApiError> {
+    | |____________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: this could be rewritten as `let...else`
+   --> runtime/src/snapshot.rs:312:9
+    |
+312 | /         let chunk = match frame.into_data() {
+313 | |             Ok(b) => b,
+314 | |             Err(_) => continue, // trailers frame — ignore
+315 | |         };
+    | |__________^ help: consider writing: `let Ok(chunk) = frame.into_data() else { continue };`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#manual_let_else
+
+warning: redundant closure
+   --> runtime/src/snapshot.rs:395:37
+    |
+395 |             header.link_name()?.map(|cow| cow.into_owned())
+    |                                     ^^^^^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `std::borrow::Cow::into_owned`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#redundant_closure_for_method_calls
+
+warning: this method could have a `#[must_use]` attribute
+  --> runtime/src/terminals.rs:92:12
+   |
+92 |     pub fn new() -> Self {
+   |            ^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#must_use_candidate
+help: add the attribute
+   |
+92 ~     #[must_use]
+93 ~     pub fn new() -> Self {
+   |
+
+warning: casting `u32` to `i32` may wrap around the value
+   --> runtime/src/terminals.rs:112:38
+    |
+112 |         let _ = killpg(Pid::from_raw(self.pid as i32), Signal::SIGKILL);
+    |                                      ^^^^^^^^^^^^^^^ help: if this is intentional, use `cast_signed()` instead: `self.pid.cast_signed()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_wrap
+
+warning: casting `u32` to `i32` may wrap around the value
+   --> runtime/src/terminals.rs:155:34
+    |
+155 |     let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
+    |                                  ^^^^^^^^^^ help: if this is intentional, use `cast_signed()` instead: `pid.cast_signed()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_wrap
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/terminals.rs:184:1
+    |
+184 | / pub async fn create_terminal(
+185 | |     _auth: Authed,
+186 | |     State(state): State<AppState>,
+187 | |     headers: HeaderMap,
+188 | | ) -> Result<Json<CreateResponse>, ApiError> {
+    | |___________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: casting `usize` to `u32` may truncate the value on targets with 64-bit wide pointers
+   --> runtime/src/terminals.rs:217:12
+    |
+217 |         if (map.len() as u32) >= cap {
+    |            ^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_truncation
+    = note: `-W clippy::cast-possible-truncation` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_possible_truncation)]`
+help: ... or use `try_from` and handle the error accordingly
+    |
+217 -         if (map.len() as u32) >= cap {
+217 +         if u32::try_from(map.len()) >= cap {
+    |
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> runtime/src/terminals.rs:300:1
+    |
+300 | / pub async fn list_terminals(
+301 | |     _auth: Authed,
+302 | |     State(state): State<AppState>,
+303 | | ) -> Result<Json<Vec<TermInfo>>, ApiError> {
+    | |__________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: this could be rewritten as `let...else`
+   --> runtime/src/terminals.rs:441:5
+    |
+441 | /     let (writer, reader) = match pair {
+442 | |         Some(p) => p,
+443 | |         None => {
+444 | |             close_unknown(&mut socket).await;
+...   |
+447 | |     };
+    | |______^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#manual_let_else
+help: consider writing
+    |
+441 ~     let Some((writer, reader)) = pair else {
+442 +             close_unknown(&mut socket).await;
+443 +             return;
+444 +         };
+    |
+
+warning: you seem to be trying to use `match` for destructuring a single pattern. Consider using `if let`
+   --> runtime/src/terminals.rs:441:28
+    |
+441 |       let (writer, reader) = match pair {
+    |  ____________________________^
+442 | |         Some(p) => p,
+443 | |         None => {
+444 | |             close_unknown(&mut socket).await;
+...   |
+447 | |     };
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#single_match_else
+help: try
+    |
+441 ~     let (writer, reader) = if let Some(p) = pair { p } else {
+442 +         close_unknown(&mut socket).await;
+443 +         return;
+444 ~     };
+    |
+
+warning: casting `u64` to `u16` may truncate the value
+   --> runtime/src/terminals.rs:558:20
+    |
+558 |           let rows = payload
+    |  ____________________^
+559 | |             .get("rows")
+560 | |             .and_then(|v| v.as_u64())
+561 | |             .unwrap_or(24)
+562 | |             .clamp(1, u16::MAX as u64) as u16;
+    | |_____________________________________________^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+558 ~         let rows = u16::try_from(payload
+559 +             .get("rows")
+560 +             .and_then(|v| v.as_u64())
+561 +             .unwrap_or(24)
+562 ~             .clamp(1, u16::MAX as u64));
+    |
+
+warning: redundant closure
+   --> runtime/src/terminals.rs:560:23
+    |
+560 |             .and_then(|v| v.as_u64())
+    |                       ^^^^^^^^^^^^^^ help: replace the closure with the method itself: `serde_json::Value::as_u64`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#redundant_closure_for_method_calls
+
+warning: casts from `u16` to `u64` can be expressed infallibly using `From`
+   --> runtime/src/terminals.rs:562:23
+    |
+562 |             .clamp(1, u16::MAX as u64) as u16;
+    |                       ^^^^^^^^^^^^^^^
+    |
+    = help: an `as` cast can become silently lossy if the types change in the future
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_lossless
+    = note: `-W clippy::cast-lossless` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_lossless)]`
+help: use `u64::from` instead
+    |
+562 -             .clamp(1, u16::MAX as u64) as u16;
+562 +             .clamp(1, u64::from(u16::MAX)) as u16;
+    |
+
+warning: casting `u64` to `u16` may truncate the value
+   --> runtime/src/terminals.rs:563:20
+    |
+563 |           let cols = payload
+    |  ____________________^
+564 | |             .get("cols")
+565 | |             .and_then(|v| v.as_u64())
+566 | |             .unwrap_or(80)
+567 | |             .clamp(1, u16::MAX as u64) as u16;
+    | |_____________________________________________^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+563 ~         let cols = u16::try_from(payload
+564 +             .get("cols")
+565 +             .and_then(|v| v.as_u64())
+566 +             .unwrap_or(80)
+567 ~             .clamp(1, u16::MAX as u64));
+    |
+
+warning: redundant closure
+   --> runtime/src/terminals.rs:565:23
+    |
+565 |             .and_then(|v| v.as_u64())
+    |                       ^^^^^^^^^^^^^^ help: replace the closure with the method itself: `serde_json::Value::as_u64`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#redundant_closure_for_method_calls
+
+warning: casts from `u16` to `u64` can be expressed infallibly using `From`
+   --> runtime/src/terminals.rs:567:23
+    |
+567 |             .clamp(1, u16::MAX as u64) as u16;
+    |                       ^^^^^^^^^^^^^^^
+    |
+    = help: an `as` cast can become silently lossy if the types change in the future
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_lossless
+help: use `u64::from` instead
+    |
+567 -             .clamp(1, u16::MAX as u64) as u16;
+567 +             .clamp(1, u64::from(u16::MAX)) as u16;
+    |
+
+warning: called `map(<f>).unwrap_or(<a>)` on a `Result` value
+   --> runtime/src/terminals.rs:609:13
+    |
+609 |       let t = SystemTime::now()
+    |  _____________^
+610 | |         .duration_since(SystemTime::UNIX_EPOCH)
+611 | |         .map(|d| d.as_nanos() as u64)
+612 | |         .unwrap_or(0);
+    | |_____________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: use `map_or(<a>, <f>)` instead
+    |
+611 -         .map(|d| d.as_nanos() as u64)
+612 -         .unwrap_or(0);
+611 +         .map_or(0, |d| d.as_nanos() as u64);
+    |
+
+warning: casting `u128` to `u64` may truncate the value
+   --> runtime/src/terminals.rs:611:18
+    |
+611 |         .map(|d| d.as_nanos() as u64)
+    |                  ^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+611 -         .map(|d| d.as_nanos() as u64)
+611 +         .map(|d| u64::try_from(d.as_nanos()))
+    |
+
+warning: casting `u64` to `i64` may wrap around the value
+   --> runtime/src/terminals.rs:624:16
+    |
+624 |     let secs = dur.as_secs() as i64;
+    |                ^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, use `cast_signed()` instead: `dur.as_secs().cast_signed()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_wrap
+
+warning: casting `i64` to `u32` may truncate the value
+   --> runtime/src/terminals.rs:647:38
+    |
+647 |     (if m <= 2 { y + 1 } else { y }, m as u32, d as u32)
+    |                                      ^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+647 -     (if m <= 2 { y + 1 } else { y }, m as u32, d as u32)
+647 +     (if m <= 2 { y + 1 } else { y }, u32::try_from(m), d as u32)
+    |
+
+warning: casting `i64` to `u32` may lose the sign of the value
+   --> runtime/src/terminals.rs:647:38
+    |
+647 |     (if m <= 2 { y + 1 } else { y }, m as u32, d as u32)
+    |                                      ^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_sign_loss
+    = note: `-W clippy::cast-sign-loss` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_sign_loss)]`
+
+warning: casting `i64` to `u32` may truncate the value
+   --> runtime/src/terminals.rs:647:48
+    |
+647 |     (if m <= 2 { y + 1 } else { y }, m as u32, d as u32)
+    |                                                ^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+647 -     (if m <= 2 { y + 1 } else { y }, m as u32, d as u32)
+647 +     (if m <= 2 { y + 1 } else { y }, m as u32, u32::try_from(d))
+    |
+
+warning: casting `i64` to `u32` may lose the sign of the value
+   --> runtime/src/terminals.rs:647:48
+    |
+647 |     (if m <= 2 { y + 1 } else { y }, m as u32, d as u32)
+    |                                                ^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_sign_loss
+
+warning: unused `async` for function with no await statements
+   --> runtime/src/files/tools.rs:110:1
+    |
+110 | / async fn list_impl(
+111 | |     state: &AppState,
+112 | |     headers: &HeaderMap,
+113 | |     file_path: &str,
+...   |
+146 | |     ))
+147 | | }
+    | |_^
+    |
+    = help: consider removing the `async` from this function
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#unused_async
+    = note: `-W clippy::unused-async` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::unused_async)]`
+
+warning: `runtime` (lib) generated 77 warnings (run `cargo clippy --fix --lib -p runtime -- ` to apply 25 suggestions)
+warning: unnecessary `Debug` formatting in `assert!` args
+  --> runtime/tests/safe_path_contract.rs:36:33
+   |
+36 |         "{rel:?} escaped base: {full:?}"
+   |                                 ^^^^
+   |
+   = help: use `Display` formatting and change this to `full.display()`
+   = note: switching to `Display` formatting will change how the value is shown; escaped characters will no longer be escaped and surrounding quotes will be removed
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#unnecessary_debug_formatting
+   = note: `-W clippy::unnecessary-debug-formatting` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::unnecessary_debug_formatting)]`
+
+warning: called `map(<f>).unwrap_or_else(<g>)` on an `Option` value
+  --> runtime/tests/upload_archive_contract.rs:39:20
+   |
+39 |           let name = f
+   |  ____________________^
+40 | |             .enclosed_name()
+41 | |             .map(|p| p.to_string_lossy().into_owned())
+42 | |             .unwrap_or_else(|| f.name().to_string());
+   | |____________________________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+   = note: `-W clippy::map-unwrap-or` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::map_unwrap_or)]`
+help: try
+   |
+39 ~         let name = f
+40 ~             .enclosed_name().map_or_else(|| f.name().to_string(), |p| p.to_string_lossy().into_owned());
+   |
+
+warning: `runtime` (test "safe_path_contract") generated 1 warning
+warning: `runtime` (test "upload_archive_contract") generated 1 warning (run `cargo clippy --fix --test "upload_archive_contract" -p runtime -- ` to apply 1 suggestion)
+warning: `format!(..)` appended to existing `String`
+  --> runtime/tests/terminals_contract.rs:87:9
+   |
+87 |         req.push_str(&format!("{k}: {v}\r\n"));
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: you may need to import the `std::fmt::Write` trait
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#format_push_string
+   = note: `-W clippy::format-push-string` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::format_push_string)]`
+help: consider using `write!` to avoid the extra allocation
+   |
+87 -         req.push_str(&format!("{k}: {v}\r\n"));
+87 +         let _ = write!(req, "{k}: {v}\r\n");
+   |
+
+warning: `format!(..)` appended to existing `String`
+  --> runtime/tests/terminals_contract.rs:90:9
+   |
+90 | /         req.push_str(&format!(
+91 | |             "Content-Type: application/json\r\nContent-Length: {}\r\n",
+92 | |             body_bytes.len()
+93 | |         ));
+   | |__________^
+   |
+   = note: you may need to import the `std::fmt::Write` trait
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+   |
+90 ~         let _ = write!(req, "Content-Type: application/json\r\nContent-Length: {}\r\n",
+91 ~             body_bytes.len());
+   |
+
+warning: matching over `()` is more explicit
+   --> runtime/tests/terminals_contract.rs:171:13
+    |
+171 |             _ = &mut deadline => return window_contains(&buf, marker),
+    |             ^ help: use `()` instead of `_`: `()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#ignored_unit_patterns
+    = note: `-W clippy::ignored-unit-patterns` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::ignored_unit_patterns)]`
+
+warning: matching over `()` is more explicit
+   --> runtime/tests/terminals_contract.rs:204:13
+    |
+204 |             _ = &mut deadline => return false,
+    |             ^ help: use `()` instead of `_`: `()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#ignored_unit_patterns
+
+warning: matching over `()` is more explicit
+   --> runtime/tests/terminals_contract.rs:205:13
+    |
+205 |             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+    |             ^ help: use `()` instead of `_`: `()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#ignored_unit_patterns
+
+warning: casts from `u8` to `u64` can be expressed infallibly using `From`
+   --> runtime/src/snapshot.rs:672:49
+    |
+672 |         let cksum: u64 = header.iter().map(|&b| b as u64).sum();
+    |                                                 ^^^^^^^^
+    |
+    = help: an `as` cast can become silently lossy if the types change in the future
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_lossless
+    = note: `-W clippy::cast-lossless` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_lossless)]`
+help: use `u64::from` instead
+    |
+672 -         let cksum: u64 = header.iter().map(|&b| b as u64).sum();
+672 +         let cksum: u64 = header.iter().map(|&b| u64::from(b)).sum();
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> runtime/src/snapshot.rs:673:42
+    |
+673 |         header[148..156].copy_from_slice(format!("{:06o}\0 ", cksum).as_bytes());
+    |                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#uninlined_format_args
+    = note: `-W clippy::uninlined-format-args` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::uninlined_format_args)]`
+help: change this to
+    |
+673 -         header[148..156].copy_from_slice(format!("{:06o}\0 ", cksum).as_bytes());
+673 +         header[148..156].copy_from_slice(format!("{cksum:06o}\0 ").as_bytes());
+    |
+
+warning: used `assert!` with an equality comparison
+   --> runtime/src/snapshot.rs:823:9
+    |
+823 |         assert!(std::fs::read_dir(dir.path()).unwrap().count() == 0);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#manual_assert_eq
+    = note: `-W clippy::manual-assert-eq` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::manual_assert_eq)]`
+help: replace it with `assert_eq!(..)`
+    |
+823 -         assert!(std::fs::read_dir(dir.path()).unwrap().count() == 0);
+823 +         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    |
+
+warning: redundant closure
+   --> runtime/src/snapshot.rs:964:29
+    |
+964 |                 .filter_map(|e| e.ok())
+    |                             ^^^^^^^^^^ help: replace the closure with the method itself: `std::result::Result::ok`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#redundant_closure_for_method_calls
+
+warning: casts from `u16` to `u64` can be expressed infallibly using `From`
+   --> runtime/src/terminals.rs:562:23
+    |
+562 |             .clamp(1, u16::MAX as u64) as u16;
+    |                       ^^^^^^^^^^^^^^^
+    |
+    = help: an `as` cast can become silently lossy if the types change in the future
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_lossless
+help: use `u64::from` instead
+    |
+562 -             .clamp(1, u16::MAX as u64) as u16;
+562 +             .clamp(1, u64::from(u16::MAX)) as u16;
+    |
+
+warning: `runtime` (test "terminals_contract") generated 5 warnings (run `cargo clippy --fix --test "terminals_contract" -p runtime -- ` to apply 3 suggestions)
+warning: `runtime` (lib test) generated 81 warnings (76 duplicates) (run `cargo clippy --fix --lib -p runtime --tests -- ` to apply 5 suggestions)
+    Checking broker v0.1.0 (/tmp/pi-agent-aa9c0659-5395-42e-dfc85209/rust/broker)
+warning: binding's name is too similar to existing binding
+   --> broker/src/terminal.rs:220:27
+    |
+220 |     let (mut up_sink, mut up_stream) = upstream.split();
+    |                           ^^^^^^^^^
+    |
+note: existing binding defined here
+   --> broker/src/terminal.rs:205:9
+    |
+205 |     let upstream = match tokio_tungstenite::connect_async(&upstream_url).await {
+    |         ^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#similar_names
+    = note: `-W clippy::similar-names` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::similar_names)]`
+
+warning: item in documentation is missing backticks
+ --> broker/src/lib.rs:1:39
+  |
+1 | //! open-websandbox broker — the Open WebUI front door + Sandbox lifecycle.
+  |                                       ^^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+  = note: `-W clippy::doc-markdown` implied by `-W clippy::pedantic`
+  = help: to override `-W clippy::pedantic` add `#[allow(clippy::doc_markdown)]`
+help: try
+  |
+1 - //! open-websandbox broker — the Open WebUI front door + Sandbox lifecycle.
+1 + //! open-websandbox broker — the Open `WebUI` front door + Sandbox lifecycle.
+  |
+
+warning: item in documentation is missing backticks
+  --> broker/src/api.rs:13:50
+   |
+13 | //! [`crate`]. Request/response shapes match the OpenAPI spec for the endpoints
+   |                                                  ^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+   |
+13 - //! [`crate`]. Request/response shapes match the OpenAPI spec for the endpoints
+13 + //! [`crate`]. Request/response shapes match the `OpenAPI` spec for the endpoints
+   |
+
+warning: usage of wildcard import for enum variants
+  --> broker/src/api.rs:36:32
+   |
+36 | use crate::store::{StoreError, StoreError::*};
+   |                                ^^^^^^^^^^^^^ help: try: `StoreError::{NotFound, Conflict, Kube}`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#enum_glob_use
+   = note: `-W clippy::enum-glob-use` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::enum_glob_use)]`
+
+warning: item in documentation is missing backticks
+  --> broker/src/api.rs:88:5
+   |
+88 | /// OpenAPI schema for a `Sandbox` object on the wire (`apiVersion`/`kind`/`metadata`/
+   |     ^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+   |
+88 - /// OpenAPI schema for a `Sandbox` object on the wire (`apiVersion`/`kind`/`metadata`/
+88 + /// `OpenAPI` schema for a `Sandbox` object on the wire (`apiVersion`/`kind`/`metadata`/
+   |
+
+warning: called `map(<f>).unwrap_or(<a>)` on a `Result` value
+   --> broker/src/api.rs:119:5
+    |
+119 | /     SystemTime::now()
+120 | |         .duration_since(UNIX_EPOCH)
+121 | |         .map(|d| d.as_secs() as i64)
+122 | |         .unwrap_or(0)
+    | |_____________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+    = note: `-W clippy::map-unwrap-or` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::map_unwrap_or)]`
+help: use `map_or(<a>, <f>)` instead
+    |
+121 -         .map(|d| d.as_secs() as i64)
+122 -         .unwrap_or(0)
+121 +         .map_or(0, |d| d.as_secs() as i64)
+    |
+
+warning: casting `u64` to `i64` may wrap around the value
+   --> broker/src/api.rs:121:18
+    |
+121 |         .map(|d| d.as_secs() as i64)
+    |                  ^^^^^^^^^^^^^^^^^^ help: if this is intentional, use `cast_signed()` instead: `d.as_secs().cast_signed()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_wrap
+    = note: `-W clippy::cast-possible-wrap` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_possible_wrap)]`
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> broker/src/api.rs:161:1
+    |
+161 | pub async fn readyz(State(state): State<AppState>) -> Result<Json<HealthResponse>, ApiError> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+    = note: `-W clippy::missing-errors-doc` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::missing_errors_doc)]`
+
+warning: docs for function which may panic missing `# Panics` section
+   --> broker/src/api.rs:204:1
+    |
+204 | pub async fn openapi_json() -> Json<serde_json::Value> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> broker/src/api.rs:209:17
+    |
+209 |     let value = serde_json::to_value(&doc).expect("OpenApi document serializes to JSON");
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+    = note: `-W clippy::missing-panics-doc` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::missing_panics_doc)]`
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> broker/src/api.rs:294:1
+    |
+294 | / pub async fn create_sandbox(
+295 | |     _: Authed,
+296 | |     State(state): State<AppState>,
+297 | |     Json(req): Json<CreateSandboxRequest>,
+298 | | ) -> Result<(StatusCode, Json<Sandbox>), ApiError> {
+    | |__________________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> broker/src/api.rs:355:1
+    |
+355 | / pub async fn list_sandboxes(
+356 | |     _: Authed,
+357 | |     State(state): State<AppState>,
+358 | |     Query(q): Query<ListQuery>,
+359 | | ) -> Result<Json<Vec<Sandbox>>, ApiError> {
+    | |_________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> broker/src/api.rs:383:1
+    |
+383 | / pub async fn get_sandbox(
+384 | |     _: Authed,
+385 | |     State(state): State<AppState>,
+386 | |     Path(name): Path<String>,
+387 | | ) -> Result<Json<Sandbox>, ApiError> {
+    | |____________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> broker/src/api.rs:412:1
+    |
+412 | / pub async fn delete_sandbox(
+413 | |     _: Authed,
+414 | |     State(state): State<AppState>,
+415 | |     Path(name): Path<String>,
+416 | | ) -> Result<StatusCode, ApiError> {
+    | |_________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: item in documentation is missing backticks
+ --> broker/src/auth.rs:1:43
+  |
+1 | //! Shared-Bearer authentication for Open WebUI ↔ broker requests.
+  |                                           ^^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+  |
+1 - //! Shared-Bearer authentication for Open WebUI ↔ broker requests.
+1 + //! Shared-Bearer authentication for Open `WebUI` ↔ broker requests.
+  |
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> broker/src/client.rs:30:1
+   |
+30 | pub async fn build_client() -> Result<kube::Client, ClientBuildError> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: item in documentation is missing backticks
+  --> broker/src/config.rs:12:30
+   |
+12 | /// the `servers` URL in the OpenAPI spec).
+   |                              ^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+   |
+12 - /// the `servers` URL in the OpenAPI spec).
+12 + /// the `servers` URL in the `OpenAPI` spec).
+   |
+
+warning: hand-coded well-known IP address
+  --> broker/src/config.rs:14:5
+   |
+14 |     std::net::Ipv4Addr::new(0, 0, 0, 0),
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#ip_constant
+   = note: `-W clippy::ip-constant` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::ip_constant)]`
+help: use
+   |
+14 -     std::net::Ipv4Addr::new(0, 0, 0, 0),
+14 +     std::net::Ipv4Addr::UNSPECIFIED,
+   |
+
+warning: this method could have a `#[must_use]` attribute
+  --> broker/src/config.rs:29:12
+   |
+29 |     pub fn from_env() -> Self {
+   |            ^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#must_use_candidate
+   = note: `-W clippy::must-use-candidate` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::must_use_candidate)]`
+help: add the attribute
+   |
+29 ~     #[must_use]
+30 ~     pub fn from_env() -> Self {
+   |
+
+warning: item in documentation is missing backticks
+  --> broker/src/error.rs:37:60
+   |
+37 |     /// request reverse proxy, terminal WS relay, metrics, OpenAPI gen).
+   |                                                            ^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+   |
+37 -     /// request reverse proxy, terminal WS relay, metrics, OpenAPI gen).
+37 +     /// request reverse proxy, terminal WS relay, metrics, `OpenAPI` gen).
+   |
+
+warning: casting `u64` to `i32` may truncate the value
+   --> broker/src/leaser.rs:111:31
+    |
+111 |             duration_seconds: cfg.leader_duration_seconds.max(1).min(i32::MAX as u64) as i32,
+    |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_truncation
+    = note: `-W clippy::cast-possible-truncation` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_possible_truncation)]`
+help: ... or use `try_from` and handle the error accordingly
+    |
+111 -             duration_seconds: cfg.leader_duration_seconds.max(1).min(i32::MAX as u64) as i32,
+111 +             duration_seconds: i32::try_from(cfg.leader_duration_seconds.max(1).min(i32::MAX as u64)),
+    |
+
+warning: casts from `i32` to `i64` can be expressed infallibly using `From`
+   --> broker/src/leaser.rs:129:32
+    |
+129 |                 let duration = spec.lease_duration_seconds.unwrap_or(self.duration_seconds) as i64;
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: an `as` cast can become silently lossy if the types change in the future
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_lossless
+    = note: `-W clippy::cast-lossless` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_lossless)]`
+help: use `i64::from` instead
+    |
+129 -                 let duration = spec.lease_duration_seconds.unwrap_or(self.duration_seconds) as i64;
+129 +                 let duration = i64::from(spec.lease_duration_seconds.unwrap_or(self.duration_seconds));
+    |
+
+warning: docs for function which may panic missing `# Panics` section
+   --> broker/src/leaser.rs:231:5
+    |
+231 |     pub fn holder(&self) -> Option<String> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> broker/src/leaser.rs:232:9
+    |
+232 | /         self.0
+233 | |             .lock()
+234 | |             .expect("lease lock")
+    | |_________________________________^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+
+warning: matching over `()` is more explicit
+   --> broker/src/leaser.rs:345:13
+    |
+345 |             _ = tokio::time::sleep(renew_interval) => {}
+    |             ^ help: use `()` instead of `_`: `()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#ignored_unit_patterns
+    = note: `-W clippy::ignored-unit-patterns` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::ignored_unit_patterns)]`
+
+warning: item in documentation is missing backticks
+ --> broker/src/proxy.rs:1:33
+  |
+1 | //! Reverse proxy: forward Open WebUI runtime-tool requests to the resolved
+  |                                 ^^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+  |
+1 - //! Reverse proxy: forward Open WebUI runtime-tool requests to the resolved
+1 + //! Reverse proxy: forward Open `WebUI` runtime-tool requests to the resolved
+  |
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> broker/src/proxy.rs:82:1
+   |
+82 | / pub fn forward_identity(
+83 | |     headers: &HeaderMap,
+84 | |     default_profile: Profile,
+85 | | ) -> Result<ForwardIdentity, ApiError> {
+   | |______________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: called `map(<f>).unwrap_or_else(<g>)` on an `Option` value
+   --> broker/src/proxy.rs:95:22
+    |
+ 95 |       let session_id = headers
+    |  ______________________^
+ 96 | |         .get("x-session-id")
+ 97 | |         .and_then(|v| v.to_str().ok())
+ 98 | |         .filter(|s| !s.is_empty())
+ 99 | |         .map(str::to_owned)
+100 | |         .unwrap_or_else(|| user_id.to_string());
+    | |_______________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: try
+    |
+ 95 ~     let session_id = headers
+ 96 +         .get("x-session-id")
+ 97 +         .and_then(|v| v.to_str().ok())
+ 98 ~         .filter(|s| !s.is_empty()).map_or_else(|| user_id.to_string(), str::to_owned);
+    |
+
+warning: docs for function which may panic missing `# Panics` section
+   --> broker/src/proxy.rs:129:1
+    |
+129 | / pub fn build_forward_headers(
+130 | |     inbound: &HeaderMap,
+131 | |     resolved: &ResolvedSandbox,
+132 | |     runtime_ns: &str,
+133 | |     session_id: &str,
+134 | |     runtime_api_key: &str,
+135 | | ) -> HeaderMap {
+    | |______________^
+    |
+note: first possible panic found here
+   --> broker/src/proxy.rs:152:13
+    |
+152 | /             HeaderValue::from_str(&format!("Bearer {runtime_api_key}"))
+153 | |                 .expect("runtime api key is a valid header value"),
+    | |__________________________________________________________________^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+
+warning: it is more concise to loop over references to containers instead of using explicit iteration methods
+   --> broker/src/proxy.rs:137:26
+    |
+137 |     for (name, value) in inbound.iter() {
+    |                          ^^^^^^^^^^^^^^ help: to write this more concisely, try: `inbound`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#explicit_iter_loop
+    = note: `-W clippy::explicit-iter-loop` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::explicit_iter_loop)]`
+
+warning: called `map(<f>).unwrap_or(<a>)` on an `Option` value
+   --> broker/src/proxy.rs:205:5
+    |
+205 | /     after_authority
+206 | |         .split_once('#')
+207 | |         .map(|(p, _)| p)
+208 | |         .unwrap_or(after_authority)
+    | |___________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: use `map_or(<a>, <f>)` instead
+    |
+207 -         .map(|(p, _)| p)
+208 -         .unwrap_or(after_authority)
+207 +         .map_or(after_authority, |(p, _)| p)
+    |
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> broker/src/proxy.rs:214:1
+    |
+214 | / pub async fn proxy_catch_all(
+215 | |     _: Authed,
+216 | |     State(state): State<AppState>,
+217 | |     req: Request<Body>,
+218 | | ) -> Result<Response, ApiError> {
+    | |_______________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: called `map(<f>).unwrap_or_else(<g>)` on an `Option` value
+   --> broker/src/proxy.rs:221:26
+    |
+221 |       let path_and_query = req
+    |  __________________________^
+222 | |         .uri()
+223 | |         .path_and_query()
+224 | |         .map(|pq| pq.as_str().to_owned())
+225 | |         .unwrap_or_else(|| "/".to_string());
+    | |___________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: try
+    |
+221 ~     let path_and_query = req
+222 +         .uri()
+223 ~         .path_and_query().map_or_else(|| "/".to_string(), |pq| pq.as_str().to_owned());
+    |
+
+warning: called `map(<f>).unwrap_or_else(<g>)` on an `Option` value
+  --> broker/src/rate_limit.rs:38:12
+   |
+38 |           Ok(req
+   |  ____________^
+39 | |             .headers()
+40 | |             .get("x-user-id")
+41 | |             .and_then(|v| v.to_str().ok())
+...  |
+44 | |             .map(str::to_owned)
+45 | |             .unwrap_or_else(|| "anonymous".to_owned()))
+   | |______________________________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: try
+   |
+38 ~         Ok(req
+39 +             .headers()
+40 +             .get("x-user-id")
+41 +             .and_then(|v| v.to_str().ok())
+42 +             .map(str::trim)
+43 ~             .filter(|s| !s.is_empty()).map_or_else(|| "anonymous".to_owned(), str::to_owned))
+   |
+
+warning: casts from `u32` to `u64` can be expressed infallibly using `From`
+  --> broker/src/rate_limit.rs:57:22
+   |
+57 |     let per_second = state.config.rate_limit_per_second.max(1) as u64;
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: an `as` cast can become silently lossy if the types change in the future
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_lossless
+help: use `u64::from` instead
+   |
+57 -     let per_second = state.config.rate_limit_per_second.max(1) as u64;
+57 +     let per_second = u64::from(state.config.rate_limit_per_second.max(1));
+   |
+
+warning: these match arms have identical bodies
+   --> broker/src/reaper.rs:98:9
+    |
+ 98 |         Profile::Persistent => ReaperAction::Skip,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+101 |         Profile::Ephemeral => ReaperAction::Skip,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is unintentional make the arms return different values
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#match_same_arms
+    = note: `-W clippy::match-same-arms` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::match_same_arms)]`
+help: otherwise merge the patterns into a single arm
+    |
+ 98 ~         // ephemeral (emptyDir) — reap at IDLE_TTL (return capacity to pool).
+ 99 |         Profile::Ephemeral if idle_secs > cfg.idle_ttl_seconds => ReaperAction::Reap,
+100 ~         Profile::Persistent | Profile::Ephemeral => ReaperAction::Skip,
+    |
+
+warning: called `map(<f>).unwrap_or(<a>)` on a `Result` value
+   --> broker/src/reaper.rs:128:5
+    |
+128 | /     SystemTime::now()
+129 | |         .duration_since(UNIX_EPOCH)
+130 | |         .map(|d| d.as_secs() as i64)
+131 | |         .unwrap_or(0)
+    | |_____________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: use `map_or(<a>, <f>)` instead
+    |
+130 -         .map(|d| d.as_secs() as i64)
+131 -         .unwrap_or(0)
+130 +         .map_or(0, |d| d.as_secs() as i64)
+    |
+
+warning: casting `u64` to `i64` may wrap around the value
+   --> broker/src/reaper.rs:130:18
+    |
+130 |         .map(|d| d.as_secs() as i64)
+    |                  ^^^^^^^^^^^^^^^^^^ help: if this is intentional, use `cast_signed()` instead: `d.as_secs().cast_signed()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_wrap
+
+warning: casting `i64` to `u64` may lose the sign of the value
+   --> broker/src/reaper.rs:202:20
+    |
+202 |         let idle = (now - lu).max(0) as u64;
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, use `cast_unsigned()` instead: `(now - lu).max(0).cast_unsigned()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_sign_loss
+    = note: `-W clippy::cast-sign-loss` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_sign_loss)]`
+
+warning: casting `u64` to `f64` may cause a loss of precision (`u64` is 64 bits wide, but `f64`'s mantissa is only 52 bits wide)
+   --> broker/src/reaper.rs:304:51
+    |
+304 |             metrics::gauge!(ACTIVE_SANDBOXES).set(stats.scanned as f64);
+    |                                                   ^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_precision_loss
+    = note: `-W clippy::cast-precision-loss` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_precision_loss)]`
+
+warning: matching over `()` is more explicit
+   --> broker/src/reaper.rs:318:13
+    |
+318 |             _ = tokio::time::sleep(interval) => {}
+    |             ^ help: use `()` instead of `_`: `()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#ignored_unit_patterns
+
+warning: use of `format!` to build up a string from an iterator
+  --> broker/src/resolve.rs:76:5
+   |
+76 |     out.iter().take(6).map(|b| format!("{b:02x}")).collect()
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: call `fold` instead
+  --> broker/src/resolve.rs:76:24
+   |
+76 |     out.iter().take(6).map(|b| format!("{b:02x}")).collect()
+   |                        ^^^
+help: ... and use the `write!` macro here
+  --> broker/src/resolve.rs:76:32
+   |
+76 |     out.iter().take(6).map(|b| format!("{b:02x}")).collect()
+   |                                ^^^^^^^^^^^^^^^^^^
+   = note: this can be written more efficiently by appending to a `String` directly
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#format_collect
+   = note: `-W clippy::format-collect` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::format_collect)]`
+
+warning: called `map(<f>).unwrap_or(<a>)` on a `Result` value
+   --> broker/src/resolve.rs:100:5
+    |
+100 | /     SystemTime::now()
+101 | |         .duration_since(UNIX_EPOCH)
+102 | |         .map(|d| d.as_secs() as i64)
+103 | |         .unwrap_or(0)
+    | |_____________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: use `map_or(<a>, <f>)` instead
+    |
+102 -         .map(|d| d.as_secs() as i64)
+103 -         .unwrap_or(0)
+102 +         .map_or(0, |d| d.as_secs() as i64)
+    |
+
+warning: casting `u64` to `i64` may wrap around the value
+   --> broker/src/resolve.rs:102:18
+    |
+102 |         .map(|d| d.as_secs() as i64)
+    |                  ^^^^^^^^^^^^^^^^^^ help: if this is intentional, use `cast_signed()` instead: `d.as_secs().cast_signed()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_wrap
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> broker/src/resolve.rs:118:1
+    |
+118 | / pub async fn resolve_sandbox(
+119 | |     state: &AppState,
+120 | |     user_id: &str,
+121 | |     session_id: &str,
+122 | |     profile: Profile,
+123 | | ) -> Result<ResolvedSandbox, ApiError> {
+    | |______________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: item in documentation is missing backticks
+  --> broker/src/runtime_key.rs:31:20
+   |
+31 | /// `rand::rng()` (ThreadRng / ChaCha12) — never a placeholder the runtime's
+   |                    ^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+   |
+31 - /// `rand::rng()` (ThreadRng / ChaCha12) — never a placeholder the runtime's
+31 + /// `rand::rng()` (`ThreadRng` / ChaCha12) — never a placeholder the runtime's
+   |
+
+warning: item in documentation is missing backticks
+  --> broker/src/runtime_key.rs:31:32
+   |
+31 | /// `rand::rng()` (ThreadRng / ChaCha12) — never a placeholder the runtime's
+   |                                ^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+   |
+31 - /// `rand::rng()` (ThreadRng / ChaCha12) — never a placeholder the runtime's
+31 + /// `rand::rng()` (ThreadRng / `ChaCha12`) — never a placeholder the runtime's
+   |
+
+warning: `format!(..)` appended to existing `String`
+  --> broker/src/runtime_key.rs:45:9
+   |
+45 |         out.push_str(&format!("{b:02x}"));
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: you may need to import the `std::fmt::Write` trait
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#format_push_string
+   = note: `-W clippy::format-push-string` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::format_push_string)]`
+help: consider using `write!` to avoid the extra allocation
+   |
+45 -         out.push_str(&format!("{b:02x}"));
+45 +         let _ = write!(out, "{b:02x}");
+   |
+
+warning: item in documentation is missing backticks
+   --> broker/src/s3.rs:135:30
+    |
+135 |     /// KMS/SSE backend (dev MinIO) — driven by `BrokerConfig::s3_sse`.
+    |                              ^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+    |
+135 -     /// KMS/SSE backend (dev MinIO) — driven by `BrokerConfig::s3_sse`.
+135 +     /// KMS/SSE backend (dev `MinIO`) — driven by `BrokerConfig::s3_sse`.
+    |
+
+warning: redundant closure
+   --> broker/src/s3.rs:232:18
+    |
+232 |             .map(|b| b.into_bytes())
+    |                  ^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `aws_sdk_s3::primitives::AggregatedBytes::into_bytes`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#redundant_closure_for_method_calls
+    = note: `-W clippy::redundant-closure-for-method-calls` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::redundant_closure_for_method_calls)]`
+
+warning: docs for function which may panic missing `# Panics` section
+   --> broker/src/s3.rs:306:9
+    |
+306 |         pub fn seed(&self, key: &str, body: impl Into<Bytes>) {
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> broker/src/s3.rs:307:25
+    |
+307 |             let mut g = self.inner.lock().expect("in-memory cold store");
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+
+warning: docs for function which may panic missing `# Panics` section
+   --> broker/src/s3.rs:313:9
+    |
+313 |         pub fn log(&self) -> Vec<String> {
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> broker/src/s3.rs:314:13
+    |
+314 |             self.inner.lock().expect("in-memory cold store").log.clone()
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+
+warning: docs for function which may panic missing `# Panics` section
+   --> broker/src/s3.rs:319:9
+    |
+319 |         pub fn keys(&self) -> Vec<String> {
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> broker/src/s3.rs:320:13
+    |
+320 | /             self.inner
+321 | |                 .lock()
+322 | |                 .expect("in-memory cold store")
+    | |_______________________________________________^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+
+warning: consider adding a `;` to the last statement for consistent formatting
+   --> broker/src/s3.rs:472:21
+    |
+472 |                     tracing::warn!(sandbox = %name, %e, "read_runtime_key failed; falling back to shared key")
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: add a `;` here: `tracing::warn!(sandbox = %name, %e, "read_runtime_key failed; falling back to shared key");`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#semicolon_if_nothing_returned
+    = note: `-W clippy::semicolon-if-nothing-returned` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::semicolon_if_nothing_returned)]`
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> broker/src/s3.rs:565:5
+    |
+565 | /     pub async fn restore_on_resume(
+566 | |         &self,
+567 | |         name: &str,
+568 | |         pod_ip: &str,
+569 | |         user: &str,
+570 | |         session: &str,
+571 | |     ) -> Result<RestoreOutcome, RestoreError> {
+    | |_____________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: called `map(<f>).unwrap_or(<a>)` on a `Result` value
+   --> broker/src/s3.rs:682:5
+    |
+682 | /     SystemTime::now()
+683 | |         .duration_since(UNIX_EPOCH)
+684 | |         .map(|d| d.as_secs() as i64)
+685 | |         .unwrap_or(0)
+    | |_____________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: use `map_or(<a>, <f>)` instead
+    |
+684 -         .map(|d| d.as_secs() as i64)
+685 -         .unwrap_or(0)
+684 +         .map_or(0, |d| d.as_secs() as i64)
+    |
+
+warning: casting `u64` to `i64` may wrap around the value
+   --> broker/src/s3.rs:684:18
+    |
+684 |         .map(|d| d.as_secs() as i64)
+    |                  ^^^^^^^^^^^^^^^^^^ help: if this is intentional, use `cast_signed()` instead: `d.as_secs().cast_signed()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_wrap
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> broker/src/sandbox.rs:41:1
+   |
+41 | pub fn extract_pod_template(template: &SandboxTemplate) -> Result<serde_json::Value, ApiError> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: missing `#[must_use]` attribute on a method returning `Self`
+   --> broker/src/store.rs:340:9
+    |
+340 | /         pub fn with_template(self, template: SandboxTemplate) -> Self {
+341 | |             self.insert_template(template);
+342 | |             self
+343 | |         }
+    | |_________^
+    |
+    = help: consider adding the `#[must_use]` attribute to the method or directly to the `Self` type
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#return_self_not_must_use
+    = note: `-W clippy::return-self-not-must-use` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::return_self_not_must_use)]`
+
+warning: docs for function which may panic missing `# Panics` section
+   --> broker/src/store.rs:346:9
+    |
+346 |         pub fn insert_template(&self, template: SandboxTemplate) {
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> broker/src/store.rs:348:13
+    |
+348 | /             self.templates
+349 | |                 .lock()
+350 | |                 .expect("stub templates")
+    | |_________________________________________^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+
+warning: docs for function which may panic missing `# Panics` section
+   --> broker/src/store.rs:357:9
+    |
+357 |         pub fn set_runtime_key(&self, sandbox_name: &str, key: &str) {
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> broker/src/store.rs:358:13
+    |
+358 | /             self.runtime_keys
+359 | |                 .lock()
+360 | |                 .expect("stub runtime_keys")
+    | |____________________________________________^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+
+warning: docs for function which may panic missing `# Panics` section
+   --> broker/src/store.rs:365:9
+    |
+365 |         pub fn insert_sandbox(&self, sandbox: Sandbox) {
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> broker/src/store.rs:367:13
+    |
+367 | /             self.sandboxes
+368 | |                 .lock()
+369 | |                 .expect("stub sandboxes")
+    | |_________________________________________^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+
+warning: docs for function which may panic missing `# Panics` section
+   --> broker/src/store.rs:383:9
+    |
+383 |         pub fn set_auto_ready_on_create(&self, pod_ip: Option<String>) {
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> broker/src/store.rs:384:14
+    |
+384 |             *self.auto_ready_on_create.lock().expect("stub auto_ready") = pod_ip;
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+
+warning: docs for function which may panic missing `# Panics` section
+   --> broker/src/store.rs:389:9
+    |
+389 |         pub fn mark_ready(&self, name: &str, pod_ip: &str) -> bool {
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> broker/src/store.rs:390:27
+    |
+390 |             let mut map = self.sandboxes.lock().expect("stub sandboxes");
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+
+warning: docs for function which may panic missing `# Panics` section
+   --> broker/src/store.rs:401:9
+    |
+401 |         pub fn snapshot(&self) -> HashMap<String, Sandbox> {
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> broker/src/store.rs:402:13
+    |
+402 |             self.sandboxes.lock().expect("stub sandboxes").clone()
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_panics_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> broker/src/terminal.rs:70:1
+   |
+70 | / pub fn terminal_identity(
+71 | |     query: &TerminalWsQuery,
+72 | |     headers: &HeaderMap,
+73 | |     path_session_id: &str,
+74 | |     default_profile: Profile,
+75 | | ) -> Result<TerminalIdentity, ApiError> {
+   | |_______________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: called `map(<f>).unwrap_or_else(<g>)` on an `Option` value
+   --> broker/src/terminal.rs:97:19
+    |
+ 97 |       let profile = query
+    |  ___________________^
+ 98 | |         .persistence
+ 99 | |         .as_deref()
+100 | |         .map(str::to_ascii_lowercase)
+...   |
+105 | |         })
+106 | |         .unwrap_or_else(|| profile_from_header(headers, default_profile));
+    | |_________________________________________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#map_unwrap_or
+help: try
+    |
+ 97 ~     let profile = query
+ 98 +         .persistence
+ 99 +         .as_deref()
+100 +         .map(str::to_ascii_lowercase).map_or_else(|| profile_from_header(headers, default_profile), |p| match p.as_str() {
+101 +             "persistent" => Profile::Persistent,
+102 +             "ephemeral" => Profile::Ephemeral,
+103 +             _ => default_profile,
+104 ~         });
+    |
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> broker/src/terminal.rs:123:1
+    |
+123 | / pub async fn terminal_ws(
+124 | |     ws: WebSocketUpgrade,
+125 | |     State(state): State<AppState>,
+126 | |     Path(session_id): Path<String>,
+127 | |     Query(query): Query<TerminalWsQuery>,
+128 | |     headers: HeaderMap,
+129 | | ) -> Result<Response, ApiError> {
+    | |_______________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#missing_errors_doc
+
+warning: this function has too many lines (111/100)
+   --> broker/src/terminal.rs:136:1
+    |
+136 | async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, session_id: String) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#too_many_lines
+    = note: `-W clippy::too-many-lines` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::too_many_lines)]`
+
+warning: item in documentation is missing backticks
+ --> broker/src/openapi.rs:1:22
+  |
+1 | //! utoipa-generated OpenAPI document for the broker's OWUI-facing surface (D10).
+  |                      ^^^^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+  |
+1 - //! utoipa-generated OpenAPI document for the broker's OWUI-facing surface (D10).
+1 + //! utoipa-generated `OpenAPI` document for the broker's OWUI-facing surface (D10).
+  |
+
+warning: item in documentation is missing backticks
+  --> broker/src/openapi.rs:29:33
+   |
+29 | /// The merged broker + runtime OpenAPI document.
+   |                                 ^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+   |
+29 - /// The merged broker + runtime OpenAPI document.
+29 + /// The merged broker + runtime `OpenAPI` document.
+   |
+
+warning: item in documentation is missing backticks
+  --> broker/src/openapi.rs:80:27
+   |
+80 | /// Build the OWUI-facing OpenAPI document: broker paths + schemas, the runtime surface
+   |                           ^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+help: try
+   |
+80 - /// Build the OWUI-facing OpenAPI document: broker paths + schemas, the runtime surface
+80 + /// Build the OWUI-facing `OpenAPI` document: broker paths + schemas, the runtime surface
+   |
+
+warning: unused `async` for function with no await statements
+   --> broker/src/proxy.rs:293:1
+    |
+293 | / async fn forward_response(upstream: reqwest::Response) -> Result<Response, ApiError> {
+294 | |     let status = upstream.status();
+295 | |     let upstream_headers = upstream.headers().clone();
+...   |
+326 | |         .map_err(|e| ApiError::Internal(format!("could not build proxy response: {e}")))
+327 | | }
+    | |_^
+    |
+    = help: consider removing the `async` from this function
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#unused_async
+    = note: `-W clippy::unused-async` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::unused_async)]`
+
+warning: `broker` (lib) generated 71 warnings (run `cargo clippy --fix --lib -p broker -- ` to apply 32 suggestions)
+warning: item in documentation is missing backticks
+ --> broker/tests/openapi_snapshot.rs:1:53
+  |
+1 | //! Frozen-snapshot test for the broker's generated OpenAPI document (D10 / issue #75 Q2).
+  |                                                     ^^^^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+  = note: `-W clippy::doc-markdown` implied by `-W clippy::pedantic`
+  = help: to override `-W clippy::pedantic` add `#[allow(clippy::doc_markdown)]`
+help: try
+  |
+1 - //! Frozen-snapshot test for the broker's generated OpenAPI document (D10 / issue #75 Q2).
+1 + //! Frozen-snapshot test for the broker's generated `OpenAPI` document (D10 / issue #75 Q2).
+  |
+
+warning: `broker` (test "openapi_snapshot") generated 1 warning (run `cargo clippy --fix --test "openapi_snapshot" -p broker -- ` to apply 1 suggestion)
+warning: unused `async` for function with no await statements
+   --> broker/tests/proxy_resolve.rs:179:1
+    |
+179 | / async fn proxy_env(upstream: &str, store: Arc<StubSandboxStore>) -> AppState {
+180 | |     store.set_auto_ready_on_create(Some("10.0.0.7".into()));
+181 | |     let cfg = BrokerConfig {
+182 | |         shared_secret: STRONG_SECRET.into(),
+...   |
+191 | |     state.with_runtime_upstream_override(upstream.to_string())
+192 | | }
+    | |_^
+    |
+    = help: consider removing the `async` from this function
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#unused_async
+    = note: `-W clippy::unused-async` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::unused_async)]`
+
+warning: matching over `()` is more explicit
+   --> broker/src/main.rs:193:9
+    |
+193 |         _ = ctrl_c => { tracing::info!("shutdown signal: ctrl-c"); }
+    |         ^ help: use `()` instead of `_`: `()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#ignored_unit_patterns
+    = note: `-W clippy::ignored-unit-patterns` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::ignored_unit_patterns)]`
+
+warning: matching over `()` is more explicit
+   --> broker/src/main.rs:194:9
+    |
+194 |         _ = terminate => { tracing::info!("shutdown signal: SIGTERM"); }
+    |         ^ help: use `()` instead of `_`: `()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#ignored_unit_patterns
+
+warning: `broker` (test "proxy_resolve") generated 1 warning
+warning: `broker` (bin "broker") generated 2 warnings (run `cargo clippy --fix --bin "broker" -p broker -- ` to apply 2 suggestions)
+warning: `broker` (lib test) generated 70 warnings (70 duplicates)
+warning: `broker` (bin "broker" test) generated 2 warnings (2 duplicates)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 57.19s

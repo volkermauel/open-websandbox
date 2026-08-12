@@ -55,6 +55,7 @@ pub fn install() -> PrometheusHandle {
 
 /// Render every registered metric in Prometheus text exposition format
 /// (`text/plain; version=0.0.4`). Installs the recorder on first use.
+#[must_use]
 pub fn gather() -> String {
     install().render()
 }

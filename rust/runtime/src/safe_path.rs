@@ -65,12 +65,11 @@ fn resolve(input: &Path, links: &mut u32) -> PathBuf {
             Component::RootDir => {
                 result = PathBuf::from("/");
             }
-            // `.` is a no-op.
-            Component::CurDir => {}
+            // `.` is a no-op; `Prefix` (a Windows drive letter) never appears on Linux.
+            Component::CurDir | Component::Prefix(_) => {}
             Component::ParentDir => {
                 result.pop();
             }
-            Component::Prefix(_) => {}
             Component::Normal(name) => {
                 result.push(name);
                 if let Ok(target) = std::fs::read_link(&result) {
@@ -85,9 +84,7 @@ fn resolve(input: &Path, links: &mut u32) -> PathBuf {
                         PathBuf::from("/")
                     } else {
                         result
-                            .parent()
-                            .map(Path::to_path_buf)
-                            .unwrap_or_else(|| PathBuf::from("/"))
+                            .parent().map_or_else(|| PathBuf::from("/"), Path::to_path_buf)
                     };
                     // Restart resolution from the symlink target, carrying the
                     // accumulated link counter so the global bound holds.
@@ -119,6 +116,11 @@ fn within(child: &Path, base: &Path) -> bool {
 /// 3. Absolute inputs are honoured as-is (open-terminal echoes cwd back);
 ///    relative inputs are joined to `base` after stripping any leading `/`.
 /// 4. The canonical result must equal `base` or sit beneath it, else 400.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] when the decoded, canonicalised path
+/// escapes `base` (`..` traversal, absolute escape, or symlink escape).
 pub fn safe_path(rel: &str, base: &Path) -> Result<PathBuf, ApiError> {
     let decoded = unquote(rel);
     let base = realpath(base);
@@ -140,6 +142,12 @@ pub fn safe_path(rel: &str, base: &Path) -> Result<PathBuf, ApiError> {
 /// Direct port of `server._request_base(subdir)`. The subdir is validated
 /// against [`SUBDIR_RE`] (no slashes / traversal / over-length) and created on
 /// first use; a subdir that escapes `workdir` is rejected.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] for an invalid `X-Workspace-Subdir` or one
+/// that escapes `workdir`, and [`ApiError::Internal`] if the subdir directory
+/// cannot be created on first use.
 pub fn request_base(workdir: &Path, subdir: Option<&str>) -> Result<PathBuf, ApiError> {
     let Some(sub) = subdir.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(realpath(workdir));
@@ -244,6 +252,12 @@ fn open_confined(resolved: &Path, base: &Path, mut opts: OpenOptions) -> Result<
 ///
 /// Use after [`safe_path`] for any read of file contents, so a symlink swapped
 /// between the `safe_path` check and this open cannot escape `/workspace`.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the final component is a symlink
+/// (TOCTOU swap) or the opened fd re-resolves outside `base`, and
+/// [`ApiError::Internal`] on any other open failure.
 pub fn open_read(resolved: &Path, base: &Path) -> Result<File, ApiError> {
     let mut opts = OpenOptions::new();
     opts.read(true);
@@ -254,6 +268,12 @@ pub fn open_read(resolved: &Path, base: &Path) -> Result<File, ApiError> {
 ///
 /// `create` creates the file if absent (mode 0o600); `truncate` truncates an
 /// existing file. Use after [`safe_path`] for any write of file contents.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the final component is a symlink
+/// (TOCTOU swap) or the opened fd re-resolves outside `base`, and
+/// [`ApiError::Internal`] on any other open failure.
 pub fn open_write(
     resolved: &Path,
     base: &Path,

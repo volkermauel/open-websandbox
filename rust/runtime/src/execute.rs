@@ -148,41 +148,38 @@ pub(crate) async fn run_command(
     // backgrounded children, only after they die). We then `child.wait()` to reap.
     let read = async { tokio::join!(read_opt(&mut stdout_h), read_opt(&mut stderr_h)) };
 
-    match tokio::time::timeout(Duration::from_secs(timeout_secs), read).await {
-        Ok((out_bytes, err_bytes)) => {
-            let status = child
-                .wait()
-                .await
-                .map_err(|e| ApiError::Internal(format!("failed to reap command: {e}")))?;
-            let stdout = out_bytes
-                .map(|b| String::from_utf8_lossy(&b).into_owned())
-                .unwrap_or_default();
-            let stderr = err_bytes
-                .map(|b| String::from_utf8_lossy(&b).into_owned())
-                .unwrap_or_default();
-            Ok(ExecuteResponse {
-                stdout: cap(&stdout, max),
-                stderr: cap(&stderr, max),
-                exit_code: status.code().unwrap_or(0),
-                timed_out: false,
-            })
+    if let Ok((out_bytes, err_bytes)) = tokio::time::timeout(Duration::from_secs(timeout_secs), read).await {
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| ApiError::Internal(format!("failed to reap command: {e}")))?;
+        let stdout = out_bytes
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
+        let stderr = err_bytes
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
+        Ok(ExecuteResponse {
+            stdout: cap(&stdout, max),
+            stderr: cap(&stderr, max),
+            exit_code: status.code().unwrap_or(0),
+            timed_out: false,
+        })
+    } else {
+        // D9: this run hit the /execute timeout.
+        metrics::counter!(EXECUTE_TIMEOUTS_TOTAL).increment(1);
+        // Timeout: SIGKILL the whole process group, reap the direct child.
+        if pid > 0 {
+            // Best-effort; ESRCH (already gone) is ignored.
+            let _ = killpg(Pid::from_raw(pid), Signal::SIGKILL);
         }
-        Err(_) => {
-            // D9: this run hit the /execute timeout.
-            metrics::counter!(EXECUTE_TIMEOUTS_TOTAL).increment(1);
-            // Timeout: SIGKILL the whole process group, reap the direct child.
-            if pid > 0 {
-                // Best-effort; ESRCH (already gone) is ignored.
-                let _ = killpg(Pid::from_raw(pid), Signal::SIGKILL);
-            }
-            let _ = child.wait().await;
-            Ok(ExecuteResponse {
-                stdout: String::new(),
-                stderr: String::new(),
-                exit_code: 124,
-                timed_out: true,
-            })
-        }
+        let _ = child.wait().await;
+        Ok(ExecuteResponse {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 124,
+            timed_out: true,
+        })
     }
 }
 

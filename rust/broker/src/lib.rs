@@ -1,4 +1,4 @@
-//! open-websandbox broker — the Open WebUI front door + Sandbox lifecycle.
+//! open-websandbox broker — the Open `WebUI` front door + Sandbox lifecycle.
 //!
 //! The broker's request path is the canonical one:
 //! authenticate the shared Bearer secret → [`resolve`] the per-session `Sandbox`

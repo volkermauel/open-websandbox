@@ -54,7 +54,7 @@ fn upload_basename(name: Option<&str>) -> &str {
 /// `directory` query param for `/files/upload`: the workspace base when absent,
 /// empty, or the literal `"null"`; otherwise a safe_path-resolved subdir.
 fn upload_target_dir(directory: Option<&str>, base: &Path) -> Result<PathBuf, ApiError> {
-    let d = directory.map(str::trim).unwrap_or("");
+    let d = directory.map_or("", str::trim);
     if d.is_empty() || d.eq_ignore_ascii_case("null") {
         Ok(base.to_path_buf())
     } else {
@@ -65,6 +65,12 @@ fn upload_target_dir(directory: Option<&str>, base: &Path) -> Result<PathBuf, Ap
 /// `POST /files/upload` — multipart `file` field written to `directory/<basename>`
 /// (default the workspace base). The runtime streams the body straight to disk;
 /// `X-Workspace-Subdir` selects the base, like every other `/files/*` handler.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] on a multipart stream error, a disk
+/// create/read/write/sync failure, a path that escapes the workspace, or if no
+/// `file` part is present.
 #[utoipa::path(
     post,
     path = "/files/upload",
@@ -130,6 +136,12 @@ pub async fn upload(
 /// `POST /upload` — the LLM-tool upload alias (multipart `file` to the workspace
 /// base). Returns `{"saved": path, "bytes": n}`, the shape the broker's curated
 /// `upload_file` tool resolves against.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] on a multipart stream error, a disk
+/// create/read/write/sync failure, a path that escapes the workspace, or if no
+/// `file` part is present.
 #[utoipa::path(
     post,
     path = "/upload",
@@ -187,6 +199,11 @@ pub async fn tool_upload(
 /// `POST /files/archive` — zip the listed paths and stream the archive back.
 /// Dirs recurse (files archived as `<basename>/<rel>`); a single file archives
 /// as its basename. `application/zip` + `Content-Disposition: attachment`.
+///
+/// # Panics
+///
+/// Panics only if the static `application/zip` / `Content-Disposition` header
+/// values fail to parse, which cannot happen for these constants.
 #[utoipa::path(
     post,
     path = "/files/archive",
@@ -286,7 +303,7 @@ fn build_zip(paths: &[PathBuf]) -> std::io::Result<Vec<u8>> {
 /// Recursively collect regular files under `root` (depth-first, name-sorted).
 fn collect_files_for_zip(root: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
     let mut entries: Vec<_> = std::fs::read_dir(root)?.collect::<Result<_, _>>()?;
-    entries.sort_by_key(|e| e.file_name());
+    entries.sort_by_key(std::fs::DirEntry::file_name);
     for entry in entries {
         let p = entry.path();
         if entry.file_type()?.is_dir() {

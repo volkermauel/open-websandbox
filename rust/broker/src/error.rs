@@ -34,7 +34,7 @@ pub enum ApiError {
     #[error("{0}")]
     Internal(String),
     /// 501 — broker-served surface that a later PR implements (resolve-on-
-    /// request reverse proxy, terminal WS relay, metrics, OpenAPI gen).
+    /// request reverse proxy, terminal WS relay, metrics, `OpenAPI` gen).
     #[error("{0}")]
     NotImplemented(String),
     /// 502 — upstream Kubernetes apiserver rejected a sandbox lifecycle call.
