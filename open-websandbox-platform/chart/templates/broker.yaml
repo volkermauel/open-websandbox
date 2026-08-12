@@ -206,6 +206,13 @@ spec:
         - name: BROKER_REAPER_POLL_SECONDS
           value: {{ .Values.broker.s3.reaperPollSeconds | quote }}
         {{- end }}
+        # #98 A3: per-user rate limiting on the gated surface.
+        - name: BROKER_RATE_LIMIT_ENABLED
+          value: {{ .Values.broker.rateLimit.enabled | quote }}
+        - name: BROKER_RATE_LIMIT_PER_SECOND
+          value: {{ .Values.broker.rateLimit.perSecond | quote }}
+        - name: BROKER_RATE_LIMIT_BURST
+          value: {{ .Values.broker.rateLimit.burst | quote }}
         {{- if $otlp }}
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: {{ $otlp | quote }}

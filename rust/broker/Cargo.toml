@@ -55,11 +55,12 @@ thiserror.workspace = true
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.29"
 tower = { version = "0.5", features = ["util"] }
+tower_governor = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 utoipa.workspace = true
 utoipa-scalar = { version = "0.3", features = ["axum"] }
+http = "1"
 
 [dev-dependencies]
-http = "1"
 wiremock = "0.6"

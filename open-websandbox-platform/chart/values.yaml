@@ -105,6 +105,14 @@ broker:
       # Namespaces allowed to call the broker on :8080. Default: the conventional
       # Open Web UI namespace. Add yours, e.g.  fromNamespaces: ["open-webui", "default"]
       fromNamespaces: ["open-webui"]
+  # Per-user rate limiting (#98 A3). A token-bucket per X-User-Id caps the
+  # gated surface (sandbox create, /execute, /files/*, terminals) at perSecond/burst
+  # requests; over-budget requests get 429 + Retry-After. Open probes (/healthz,
+  # /readyz, /metrics) are unlimited. Set enabled: false to disable entirely.
+  rateLimit:
+    enabled: true
+    perSecond: 20            # token-bucket refill rate (req/s) per user
+    burst: 40                # token-bucket capacity (max burst) per user
 
 
 sandboxTemplate:

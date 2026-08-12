@@ -24,6 +24,7 @@ pub mod error;
 pub mod leaser;
 pub mod metrics;
 pub mod proxy;
+pub mod rate_limit;
 pub mod reaper;
 pub mod resolve;
 pub mod runtime_key;

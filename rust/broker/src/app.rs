@@ -13,6 +13,7 @@ use crate::api::{
 };
 use crate::metrics::http_metrics_layer;
 use crate::proxy::proxy_catch_all;
+use crate::rate_limit;
 use crate::state::AppState;
 use crate::terminal::terminal_ws;
 
@@ -24,13 +25,18 @@ use crate::terminal::terminal_ws;
 /// declares [`Authed`](crate::auth::Authed) first so each is individually
 /// fail-closed.
 pub fn build_router(state: AppState) -> Router {
-    Router::new()
+    // #98 A3: open probes stay on a separate, UNLIMITED router so kubelet
+    // health/readiness and the /metrics scrape are never throttled by the
+    // per-user token-bucket. The gated surface (sandboxes, terminals, catch-all
+    // proxy for /execute, /files/*, …) carries the GovernorLayer.
+    let open: Router<AppState> = Router::new()
         // Open (unauthenticated) routes.
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics))
         .route("/openapi.json", get(openapi_json))
-        .route("/docs", get(docs))
+        .route("/docs", get(docs));
+    let gated: Router<AppState> = Router::new()
         // Gated (shared Bearer) broker-served routes.
         .route("/api/config", get(api_config))
         .route("/api/status", get(api_status))
@@ -45,7 +51,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/terminals/{id}", get(terminal_ws))
         // Catch-all reverse proxy: /execute, /files/*, /snapshot, /restore,
         // /api/terminals (POST), … → resolved runtime pod.
-        .route("/{*path}", any(proxy_catch_all))
+        .route("/{*path}", any(proxy_catch_all));
+    let gated = rate_limit::apply(gated, &state);
+    open.merge(gated)
         // D9: record HTTP rate/latency for every served request, keyed by the
         //      templated route (bounded-cardinality `path` label).
         .layer(from_fn_with_state(state.clone(), http_metrics_layer))
