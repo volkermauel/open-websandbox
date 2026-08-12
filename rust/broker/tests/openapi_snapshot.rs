@@ -1,4 +1,4 @@
-//! Frozen-snapshot test for the broker's generated OpenAPI document (D10 / issue #75 Q2).
+//! Frozen-snapshot test for the broker's generated `OpenAPI` document (D10 / issue #75 Q2).
 //!
 //! The OWUI-facing shape must not drift silently: this serializes the merged broker +
 //! runtime document to a stable, key-sorted JSON (round-tripped through `serde_json::Value`

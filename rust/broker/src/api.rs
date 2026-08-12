@@ -10,7 +10,7 @@
 //!   reverse proxy (`/{*path}`).
 //!
 //! What is real vs stubbed here is enumerated in the module docs of
-//! [`crate`]. Request/response shapes match the OpenAPI spec for the endpoints
+//! [`crate`]. Request/response shapes match the `OpenAPI` spec for the endpoints
 //! it defines; the Sandbox CRUD is the broker-internal lifecycle surface this PR
 //! introduces (C-2's resolve-on-request flow reuses it).
 
@@ -33,7 +33,10 @@ use crate::error::ApiError;
 use crate::metrics::{SANDBOXES_CREATED_TOTAL, SANDBOXES_DELETED_TOTAL};
 use crate::sandbox::{build_sandbox, extract_pod_template};
 use crate::state::AppState;
-use crate::store::{StoreError, StoreError::*};
+use crate::store::{
+    StoreError,
+    StoreError::{Conflict, Kube, NotFound},
+};
 
 // --- broker-served responses (match the OpenAPI shapes) -------------------
 
@@ -85,7 +88,7 @@ pub struct CreateSandboxRequest {
     pub profile: Option<Profile>,
 }
 
-/// OpenAPI schema for a `Sandbox` object on the wire (`apiVersion`/`kind`/`metadata`/
+/// `OpenAPI` schema for a `Sandbox` object on the wire (`apiVersion`/`kind`/`metadata`/
 /// `spec`/`status`). The CRUD handlers return the kube-generated [`shared::Sandbox`] (an
 /// identical shape); this broker-local schema surfaces the typed spec/status in the
 /// generated document (issue #75).
@@ -118,8 +121,7 @@ pub struct ListQuery {
 fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// Map a [`StoreError`] onto an [`ApiError`] for the generic (non-create) path.

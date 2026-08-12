@@ -1,4 +1,4 @@
-//! utoipa-generated OpenAPI document for the broker's OWUI-facing surface (D10).
+//! utoipa-generated `OpenAPI` document for the broker's OWUI-facing surface (D10).
 //!
 //! The broker is the front door OWUI talks to. Its document combines the broker-owned
 //! handlers (probes, `/api/config`, `/api/status`, sandbox CRUD) with the runtime surface
@@ -26,7 +26,7 @@ use crate::api::{
     ConfigResponse, CreateSandboxRequest, Features, HealthResponse, SandboxObject, StatusResponse,
 };
 
-/// The merged broker + runtime OpenAPI document.
+/// The merged broker + runtime `OpenAPI` document.
 ///
 /// `paths(...)` lists the broker-owned handlers; the runtime handlers are pulled in by
 /// merging [`runtime::openapi`] in [`openapi_document`]. The shared Bearer security
@@ -77,7 +77,7 @@ opaque passthroughs omitted from this document (issue #75 Q5)."
 )]
 pub struct ApiDoc;
 
-/// Build the OWUI-facing OpenAPI document: broker paths + schemas, the runtime surface
+/// Build the OWUI-facing `OpenAPI` document: broker paths + schemas, the runtime surface
 /// merged in, and the Bearer scheme registered. `info.version` tracks the broker crate
 /// version (utoipa fills it from `CARGO_PKG_VERSION` at compile time = `crate::version()`).
 #[must_use]

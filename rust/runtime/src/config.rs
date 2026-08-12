@@ -76,6 +76,7 @@ impl Default for RuntimeConfig {
 impl RuntimeConfig {
     /// Load configuration from process environment variables, applying the
     /// documented defaults (D12).
+    #[must_use]
     pub fn from_env() -> Self {
         Self::from_map(|name| env::var(name).ok().filter(|v| !v.is_empty()))
     }

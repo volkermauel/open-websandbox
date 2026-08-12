@@ -1,4 +1,4 @@
-//! Cross-crate OpenAPI helpers shared by the broker and runtime crates (D10).
+//! Cross-crate `OpenAPI` helpers shared by the broker and runtime crates (D10).
 //!
 //! Both the broker and runtime surface a Bearer (shared-secret / per-session-key)
 //! auth scheme and an identical `{"detail": "..."}` error body, so those live here
@@ -14,7 +14,7 @@ use utoipa::Modify;
 /// The security-scheme name operations reference via `security(("brokerBearer" = []))`.
 ///
 /// Gated broker paths use the OWUI→broker shared secret; gated runtime paths use the
-/// per-session key — both ride the same `HTTP Bearer` scheme name so the OpenAPI 🔒
+/// per-session key — both ride the same `HTTP Bearer` scheme name so the `OpenAPI` 🔒
 /// resolves consistently across the merged document.
 pub const BEARER_SCHEME: &str = "brokerBearer";
 
@@ -40,7 +40,7 @@ impl Modify for BearerAddon {
 
 /// Error body both control planes return: `{"detail": "..."}` (the
 /// `{ "detail": <string> }` shape — byte-for-byte parity, D11). Used as the
-/// error response `body` across the broker and runtime OpenAPI surfaces.
+/// error response `body` across the broker and runtime `OpenAPI` surfaces.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct ErrorResponse {
     /// Human-readable error detail.

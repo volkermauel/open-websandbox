@@ -50,8 +50,7 @@ pub(super) fn modified_secs(meta: &std::fs::Metadata) -> f64 {
     meta.modified()
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0)
+        .map_or(0.0, |d| d.as_secs_f64())
 }
 
 // --- raw-file response helper (view + download) -----------------------------

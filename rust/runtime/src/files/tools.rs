@@ -31,6 +31,13 @@ pub async fn list_ports(_auth: Authed) -> Json<serde_json::Value> {
 
 // --- /download/{*file_path} -------------------------------------------------
 
+/// Download a workspace-relative file as a byte attachment.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace,
+/// [`ApiError::NotFound`] if it is missing or not a regular file, and
+/// [`ApiError::Internal`] on a read failure.
 #[utoipa::path(
     get,
     path = "/download/{file_path}",
@@ -61,6 +68,12 @@ pub async fn tool_download(
 
 // --- /list/{*file_path} -----------------------------------------------------
 
+/// List the entries of a workspace-relative directory.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace and
+/// [`ApiError::NotFound`] if it is missing or not a directory.
 #[utoipa::path(
     get,
     path = "/list/{file_path}",
@@ -75,19 +88,26 @@ pub async fn tool_download(
         (status = 500, body = shared::ErrorResponse)
     )
 )]
+// reason: the body delegates to a sync helper, but axum's `Handler` trait
+// requires an `async fn`; there is nothing to `.await`.
+#[allow(clippy::unused_async)]
 pub async fn tool_list(
     _auth: Authed,
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(file_path): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    list_impl(&state, &headers, &file_path).await
+    list_impl(&state, &headers, &file_path)
 }
 
 /// `GET /list` + `GET /list/` — list the workspace root. The route
 /// `/list/{file_path:path}` matches the empty path (lists root); axum's
 /// `/list/{*file_path}` catch-all requires ≥1 segment, so these explicit routes
 /// cover the empty-path case (parity, D11).
+///
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if the workspace directory cannot be read.
 #[utoipa::path(
     get,
     path = "/list",
@@ -99,15 +119,18 @@ pub async fn tool_list(
         (status = 500, body = shared::ErrorResponse)
     )
 )]
+// reason: the body delegates to a sync helper, but axum's `Handler` trait
+// requires an `async fn`; there is nothing to `.await`.
+#[allow(clippy::unused_async)]
 pub async fn tool_list_root(
     _auth: Authed,
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    list_impl(&state, &headers, ".").await
+    list_impl(&state, &headers, ".")
 }
 
-async fn list_impl(
+fn list_impl(
     state: &AppState,
     headers: &HeaderMap,
     file_path: &str,
@@ -132,13 +155,12 @@ async fn list_impl(
     for n in names {
         let p = resolved.join(&n);
         // os.stat (follows symlinks); broken symlink → skip (TOCTOU/OSError).
-        match std::fs::metadata(&p) {
-            Ok(st) => entries.push(serde_json::json!({
+        if let Ok(st) = std::fs::metadata(&p) {
+            entries.push(serde_json::json!({
                 "name": n,
                 "is_dir": st.is_dir(),
                 "size": st.len(),
-            })),
-            Err(_) => continue,
+            }));
         }
     }
     Ok(Json(
@@ -148,6 +170,11 @@ async fn list_impl(
 
 // --- /exists/{*file_path} ---------------------------------------------------
 
+/// Probe existence / type of a workspace-relative path.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace.
 #[utoipa::path(
     get,
     path = "/exists/{file_path}",

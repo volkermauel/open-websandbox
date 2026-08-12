@@ -6,7 +6,7 @@
 //! helpers, and the drop-in config parsing (D12) — so that `broker` and
 //! `runtime` consume a single, audited set of definitions.
 //!
-//! PR-A is intentionally representative: the full CRD / OpenAPI type sets and
+//! PR-A is intentionally representative: the full CRD / `OpenAPI` type sets and
 //! the complete config object arrive in PR-B (runtime) and PR-C (broker).
 #![forbid(unsafe_code)]
 

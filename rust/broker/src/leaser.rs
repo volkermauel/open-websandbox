@@ -126,7 +126,8 @@ impl LeaseClient for KubeLease {
             // Lease exists: renew if ours / unclaimed, take over if expired, else defer.
             Ok(existing) => {
                 let spec = existing.spec.clone().unwrap_or_default();
-                let duration = spec.lease_duration_seconds.unwrap_or(self.duration_seconds) as i64;
+                let duration =
+                    i64::from(spec.lease_duration_seconds.unwrap_or(self.duration_seconds));
                 let held_by_other_live =
                     match (spec.holder_identity.as_deref(), spec.renew_time.as_ref()) {
                         (Some(holder), Some(rt)) if holder != self.identity => {
@@ -342,7 +343,7 @@ pub async fn run_leader_loop(
                 }
                 break;
             }
-            _ = tokio::time::sleep(renew_interval) => {}
+            () = tokio::time::sleep(renew_interval) => {}
         }
     }
     tracing::info!("leader loop shutting down — stepping down");

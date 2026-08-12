@@ -127,8 +127,7 @@ fn last_used_of(annotations: &BTreeMap<String, String>) -> Option<i64> {
 fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// The C-4 cold-tier offload seam: stream a sandbox's `/workspace` to cold
@@ -315,7 +314,7 @@ pub async fn run_reaper_loop(
                 tracing::info!("reaper loop shutting down");
                 return;
             }
-            _ = tokio::time::sleep(interval) => {}
+            () = tokio::time::sleep(interval) => {}
         }
     }
 }

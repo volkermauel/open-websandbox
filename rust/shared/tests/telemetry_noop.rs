@@ -1,4 +1,4 @@
-//! OTel no-op-when-unset contract (issue #74 Q3 → "support both"; the
+//! `OTel` no-op-when-unset contract (issue #74 Q3 → "support both"; the
 //! `observability-prometheus-otel` spec's "no collector configured" scenario).
 //!
 //! With `OTEL_EXPORTER_OTLP_ENDPOINT` unset, [`shared::init_telemetry`] installs

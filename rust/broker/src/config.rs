@@ -9,9 +9,9 @@
 use std::net::SocketAddr;
 
 /// Default broker listen address (matches the chart's `containerPort` 8080 and
-/// the `servers` URL in the OpenAPI spec).
+/// the `servers` URL in the `OpenAPI` spec).
 pub const DEFAULT_ADDR: SocketAddr = SocketAddr::V4(std::net::SocketAddrV4::new(
-    std::net::Ipv4Addr::new(0, 0, 0, 0),
+    std::net::Ipv4Addr::UNSPECIFIED,
     8080,
 ));
 
@@ -26,6 +26,7 @@ impl ServerConfig {
     /// Load from the environment. `BROKER_BIND_ADDR` (e.g. `0.0.0.0:8080`)
     /// overrides the default; an unparseable value falls back to the default
     /// (logged), so a bad override never blocks boot.
+    #[must_use]
     pub fn from_env() -> Self {
         Self::from_raw(std::env::var("BROKER_BIND_ADDR").ok().as_deref())
     }

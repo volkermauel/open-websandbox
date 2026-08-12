@@ -1,4 +1,4 @@
-//! Shared-Bearer authentication for Open WebUI ↔ broker requests.
+//! Shared-Bearer authentication for Open `WebUI` ↔ broker requests.
 //!
 //! Shared-Bearer guard for every proxied / admin hop. Each request must
 //! present `Authorization: Bearer <BROKER_SHARED_SECRET>`, compared constant-time

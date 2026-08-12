@@ -31,6 +31,11 @@ pub struct ListResponse {
 
 // --- /files/cwd --------------------------------------------------------------
 
+/// Return the effective workspace cwd (== home) for the session.
+///
+/// # Errors
+///
+/// Returns [`ApiError`] (via [`base_of`]) if `X-Workspace-Subdir` is invalid.
 #[utoipa::path(
     get,
     path = "/files/cwd",
@@ -59,6 +64,12 @@ pub struct CwdRequest {
     pub path: String,
 }
 
+/// Set the session cwd to a workspace-relative directory.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace and
+/// [`ApiError::NotFound`] if it is missing or not a directory.
 #[utoipa::path(
     post,
     path = "/files/cwd",
@@ -93,6 +104,13 @@ pub struct ListQuery {
     pub directory: Option<String>,
 }
 
+/// List the entries of a workspace-relative directory.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace,
+/// [`ApiError::NotFound`] if it is missing or not a directory, and
+/// [`ApiError::Internal`] if the directory cannot be read.
 #[utoipa::path(
     get,
     path = "/files/list",
@@ -129,7 +147,7 @@ pub async fn list_dir(
     let read = std::fs::read_dir(&resolved)
         .map_err(|e| ApiError::Internal(format!("list failed: {e}")))?;
     let mut names: Vec<String> = read
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter_map(|e| e.file_name().into_string().ok())
         .collect();
     names.sort();
@@ -155,7 +173,7 @@ fn entry_for(p: &Path) -> Option<Entry> {
     // `os.path.isdir` follows symlinks, so a symlink to a dir is
     // reported as "directory"; a broken symlink falls back to "file".
     let is_dir = if meta.file_type().is_symlink() {
-        std::fs::metadata(p).map(|m| m.is_dir()).unwrap_or(false)
+        std::fs::metadata(p).is_ok_and(|m| m.is_dir())
     } else {
         meta.is_dir()
     };
@@ -174,6 +192,13 @@ pub struct PathQuery {
     pub path: String,
 }
 
+/// Read a workspace file as JSON text, or raw bytes for an image.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace,
+/// [`ApiError::NotFound`] if it is missing or not a regular file, and
+/// [`ApiError::Internal`] on a read failure.
 #[utoipa::path(
     get,
     path = "/files/read",
@@ -239,6 +264,13 @@ pub struct WriteRequest {
     pub content: String,
 }
 
+/// Overwrite a workspace file (creating parents as needed).
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace or the
+/// create/open/write fails, and [`ApiError::Internal`] if the blocking write
+/// task joins with an error.
 #[utoipa::path(
     post,
     path = "/files/write",
@@ -287,6 +319,12 @@ pub async fn write_file(
 
 // --- /files/mkdir ------------------------------------------------------------
 
+/// Create a workspace directory (and missing parents).
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace or the
+/// directory cannot be created.
 #[utoipa::path(
     post,
     path = "/files/mkdir",
@@ -324,6 +362,13 @@ pub struct MoveRequest {
     pub destination: String,
 }
 
+/// Move/rename a workspace entry (source -> destination).
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if either path escapes the workspace or
+/// the rename fails, [`ApiError::NotFound`] if the source is missing, and
+/// [`ApiError::Conflict`] if the destination already exists.
 #[utoipa::path(
     post,
     path = "/files/move",
@@ -361,6 +406,12 @@ pub async fn move_entry(
 
 // --- /files/delete -----------------------------------------------------------
 
+/// Delete a workspace file or directory (recursively).
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace or the
+/// removal fails, and [`ApiError::NotFound`] if the path is missing.
 #[utoipa::path(
     delete,
     path = "/files/delete",
@@ -382,14 +433,11 @@ pub async fn delete_entry(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let base = base_of(&state, &headers)?;
     let full = safe_path(&q.path, &base)?;
-    let meta = match std::fs::symlink_metadata(&full) {
-        Ok(m) => m,
-        Err(_) => return Err(ApiError::NotFound("Path not found".to_string())),
+    let Ok(meta) = std::fs::symlink_metadata(&full) else {
+        return Err(ApiError::NotFound("Path not found".to_string()));
     };
     let is_dir = if meta.file_type().is_symlink() {
-        std::fs::metadata(&full)
-            .map(|m| m.is_dir())
-            .unwrap_or(false)
+        std::fs::metadata(&full).is_ok_and(|m| m.is_dir())
     } else {
         meta.is_dir()
     };
@@ -407,6 +455,13 @@ pub async fn delete_entry(
 
 // --- /files/view ------------------------------------------------------------
 
+/// Stream a workspace file's raw bytes (content-type + disposition).
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace,
+/// [`ApiError::NotFound`] if it is missing or not a regular file, and
+/// [`ApiError::Internal`] on a read failure.
 #[utoipa::path(
     get,
     path = "/files/view",
@@ -453,6 +508,13 @@ pub struct ReplaceRequest {
     pub replacements: Vec<ReplacementChunk>,
 }
 
+/// Apply one or more find/replace chunks to a workspace file.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace, the
+/// read/write fails, or a replacement target is missing/ambiguous, and
+/// [`ApiError::NotFound`] if the file is missing.
 #[utoipa::path(
     post,
     path = "/files/replace",

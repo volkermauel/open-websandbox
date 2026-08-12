@@ -1,7 +1,7 @@
-//! OTel span-emission contract (issue #74 Q3 → "support both"; the
+//! `OTel` span-emission contract (issue #74 Q3 → "support both"; the
 //! `observability-prometheus-otel` spec's "collector configured" scenario).
 //!
-//! Asserts the OTel layer actually **produces spans**: spans emitted via
+//! Asserts the `OTel` layer actually **produces spans**: spans emitted via
 //! `tracing` (the same path the broker/runtime instrumentation uses) are
 //! bridged into OpenTelemetry and captured by an in-memory span exporter. This
 //! is a dedicated test binary using [`opentelemetry_sdk`]'s
@@ -17,7 +17,7 @@ use opentelemetry_sdk::trace::{
 use opentelemetry_sdk::Resource;
 use tracing_subscriber::layer::SubscriberExt;
 
-/// Spans emitted through `tracing` are bridged into OTel and exported; the
+/// Spans emitted through `tracing` are bridged into `OTel` and exported; the
 /// representative `sandbox.resolve` (parent) + `runtime.hop` (child) shapes are
 /// recorded with the correct parent/child link.
 #[test]

@@ -99,8 +99,7 @@ fn map_store_err(err: StoreError) -> ApiError {
 fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// Resolve the per-session Sandbox: get-or-create, then poll until Ready + IP.

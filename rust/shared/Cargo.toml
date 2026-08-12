@@ -51,3 +51,8 @@ opentelemetry_sdk = { workspace = true, features = ["testing"] }
 tracing.workspace = true
 tracing-opentelemetry.workspace = true
 tracing-subscriber.workspace = true
+
+# Issue #100 / B5: opt into the workspace-wide lint config (clippy::pedantic
+# at `warn`, neg. priority). See `[workspace.lints]` in the root manifest.
+[lints]
+workspace = true

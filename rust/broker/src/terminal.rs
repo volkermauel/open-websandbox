@@ -98,12 +98,14 @@ pub fn terminal_identity(
         .persistence
         .as_deref()
         .map(str::to_ascii_lowercase)
-        .map(|p| match p.as_str() {
-            "persistent" => Profile::Persistent,
-            "ephemeral" => Profile::Ephemeral,
-            _ => default_profile,
-        })
-        .unwrap_or_else(|| profile_from_header(headers, default_profile));
+        .map_or_else(
+            || profile_from_header(headers, default_profile),
+            |p| match p.as_str() {
+                "persistent" => Profile::Persistent,
+                "ephemeral" => Profile::Ephemeral,
+                _ => default_profile,
+            },
+        );
     Ok(TerminalIdentity {
         user_id,
         session_id,

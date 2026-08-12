@@ -1,4 +1,4 @@
-//! utoipa-generated OpenAPI document for the runtime's tool surface (D10).
+//! utoipa-generated `OpenAPI` document for the runtime's tool surface (D10).
 //!
 //! These paths (`/execute`, `/files/*`, `/snapshot`, `/restore`, `/api/terminals*`,
 //! `/download`, `/list`, `/exists`, `/upload`, `/ports`) are OWUI-reachable through the
@@ -24,7 +24,7 @@ use crate::files::{
 use crate::snapshot::RestoreResponse;
 use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
 
-/// The runtime tool-surface OpenAPI document (merged into the broker's).
+/// The runtime tool-surface `OpenAPI` document (merged into the broker's).
 ///
 /// `info` is intentionally empty here — the broker's document supplies `title`/`version`
 /// (pinned to the broker crate version, issue #75 Q4). Only `paths` + `components` are
@@ -72,7 +72,7 @@ use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
 )]
 pub struct RuntimeApiDoc;
 
-/// Build the runtime tool-surface OpenAPI document (consumed by the broker's
+/// Build the runtime tool-surface `OpenAPI` document (consumed by the broker's
 /// `openapi_document()` via [`OpenApi::merge`]).
 #[must_use]
 pub fn openapi_document() -> utoipa::openapi::OpenApi {

@@ -28,7 +28,7 @@ pub fn secret_name(sandbox_name: &str) -> String {
 }
 
 /// A fresh 256-bit per-session key, hex-encoded (64 chars). CSPRNG-sourced via
-/// `rand::rng()` (ThreadRng / ChaCha12) — never a placeholder the runtime's
+/// `rand::rng()` (`ThreadRng` / `ChaCha12`) — never a placeholder the runtime's
 /// auth rejects. The encoding differs from a URL-safe token, but the entropy
 /// and the contract — an opaque bearer string the runtime compares in constant
 /// time — are identical.

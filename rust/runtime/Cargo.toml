@@ -68,3 +68,8 @@ tempfile = "3"
 # upload/archive contract tests can read archives back + assert their entries.
 zip = { version = "8", default-features = false, features = ["deflate"] }
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
+
+# Issue #100 / B5: opt into the workspace-wide lint config (clippy::pedantic
+# at `warn`, neg. priority). See `[workspace.lints]` in the root manifest.
+[lints]
+workspace = true

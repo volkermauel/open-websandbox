@@ -89,6 +89,7 @@ pub struct TerminalRegistry {
 }
 
 impl TerminalRegistry {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -104,6 +105,8 @@ struct Session {
 }
 
 impl Drop for Session {
+    // reason: `pid` is a small positive `u32` from portable-pty; it always fits an `i32`.
+    #[allow(clippy::cast_possible_wrap)]
     fn drop(&mut self) {
         // Safety net only: every normal teardown path (`teardown_one`) SIGKILLs the
         // group and `wait()`s to reap. If a `Session` is ever dropped without that,
@@ -149,6 +152,8 @@ async fn is_alive(session: &Arc<Mutex<Session>>) -> bool {
 /// `portable-pty` spawns the shell via `setsid()`, so the group id equals the pid —
 /// (`os.killpg(os.getpgid(pid), SIGKILL)`). The blocking reap
 /// runs on a blocking thread so it never stalls the async runtime.
+// reason: `pid` is a small positive `u32` from portable-pty; it always fits an `i32`.
+#[allow(clippy::cast_possible_wrap)]
 async fn teardown_one(session: Arc<Mutex<Session>>) {
     let pid = { session.lock().await.pid };
     // Instant: just delivers the signal. ESRCH (already gone) is ignored.
@@ -169,6 +174,12 @@ async fn teardown_one(session: Arc<Mutex<Session>>) {
 // ---------------------------------------------------------------------------
 
 /// `POST /api/terminals` — spawn a new PTY shell session.
+///
+/// # Errors
+///
+/// Returns [`ApiError`] (via [`request_base`]) for an invalid workspace
+/// subdir, [`ApiError::TooManyRequests`] when the session cap is reached, and
+/// [`ApiError::ServiceUnavailable`] if the PTY shell fails to spawn.
 #[utoipa::path(
     post,
     path = "/api/terminals",
@@ -214,7 +225,7 @@ pub async fn create_terminal(
 
         // Cap is checked AFTER reaping but BEFORE recreating an existing id
         // (`len(_terminals) >= MAX` ordering).
-        if (map.len() as u32) >= cap {
+        if map.len() >= cap as usize {
             drop(map);
             for s in to_teardown {
                 teardown_one(s).await;
@@ -287,6 +298,11 @@ fn spawn_pty(shell: &str, cwd: &Path) -> Result<Session, String> {
 // ---------------------------------------------------------------------------
 
 /// `GET /api/terminals` — list live sessions, reaping any dead ones observed.
+///
+/// # Errors
+///
+/// Currently always returns `Ok`; the `Result` keeps the handler signature
+/// uniform with the other `/api/terminals` endpoints.
 #[utoipa::path(
     get,
     path = "/api/terminals",
@@ -438,12 +454,9 @@ async fn relay(state: AppState, mut socket: WebSocket, id: String) {
             _ => None,
         }
     };
-    let (writer, reader) = match pair {
-        Some(p) => p,
-        None => {
-            close_unknown(&mut socket).await;
-            return;
-        }
+    let Some((writer, reader)) = pair else {
+        close_unknown(&mut socket).await;
+        return;
     };
 
     // Stdin pump: a dedicated OS thread owns the blocking master writer so a full PTY
@@ -496,7 +509,7 @@ async fn relay(state: AppState, mut socket: WebSocket, id: String) {
                 Some(Ok(Message::Text(text))) => {
                     apply_control(&text, &session).await;
                 }
-                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                Some(Ok(Message::Close(_)) | Err(_)) | None => break,
                 // Ping/Pong are auto-answered by axum; ignore everything else.
                 _ => {}
             },
@@ -545,6 +558,9 @@ async fn close_unknown(socket: &mut WebSocket) {
 /// Apply one inbound TEXT control frame. Only `resize` is honoured; an `auth` frame
 /// is tolerated (auth already ran at upgrade); anything else (incl. non-JSON) is
 /// ignored (tolerant of unknown frames).
+// reason: `rows`/`cols` are clamped to `u16::MAX` just above, so the narrowing
+// `u64`→`u16` cast never truncates a real value.
+#[allow(clippy::cast_possible_truncation)]
 async fn apply_control(text: &str, session: &Arc<Mutex<Session>>) {
     let Ok(payload) = serde_json::from_str::<Value>(text) else {
         return; // malformed → ignored
@@ -557,14 +573,14 @@ async fn apply_control(text: &str, session: &Arc<Mutex<Session>>) {
         // (defaults 24/80, errors swallowed).
         let rows = payload
             .get("rows")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(24)
-            .clamp(1, u16::MAX as u64) as u16;
+            .clamp(1, u64::from(u16::MAX)) as u16;
         let cols = payload
             .get("cols")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(80)
-            .clamp(1, u16::MAX as u64) as u16;
+            .clamp(1, u64::from(u16::MAX)) as u16;
         let _ = session.lock().await.master.resize(PtySize {
             rows,
             cols,
@@ -602,14 +618,16 @@ fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 /// Opaque session id when no `X-Session-Id` is supplied
 /// (`uuid4()[:8]` equivalent). We mix a monotonic counter with the current time into 8 hex
 /// digits — process-unique without pulling in a randomness crate.
+// reason: the high bits of the nanos timestamp are mixed into a session-id
+// hash; truncation after ~584 years is harmless and does not affect uniqueness.
+#[allow(clippy::cast_possible_truncation)]
 fn random_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(1);
     let n = N.fetch_add(1, Ordering::SeqCst);
     let t = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_nanos() as u64);
     let mix = n.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(t);
     format!("{:08x}", mix & 0xFFFF_FFFF)
 }
@@ -617,6 +635,9 @@ fn random_id() -> String {
 /// `datetime.now(timezone.utc).isoformat()` with a `Z` suffix, hand-rolled from
 /// `SystemTime` (no `time`/`chrono` dep — keeps the audited tree minimal per D8).
 /// Always emits 6 fractional digits: `YYYY-MM-DDTHH:MM:SS.ffffffZ`.
+// reason: seconds since the Unix epoch fit in `i64` for all realistic dates
+// (i64::MAX ≈ year 292 billion), so the widening cast cannot lose the sign.
+#[allow(clippy::cast_possible_wrap)]
 fn now_iso_utc() -> String {
     let dur = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -634,6 +655,9 @@ fn now_iso_utc() -> String {
 
 /// Howard Hinnant's `civil_from_days` — pure arithmetic, no `unsafe`. Converts days
 /// since the Unix epoch (1970-01-01) into a proleptic-Gregorian `(year, month, day)`.
+// reason: Hinnant's algorithm guarantees `m`∈[1,12] and `d`∈[1,31], so the
+// `i64`→`u32` casts of those two values never truncate.
+#[allow(clippy::cast_possible_truncation)]
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;

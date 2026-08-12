@@ -1,4 +1,4 @@
-//! Reverse proxy: forward Open WebUI runtime-tool requests to the resolved
+//! Reverse proxy: forward Open `WebUI` runtime-tool requests to the resolved
 //! sandbox pod.
 //!
 //! The shared Bearer is validated up-front by
@@ -96,8 +96,7 @@ pub fn forward_identity(
         .get("x-session-id")
         .and_then(|v| v.to_str().ok())
         .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-        .unwrap_or_else(|| user_id.to_string());
+        .map_or_else(|| user_id.to_string(), str::to_owned);
     let profile = profile_from_header(headers, default_profile);
     Ok(ForwardIdentity {
         user_id: user_id.to_string(),
@@ -134,7 +133,7 @@ pub fn build_forward_headers(
     runtime_api_key: &str,
 ) -> HeaderMap {
     let mut fwd = HeaderMap::new();
-    for (name, value) in inbound.iter() {
+    for (name, value) in inbound {
         if is_hop(name.as_str()) {
             continue;
         }
@@ -204,8 +203,7 @@ pub fn rewrite_location(loc: &str) -> String {
     };
     after_authority
         .split_once('#')
-        .map(|(p, _)| p)
-        .unwrap_or(after_authority)
+        .map_or(after_authority, |(p, _)| p)
         .to_string()
 }
 
@@ -221,8 +219,7 @@ pub async fn proxy_catch_all(
     let path_and_query = req
         .uri()
         .path_and_query()
-        .map(|pq| pq.as_str().to_owned())
-        .unwrap_or_else(|| "/".to_string());
+        .map_or_else(|| "/".to_string(), |pq| pq.as_str().to_owned());
 
     let identity = forward_identity(&headers, state.config.default_profile)?;
     let resolved = resolve_sandbox(
@@ -290,6 +287,7 @@ pub async fn proxy_catch_all(
 
 /// Stream an upstream reqwest response back as an axum response: copy status +
 /// non-hop headers, rewrite a 3xx `Location`, and stream the body.
+#[allow(clippy::unused_async)] // kept async: every caller `.await`s it; going sync churns call sites for no gain
 async fn forward_response(upstream: reqwest::Response) -> Result<Response, ApiError> {
     let status = upstream.status();
     let upstream_headers = upstream.headers().clone();
