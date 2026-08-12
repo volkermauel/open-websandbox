@@ -20,7 +20,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::auth::Authed;
 use crate::error::ApiError;
-use crate::safe_path::{request_base, safe_path};
+use crate::safe_path::{open_read, open_write, request_base, safe_path};
 use crate::state::AppState;
 
 fn subdir_from(headers: &HeaderMap) -> Option<&str> {
@@ -234,8 +234,12 @@ pub async fn read_file(
     // Image -> raw bytes with guessed mime (matches open-terminal contract).
     let mime = mime_guess::from_path(&full).first_or_octet_stream();
     if mime.type_() == mime_guess::mime::IMAGE {
-        let bytes =
-            std::fs::read(&full).map_err(|e| ApiError::Internal(format!("read failed: {e}")))?;
+        // #99 A5: TOCTOU-safe read — re-open with O_NOFOLLOW + /proc re-resolve
+        // so a symlink swapped between safe_path and this read cannot escape.
+        let mut file = open_read(&full, &base)?;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut bytes)
+            .map_err(|e| ApiError::Internal(format!("read failed: {e}")))?;
         return Ok((
             StatusCode::OK,
             [(axum::http::header::CONTENT_TYPE, mime.as_ref().to_string())],
@@ -243,7 +247,10 @@ pub async fn read_file(
         )
             .into_response());
     }
-    let content = std::fs::read_to_string(&full)
+    // #99 A5: TOCTOU-safe read (see image branch above).
+    let mut file = open_read(&full, &base)?;
+    let mut content = String::new();
+    std::io::Read::read_to_string(&mut file, &mut content)
         .map_err(|e| ApiError::Internal(format!("read failed: {e}")))?;
     let total_lines = content.lines().count();
     Ok(Json(serde_json::json!({
@@ -292,13 +299,20 @@ pub async fn write_file(
                 .map_err(|e| ApiError::BadRequest(format!("{e}")))?;
         }
     }
-    // Non-blocking write (issue #82): was `std::fs::write`.
-    tokio::fs::write(&full, &data)
-        .await
-        .map_err(|e| ApiError::BadRequest(format!("{e}")))?;
-    Ok(Json(
-        serde_json::json!({ "path": full, "size": data.len() }),
-    ))
+    // Non-blocking + TOCTOU-safe write (#82 + #99 A5): the confined open (open_write,
+    // O_NOFOLLOW + /proc re-resolve, create+truncate) and the data write both run on
+    // the blocking pool so the single tokio worker is never held, and the write is
+    // fully complete before the handler returns.
+    let size = data.len();
+    let full_for_write = full.clone();
+    tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
+        let mut file = open_write(&full_for_write, &base, true, true)?;
+        std::io::Write::write_all(&mut file, &data)
+            .map_err(|e| ApiError::BadRequest(format!("{e}")))
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("write join failed: {e}")))??;
+    Ok(Json(serde_json::json!({ "path": full, "size": size })))
 }
 
 // --- /files/mkdir ------------------------------------------------------------
