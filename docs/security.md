@@ -10,7 +10,7 @@ residual risks accepted for v0.1.0.
 sandboxing + prevention of accidental cross-session leakage** — not resistance to a
 dedicated, hostile tenant. A **shared host kernel is an accepted residual risk**. If you
 must run mutually-hostile tenants, use separate clusters (kernel-level isolation is out of
-scope for v0.1.0). See `openspec/changes/adopt-agent-sandbox/design.md` for the decision log.
+scope for v0.1.0). See `openspec/changes/archive/adopt-agent-sandbox/design.md` for the decision log.
 
 ## Isolation layers (defense in depth)
 

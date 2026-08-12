@@ -28,9 +28,9 @@ tenants) · 🔵 P2 = battle-test / advanced. Effort: **S** ≤½ day · **M** �
 |---|-----|-------------|-----|--------|
 | 1 | **No GitHub Release / Helm chart published** | `.github/workflows/release.yml` | add `helm package` + `helm push oci://ghcr.io/<o>/charts`, `softprops/action-gh-release` attaching the `.tgz`; bump `permissions: contents: write` | **M** |
 | 2 | **CHANGELOG.md absent** | repo root | seed Keep-a-Changelog with v0.1.0 | **S** |
-| 3 | **Python deps unpinned** | `broker/requirements.txt`, `runtime/requirements-{app,common}.txt` | `uv pip compile` → exact versions (digests optional) | **S** |
+| 3 | ✅ **Dep pinning** | `rust/Cargo.lock` (workspace, single-version), `requirements-test.txt` (e2e) | Rust rewrite replaced the unpinned Python requirements with a locked `Cargo.lock`; `cargo deny`/`cargo audit` run in `rust.yml` (see #100 for making the advisory gate hard-fail) | done |
 | 4 | **No git remote → whole release path unverified** | repo | create repo, push, tag `v0.1.0-rc1`, dry-run tag→3 images→chart OCI→GitHub Release end-to-end | **S** (ops) |
-| 5 | **`BROKER_SHARED_SECRET` fail-open + literal default** | `broker/main.py` (`_auth`), `chart/values.yaml` | **fail-closed**: refuse start if unset/placeholder; drop `dev-shared-secret-change-me`; generate 32-byte `randAlphaNum` on install | **S** |
+| 5 | ✅ **`BROKER_SHARED_SECRET` fail-open + literal default** | `rust/broker/src/auth.rs` + `main.rs`, `chart/values.yaml` | **fail-closed** implemented: the broker refuses to start *and* rejects requests if the secret is unset or still `dev-shared-secret-change-me`; the chart generates a fresh 32-byte secret on install | done |
 | 6 | **No `imagePullSecret` path** | `chart/values.yaml` + `templates/broker.yaml` + `deploy.md` | add `imagePullSecrets: []` value + conditional block on all 3 deployments + a deploy.md `regcred` section | **M** |
 | 7 | **README quickstart not copy-pasteable** | `README.md` | finalize registry owner (or a public sample image); numbered quickstart ending in a verified `GET /api/config` | **M** |
 
@@ -63,7 +63,7 @@ tenants) · 🔵 P2 = battle-test / advanced. Effort: **S** ≤½ day · **M** �
 | 16 | **OpenAPI spec diverges from runtime** | `broker/openapi_spec.py` vs `runtime/server.py` | curated spec lists 5 routes; runtime exposes ~20 (`/files/*`, `/api/terminals`); the broker's own migrate calls paths **absent from the spec**. Reconcile, or scope it "curated LLM subset"; tie `info.version` to `appVersion` | **M** |
 | 17 | **Broker PodSecurity not hardened** | `deploy/base/broker.yaml` | router/runtime are locked down (non-root, readOnlyRootFilesystem, drop ALL, seccomp); **broker is not**. Add `pod-security.kubernetes.io/enforce=restricted` + `securityContext` | **S** |
 | 18 | **Single shared secret = cross-tenant impersonation** | `broker/main.py` (trusts `X-User-Id`) | any secret holder is any user. Per-tenant / short-lived OIDC-bound tokens + documented rotation/distribution (deferred in D5 — flag as known limitation if v0.1.0 ships without it) | **M** |
-| 19 | **`design.md` has 4 open questions incl. D1** | `openspec/changes/adopt-agent-sandbox/design.md` | resolve D1 (dedicate+taint sandbox nodes vs co-tenancy with CNPG/argocd — security-relevant); convert to ADR (context/decision/consequences) | **S–M** |
+| 19 | **`design.md` has 4 open questions incl. D1** | `openspec/changes/archive/adopt-agent-sandbox/design.md` | resolve D1 (dedicate+taint sandbox nodes vs co-tenancy with CNPG/argocd — security-relevant); convert to ADR (context/decision/consequences) | **S–M** |
 
 Minor P1: `RUNTIME_API_KEY` inter-component auth hardening; IPv6 DNS egress rule missing
 (`networkpolicy-runtime.yaml` IPv4-only); dev-scale quotas (50 PVC / 7-day reap ≈ ~20

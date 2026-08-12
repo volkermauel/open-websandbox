@@ -1,13 +1,13 @@
 # Contributing to open-websandbox
 
 Thanks for helping! open-websandbox is a Kubernetes sandbox platform backing Open WebUI's
-"Open Terminal": a Python/FastAPI **broker** + **runtime**, a Go **sandbox-router** (built
+"Open Terminal": a Rust/Axum **broker** + **runtime**, a Go **sandbox-router** (built
 from upstream `kubernetes-sigs/agent-sandbox`), and a **Helm chart** for deployment.
 
 ## Repo layout
 
-- `open-websandbox-platform/broker/` — broker (Python, FastAPI): owns sandbox lifecycle
-- `open-websandbox-platform/runtime/` — runtime (Python, FastAPI): runs inside each sandbox pod
+- `rust/` — Rust workspace (`shared/`, `broker/`, `runtime/`; Axum): the broker owns sandbox
+  lifecycle; the runtime runs inside each sandbox pod
 - `open-websandbox-platform/chart/` — the Helm chart (the deployment mechanism)
 - `open-websandbox-platform/deploy/base/` — the source manifests the chart reproduces (synced to live)
 - `infra/gvisor/` — gVisor (runsc) node setup playbooks
@@ -16,18 +16,16 @@ from upstream `kubernetes-sigs/agent-sandbox`), and a **Helm chart** for deploym
 
 ## Development
 
-- **Python 3.12.** Install test deps + the component requirements, then run unit tests:
+- **Rust control plane.** Format, lint, and test the broker + runtime:
 
   ```bash
-  pip install -r requirements-test.txt \
-              -r open-websandbox-platform/runtime/requirements-app.txt \
-              -r open-websandbox-platform/runtime/requirements-common.txt \
-              -r open-websandbox-platform/broker/requirements.txt
-  pytest tests/unit -q
+  cd rust
+  cargo fmt --check
+  cargo clippy --all-targets -- -D warnings
+  cargo test --workspace
   ```
 
-  Runtime tests use a **real filesystem + PTY** (Linux) — no cluster needed.
-- **Lint:** `ruff check open-websandbox-platform`.
+  Tests are real-filesystem + PTY integration tests (Linux) — no cluster needed.
 - **Helm chart:** keep it reproducing `deploy/base/` exactly (parameterized only by values):
 
   ```bash
@@ -42,7 +40,7 @@ from upstream `kubernetes-sigs/agent-sandbox`), and a **Helm chart** for deploym
 
 Non-trivial work starts with an **OpenSpec** change proposal under `openspec/changes/` (see
 the existing `adopt-agent-sandbox` and `release-v0-1-0` changes for the format). Open a PR;
-CI runs `ruff` + unit tests on every push, and the KIND e2e suite on PRs.
+CI runs `cargo fmt`/`clippy`/`test` on every push, and the KIND e2e suite on PRs.
 
 ## Commits & PRs
 
