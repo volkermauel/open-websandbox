@@ -417,4 +417,3 @@ async fn rate_limit_returns_429_per_user_when_burst_exhausted() {
         "open probes are not rate-limited"
     );
 }
-}
