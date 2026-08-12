@@ -233,14 +233,25 @@ pub async fn proxy_catch_all(
     )
     .await?;
 
-    // PR-C-5 / #4: per-session runtime key for this sandbox; fall back to the
-    // shared BROKER_RUNTIME_API_KEY only when the per-session Secret is absent.
+    // #98: the per-session runtime key is MANDATORY (hard cutover, no shared-key
+    // fallback). A missing or unreadable key is a misconfiguration — reject the
+    // request rather than fall back to a shared `BROKER_RUNTIME_API_KEY`, which would
+    // re-open the cross-sandbox lateral-movement risk per-session keys eliminated.
     let runtime_api_key = match state.store.read_runtime_key(&resolved.name).await {
         Ok(Some(k)) => k,
-        Ok(None) => state.config.runtime_api_key.clone(),
+        Ok(None) => {
+            return Err(ApiError::BadGateway(format!(
+                "no per-session runtime key for sandbox {} (shared-key fallback removed; \
+                 ensure the broker provisioned an owui-runtime-key-* secret)",
+                resolved.name
+            )));
+        }
         Err(e) => {
-            tracing::warn!(sandbox = %resolved.name, error = %e, "read runtime key failed; using shared");
-            state.config.runtime_api_key.clone()
+            tracing::warn!(sandbox = %resolved.name, error = %e, "read runtime key failed");
+            return Err(ApiError::BadGateway(format!(
+                "read runtime key for sandbox {} failed: {e}",
+                resolved.name
+            )));
         }
     };
     let fwd = build_forward_headers(
