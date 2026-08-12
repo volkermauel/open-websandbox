@@ -437,8 +437,7 @@ pub async fn delete_entry(
         return Err(ApiError::NotFound("Path not found".to_string()));
     };
     let is_dir = if meta.file_type().is_symlink() {
-        std::fs::metadata(&full)
-            .is_ok_and(|m| m.is_dir())
+        std::fs::metadata(&full).is_ok_and(|m| m.is_dir())
     } else {
         meta.is_dir()
     };

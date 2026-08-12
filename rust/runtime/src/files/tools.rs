@@ -39,6 +39,8 @@ pub async fn list_ports(_auth: Authed) -> Json<serde_json::Value> {
 /// [`ApiError::NotFound`] if it is missing or not a regular file, and
 /// [`ApiError::Internal`] on a read failure.
 #[utoipa::path(
+    get,
+    path = "/download/{file_path}",
     tag = "tools",
     params(("file_path" = String, Path, description = "Workspace-relative file path")),
     security(("brokerBearer" = [])),
@@ -153,13 +155,12 @@ fn list_impl(
     for n in names {
         let p = resolved.join(&n);
         // os.stat (follows symlinks); broken symlink → skip (TOCTOU/OSError).
-        match std::fs::metadata(&p) {
-            Ok(st) => entries.push(serde_json::json!({
+        if let Ok(st) = std::fs::metadata(&p) {
+            entries.push(serde_json::json!({
                 "name": n,
                 "is_dir": st.is_dir(),
                 "size": st.len(),
-            })),
-            Err(_) => {},
+            }));
         }
     }
     Ok(Json(

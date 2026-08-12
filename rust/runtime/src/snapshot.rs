@@ -309,9 +309,9 @@ pub async fn restore(
                 break;
             }
         };
-        let chunk = match frame.into_data() {
-            Ok(b) => b,
-            Err(_) => continue, // trailers frame — ignore
+        // trailers frame — ignore
+        let Ok(chunk) = frame.into_data() else {
+            continue;
         };
         received = received.saturating_add(chunk.len() as u64);
         if received > cap {

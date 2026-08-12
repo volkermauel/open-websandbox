@@ -84,7 +84,8 @@ fn resolve(input: &Path, links: &mut u32) -> PathBuf {
                         PathBuf::from("/")
                     } else {
                         result
-                            .parent().map_or_else(|| PathBuf::from("/"), Path::to_path_buf)
+                            .parent()
+                            .map_or_else(|| PathBuf::from("/"), Path::to_path_buf)
                     };
                     // Restart resolution from the symlink target, carrying the
                     // accumulated link counter so the global bound holds.

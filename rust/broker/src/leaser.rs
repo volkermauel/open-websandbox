@@ -126,7 +126,8 @@ impl LeaseClient for KubeLease {
             // Lease exists: renew if ours / unclaimed, take over if expired, else defer.
             Ok(existing) => {
                 let spec = existing.spec.clone().unwrap_or_default();
-                let duration = i64::from(spec.lease_duration_seconds.unwrap_or(self.duration_seconds));
+                let duration =
+                    i64::from(spec.lease_duration_seconds.unwrap_or(self.duration_seconds));
                 let held_by_other_live =
                     match (spec.holder_identity.as_deref(), spec.renew_time.as_ref()) {
                         (Some(holder), Some(rt)) if holder != self.identity => {

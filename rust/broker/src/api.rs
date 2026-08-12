@@ -33,7 +33,10 @@ use crate::error::ApiError;
 use crate::metrics::{SANDBOXES_CREATED_TOTAL, SANDBOXES_DELETED_TOTAL};
 use crate::sandbox::{build_sandbox, extract_pod_template};
 use crate::state::AppState;
-use crate::store::{StoreError, StoreError::{NotFound, Conflict, Kube}};
+use crate::store::{
+    StoreError,
+    StoreError::{Conflict, Kube, NotFound},
+};
 
 // --- broker-served responses (match the OpenAPI shapes) -------------------
 

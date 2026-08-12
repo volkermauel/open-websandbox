@@ -225,7 +225,7 @@ pub async fn create_terminal(
 
         // Cap is checked AFTER reaping but BEFORE recreating an existing id
         // (`len(_terminals) >= MAX` ordering).
-        if map.len() >= usize::from(cap) {
+        if map.len() >= cap as usize {
             drop(map);
             for s in to_teardown {
                 teardown_one(s).await;

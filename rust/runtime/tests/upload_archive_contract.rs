@@ -36,8 +36,10 @@ fn read_zip_entries(bytes: &[u8]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for i in 0..za.len() {
         let mut f = za.by_index(i).unwrap();
-        let name = f
-            .enclosed_name().map_or_else(|| f.name().to_string(), |p| p.to_string_lossy().into_owned());
+        let name = f.enclosed_name().map_or_else(
+            || f.name().to_string(),
+            |p| p.to_string_lossy().into_owned(),
+        );
         let mut content = String::new();
         f.read_to_string(&mut content).unwrap();
         out.push((name, content));

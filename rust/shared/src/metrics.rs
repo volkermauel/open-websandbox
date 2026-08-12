@@ -40,6 +40,11 @@ static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 /// `*Metrics::new()` *and* again from `/metrics` — the first call installs,
 /// the rest reuse the cached handle (the global recorder may only be set
 /// once, hence the [`OnceLock`]).
+///
+/// # Panics
+///
+/// Panics if the default histogram buckets are non-finite or unsorted — they are a
+/// compile-time constant, so this is unreachable in practice.
 #[must_use]
 pub fn install() -> PrometheusHandle {
     HANDLE

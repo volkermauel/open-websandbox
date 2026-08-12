@@ -125,8 +125,7 @@ fn collect_files(dir: &Path, include: Option<&[String]>, out: &mut Vec<PathBuf>)
     for e in rd.flatten() {
         let path = e.path();
         // os.path.isdir follows symlinks; metadata failure → treat as non-dir.
-        let is_dir = std::fs::metadata(&path)
-            .is_ok_and(|m| m.is_dir());
+        let is_dir = std::fs::metadata(&path).is_ok_and(|m| m.is_dir());
         if is_dir {
             collect_files(&path, include, out);
         } else {
@@ -225,8 +224,7 @@ fn glob_collect(
     let mut subdirs: Vec<PathBuf> = Vec::new();
     for e in rd.flatten() {
         let path = e.path();
-        let is_dir = std::fs::metadata(&path)
-            .is_ok_and(|m| m.is_dir());
+        let is_dir = std::fs::metadata(&path).is_ok_and(|m| m.is_dir());
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -260,8 +258,7 @@ fn glob_collect(
 /// translates `*`→`.*`, `?`→`.`, `[...]`→char class, anchors the whole string.
 fn fnmatch(name: &str, pattern: &str) -> bool {
     let re_src = fnmatch_translate(pattern);
-    regex::Regex::new(&re_src)
-        .is_ok_and(|re| re.is_match(name))
+    regex::Regex::new(&re_src).is_ok_and(|re| re.is_match(name))
 }
 
 /// Translate a shell glob into an anchored regex

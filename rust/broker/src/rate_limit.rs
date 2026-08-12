@@ -40,7 +40,8 @@ impl KeyExtractor for XUserIdKey {
             .get("x-user-id")
             .and_then(|v| v.to_str().ok())
             .map(str::trim)
-            .filter(|s| !s.is_empty()).map_or_else(|| "anonymous".to_owned(), str::to_owned))
+            .filter(|s| !s.is_empty())
+            .map_or_else(|| "anonymous".to_owned(), str::to_owned))
     }
 }
 

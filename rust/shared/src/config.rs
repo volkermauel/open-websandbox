@@ -223,9 +223,9 @@ pub struct BrokerConfig {
     // off to S3 on reap and back on resume. Fully behind `s3_enabled` (default
     // off); the real `aws-sdk-s3` client is only constructed when enabled. Env
     // env names follow the `BROKER_S3_*` convention (D12 drop-in).
-    /// Gate the whole S3 cold tier (env `BROKER_S3_ENABLED`; `1`/`true`/`yes`/
-    /// `on`). When false the reaper uses [`NoopOffload`](../../broker/reaper
-    /// /struct.NoopOffload.html) and resolve skips restore (no cold tier).
+    /// Gate the whole S3 cold tier (env `BROKER_S3_ENABLED`; `1`/`true`/`yes`/`on`).
+    /// When false the reaper uses [`NoopOffload`](../../broker/reaper/struct.NoopOffload.html)
+    /// and resolve skips restore (no cold tier).
     #[serde(default)]
     pub s3_enabled: bool,
 
@@ -390,6 +390,8 @@ impl BrokerConfig {
     /// Load configuration from process environment variables, applying the
     /// documented defaults (D12).
     ///
+    /// # Errors
+    ///
     /// Returns [`ConfigError::Invalid`] when a recognised numeric variable is
     /// set to a value that cannot be parsed; absent variables fall back to
     /// their documented defaults. A malformed `BROKER_DEFAULT_PROFILE` falls
@@ -443,8 +445,7 @@ impl BrokerConfig {
                 .unwrap_or_else(default_reap_seconds),
             reaper_poll_seconds: env_value("BROKER_REAPER_POLL_SECONDS", &get)?
                 .unwrap_or_else(default_reaper_poll_seconds),
-            rate_limit_enabled: get("BROKER_RATE_LIMIT_ENABLED")
-                .is_none_or(|raw| parse_bool(&raw)),
+            rate_limit_enabled: get("BROKER_RATE_LIMIT_ENABLED").is_none_or(|raw| parse_bool(&raw)),
             rate_limit_per_second: env_value("BROKER_RATE_LIMIT_PER_SECOND", &get)?
                 .unwrap_or_else(default_rate_limit_per_second),
             rate_limit_burst: env_value("BROKER_RATE_LIMIT_BURST", &get)?
@@ -455,17 +456,16 @@ impl BrokerConfig {
                 .unwrap_or_else(default_leader_duration_seconds),
             leader_renew_seconds: env_value("BROKER_LEADER_RENEW_SECONDS", &get)?
                 .unwrap_or_else(default_leader_renew_seconds),
-            s3_enabled: get("BROKER_S3_ENABLED")
-                .is_some_and(|raw| parse_bool(&raw)),
+            s3_enabled: get("BROKER_S3_ENABLED").is_some_and(|raw| parse_bool(&raw)),
             s3_endpoint: get("BROKER_S3_ENDPOINT").unwrap_or_default(),
             s3_region: get("BROKER_S3_REGION").unwrap_or_else(default_s3_region),
             s3_bucket: get("BROKER_S3_BUCKET").unwrap_or_default(),
-            s3_prefix: get("BROKER_S3_PREFIX").map_or_else(default_s3_prefix, |raw| trim_prefix(&raw)),
+            s3_prefix: get("BROKER_S3_PREFIX")
+                .map_or_else(default_s3_prefix, |raw| trim_prefix(&raw)),
             s3_sse: get("BROKER_S3_SSE").unwrap_or_default(),
             s3_access_key_id,
             s3_secret_access_key,
-            s3_path_style: get("BROKER_S3_PATH_STYLE")
-                .is_none_or(|raw| parse_bool(&raw)),
+            s3_path_style: get("BROKER_S3_PATH_STYLE").is_none_or(|raw| parse_bool(&raw)),
         })
     }
 }

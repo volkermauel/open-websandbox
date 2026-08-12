@@ -148,7 +148,9 @@ pub(crate) async fn run_command(
     // backgrounded children, only after they die). We then `child.wait()` to reap.
     let read = async { tokio::join!(read_opt(&mut stdout_h), read_opt(&mut stderr_h)) };
 
-    if let Ok((out_bytes, err_bytes)) = tokio::time::timeout(Duration::from_secs(timeout_secs), read).await {
+    if let Ok((out_bytes, err_bytes)) =
+        tokio::time::timeout(Duration::from_secs(timeout_secs), read).await
+    {
         let status = child
             .wait()
             .await

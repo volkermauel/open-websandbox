@@ -337,6 +337,7 @@ pub mod test_fakes {
         }
 
         /// Seed a template the store will return from [`get_template`](SandboxStore::get_template).
+        #[must_use]
         pub fn with_template(self, template: SandboxTemplate) -> Self {
             self.insert_template(template);
             self

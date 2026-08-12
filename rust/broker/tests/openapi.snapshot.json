@@ -140,7 +140,7 @@
         "type": "object"
       },
       "ErrorResponse": {
-        "description": "Error body both control planes return: `{\"detail\": \"...\"}` (the\n`{ \"detail\": <string> }` shape — byte-for-byte parity, D11). Used as the\nerror response `body` across the broker and runtime OpenAPI surfaces.",
+        "description": "Error body both control planes return: `{\"detail\": \"...\"}` (the\n`{ \"detail\": <string> }` shape — byte-for-byte parity, D11). Used as the\nerror response `body` across the broker and runtime `OpenAPI` surfaces.",
         "properties": {
           "detail": {
             "description": "Human-readable error detail.",
@@ -409,7 +409,7 @@
         "type": "object"
       },
       "SandboxObject": {
-        "description": "OpenAPI schema for a `Sandbox` object on the wire (`apiVersion`/`kind`/`metadata`/\n`spec`/`status`). The CRUD handlers return the kube-generated [`shared::Sandbox`] (an\nidentical shape); this broker-local schema surfaces the typed spec/status in the\ngenerated document (issue #75).",
+        "description": "`OpenAPI` schema for a `Sandbox` object on the wire (`apiVersion`/`kind`/`metadata`/\n`spec`/`status`). The CRUD handlers return the kube-generated [`shared::Sandbox`] (an\nidentical shape); this broker-local schema surfaces the typed spec/status in the\ngenerated document (issue #75).",
         "properties": {
           "apiVersion": {
             "description": "`agents.x-k8s.io/v1beta1`.",
@@ -1017,6 +1017,7 @@
     },
     "/api/terminals": {
       "get": {
+        "description": "# Errors\n\nCurrently always returns `Ok`; the `Result` keeps the handler signature\nuniform with the other `/api/terminals` endpoints.",
         "operationId": "list_terminals",
         "responses": {
           "200": {
@@ -1054,6 +1055,7 @@
         ]
       },
       "post": {
+        "description": "# Errors\n\nReturns [`ApiError`] (via [`request_base`]) for an invalid workspace\nsubdir, [`ApiError::TooManyRequests`] when the session cap is reached, and\n[`ApiError::ServiceUnavailable`] if the PTY shell fails to spawn.",
         "operationId": "create_terminal",
         "responses": {
           "200": {
@@ -1226,6 +1228,7 @@
     },
     "/download/{file_path}": {
       "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace,\n[`ApiError::NotFound`] if it is missing or not a regular file, and\n[`ApiError::Internal`] on a read failure.",
         "operationId": "tool_download",
         "parameters": [
           {
@@ -1288,6 +1291,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "Download a workspace-relative file as a byte attachment.",
         "tags": [
           "tools"
         ]
@@ -1352,6 +1356,7 @@
     },
     "/exists/{file_path}": {
       "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace.",
         "operationId": "tool_exists",
         "parameters": [
           {
@@ -1399,6 +1404,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "Probe existence / type of a workspace-relative path.",
         "tags": [
           "tools"
         ]
@@ -1406,6 +1412,7 @@
     },
     "/files/archive": {
       "post": {
+        "description": "# Panics\n\nPanics only if the static `application/zip` / `Content-Disposition` header\nvalues fail to parse, which cannot happen for these constants.",
         "operationId": "archive",
         "requestBody": {
           "content": {
@@ -1475,6 +1482,7 @@
     },
     "/files/cwd": {
       "get": {
+        "description": "# Errors\n\nReturns [`ApiError`] (via [`base_of`]) if `X-Workspace-Subdir` is invalid.",
         "operationId": "get_cwd",
         "responses": {
           "200": {
@@ -1511,11 +1519,13 @@
             "brokerBearer": []
           }
         ],
+        "summary": "Return the effective workspace cwd (== home) for the session.",
         "tags": [
           "files"
         ]
       },
       "post": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace and\n[`ApiError::NotFound`] if it is missing or not a directory.",
         "operationId": "set_cwd",
         "requestBody": {
           "content": {
@@ -1572,6 +1582,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "Set the session cwd to a workspace-relative directory.",
         "tags": [
           "files"
         ]
@@ -1579,6 +1590,7 @@
     },
     "/files/delete": {
       "delete": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace or the\nremoval fails, and [`ApiError::NotFound`] if the path is missing.",
         "operationId": "delete_entry",
         "parameters": [
           {
@@ -1635,6 +1647,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "Delete a workspace file or directory (recursively).",
         "tags": [
           "files"
         ]
@@ -1642,6 +1655,7 @@
     },
     "/files/glob": {
       "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace and\n[`ApiError::NotFound`] if the search directory is missing.",
         "operationId": "glob_search",
         "parameters": [
           {
@@ -1732,6 +1746,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "Glob-match workspace entries by pattern and optional type.",
         "tags": [
           "files"
         ]
@@ -1739,6 +1754,7 @@
     },
     "/files/grep": {
       "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace or the\nregex is invalid, and [`ApiError::NotFound`] if the search path is missing.",
         "operationId": "grep",
         "parameters": [
           {
@@ -1851,6 +1867,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "Grep the workspace for a literal or regex query.",
         "tags": [
           "files"
         ]
@@ -1858,6 +1875,7 @@
     },
     "/files/list": {
       "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace,\n[`ApiError::NotFound`] if it is missing or not a directory, and\n[`ApiError::Internal`] if the directory cannot be read.",
         "operationId": "list_dir",
         "parameters": [
           {
@@ -1929,6 +1947,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "List the entries of a workspace-relative directory.",
         "tags": [
           "files"
         ]
@@ -1936,6 +1955,7 @@
     },
     "/files/mkdir": {
       "post": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace or the\ndirectory cannot be created.",
         "operationId": "mkdir",
         "requestBody": {
           "content": {
@@ -1982,6 +2002,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "Create a workspace directory (and missing parents).",
         "tags": [
           "files"
         ]
@@ -1989,6 +2010,7 @@
     },
     "/files/move": {
       "post": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if either path escapes the workspace or\nthe rename fails, [`ApiError::NotFound`] if the source is missing, and\n[`ApiError::Conflict`] if the destination already exists.",
         "operationId": "move_entry",
         "requestBody": {
           "content": {
@@ -2055,6 +2077,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "Move/rename a workspace entry (source -> destination).",
         "tags": [
           "files"
         ]
@@ -2062,6 +2085,7 @@
     },
     "/files/read": {
       "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace,\n[`ApiError::NotFound`] if it is missing or not a regular file, and\n[`ApiError::Internal`] on a read failure.",
         "operationId": "read_file",
         "parameters": [
           {
@@ -2123,6 +2147,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "Read a workspace file as JSON text, or raw bytes for an image.",
         "tags": [
           "files"
         ]
@@ -2130,6 +2155,7 @@
     },
     "/files/replace": {
       "post": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace, the\nread/write fails, or a replacement target is missing/ambiguous, and\n[`ApiError::NotFound`] if the file is missing.",
         "operationId": "replace",
         "requestBody": {
           "content": {
@@ -2186,6 +2212,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "Apply one or more find/replace chunks to a workspace file.",
         "tags": [
           "files"
         ]
@@ -2193,6 +2220,7 @@
     },
     "/files/upload": {
       "post": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] on a multipart stream error, a disk\ncreate/read/write/sync failure, a path that escapes the workspace, or if no\n`file` part is present.",
         "operationId": "upload",
         "parameters": [
           {
@@ -2261,6 +2289,7 @@
     },
     "/files/view": {
       "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace,\n[`ApiError::NotFound`] if it is missing or not a regular file, and\n[`ApiError::Internal`] on a read failure.",
         "operationId": "view_file",
         "parameters": [
           {
@@ -2322,6 +2351,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "Stream a workspace file's raw bytes (content-type + disposition).",
         "tags": [
           "files"
         ]
@@ -2329,6 +2359,7 @@
     },
     "/files/write": {
       "post": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace or the\ncreate/open/write fails, and [`ApiError::Internal`] if the blocking write\ntask joins with an error.",
         "operationId": "write_file",
         "requestBody": {
           "content": {
@@ -2375,6 +2406,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "Overwrite a workspace file (creating parents as needed).",
         "tags": [
           "files"
         ]
@@ -2403,6 +2435,7 @@
     },
     "/list": {
       "get": {
+        "description": "# Errors\n\nReturns [`ApiError::Internal`] if the workspace directory cannot be read.",
         "operationId": "tool_list_root",
         "responses": {
           "200": {
@@ -2447,6 +2480,7 @@
     },
     "/list/{file_path}": {
       "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace and\n[`ApiError::NotFound`] if it is missing or not a directory.",
         "operationId": "tool_list",
         "parameters": [
           {
@@ -2514,6 +2548,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "List the entries of a workspace-relative directory.",
         "tags": [
           "tools"
         ]
@@ -2717,6 +2752,7 @@
     },
     "/upload": {
       "post": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] on a multipart stream error, a disk\ncreate/read/write/sync failure, a path that escapes the workspace, or if no\n`file` part is present.",
         "operationId": "tool_upload",
         "requestBody": {
           "content": {
