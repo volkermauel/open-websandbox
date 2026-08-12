@@ -670,6 +670,9 @@ mod tests {
             s3_secret_access_key: "secret".into(),
             s3_path_style: true,
             s3_sse: "AES256".into(),
+            rate_limit_enabled: true,
+            rate_limit_per_second: 7,
+            rate_limit_burst: 14,
         };
         let json = serde_json::to_string(&cfg).expect("serialize");
         assert!(json.contains("\"max_terminal_sessions\":2"), "{json}");
