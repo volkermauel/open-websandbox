@@ -52,4 +52,40 @@ spec:
       path: /metrics
       interval: {{ $interval }}
       scrapeTimeout: {{ $timeout }}
+---
+# Sensible-default security alerts (#99 A6) for the broker auth-guard metrics.
+# Gated by monitoring.prometheus.enabled (same CRD family as the monitors above).
+# Tune thresholds to your deployment; delete this object or disable monitoring to opt out.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: owui-broker-security
+  namespace: {{ $sysNs }}
+  labels:
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: owui-broker-security
+      rules:
+        # Sustained auth-failure rate across all outcomes — brute-force / a
+        # misconfigured client hammering the shared-secret comparison.
+        - alert: OwuiBrokerAuthFailureRate
+          expr: sum(rate(open_websandbox_broker_auth_failures_total[5m])) by (outcome) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Broker auth-failure rate is high ({{ `{{ $value | humanize }}` }}/s by {{ `{{ $labels.outcome }}` }})"
+            description: "open_websandbox_broker_auth_failures_total{outcome=\"{{ `{{ $labels.outcome }}` }}\"} exceeds ~30/min sustained for 10m on the broker. Investigate brute-force attempts or a misconfigured caller."
+        # misconfigured_secret should be effectively impossible in prod (broker
+        # refuses to start on the placeholder secret); any increment is a P0.
+        - alert: OwuiBrokerMisconfiguredSecret
+          expr: open_websandbox_broker_auth_failures_total{outcome="misconfigured_secret"} > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Broker saw a request while BROKER_SHARED_SECRET is the placeholder"
+            description: "The broker auth guard rejected a request with outcome=misconfigured_secret — the broker is running with the unset/placeholder BROKER_SHARED_SECRET, which must never happen in production."
+
 {{- end -}}

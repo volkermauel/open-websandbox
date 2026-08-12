@@ -35,6 +35,8 @@ use shared::{constant_time_eq, is_placeholder_secret, Profile};
 use crate::error::ApiError;
 use crate::proxy::{profile_from_header, RUNTIME_PORT};
 use crate::resolve::resolve_sandbox;
+
+use crate::metrics::AUTH_FAILURES_TOTAL;
 use crate::state::AppState;
 
 /// How long to wait for the OWUI first-message auth before closing (10s).
@@ -139,6 +141,7 @@ async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, s
         match wait_auth(&mut client, &secret).await {
             AuthResult::Ok => {}
             AuthResult::Deny => {
+                metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "bad_token").increment(1);
                 let _ = client
                     .send(AxumMsg::Close(Some(axum::extract::ws::CloseFrame {
                         code: 4001,
@@ -148,6 +151,7 @@ async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, s
                 return;
             }
             AuthResult::Timeout => {
+                metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "auth_timeout").increment(1);
                 let _ = client
                     .send(AxumMsg::Close(Some(axum::extract::ws::CloseFrame {
                         code: 4001,

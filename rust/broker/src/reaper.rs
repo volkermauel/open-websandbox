@@ -35,7 +35,7 @@ use kube::ResourceExt;
 use shared::{OperatingMode, Profile, Sandbox};
 
 use crate::leaser::LeaderGate;
-use crate::metrics::{ACTIVE_SANDBOXES, SANDBOXES_DELETED_TOTAL};
+use crate::metrics::{ACTIVE_SANDBOXES, IDLE_REAPS_TOTAL, SANDBOXES_DELETED_TOTAL};
 use crate::sandbox::{LAST_USED_KEY, PROFILE_LABEL_KEY};
 use crate::store::SandboxStore;
 
@@ -224,6 +224,14 @@ pub async fn reap_once(
                         Ok(true) => {
                             stats.reaped += 1;
                             tracing::info!(%name, idle, "reaped idle sandbox (deleted)");
+                            // #99 A6: why this sandbox was reaped (mirrors decide()'s
+                            // reap conditions) — drives idle_reaps_total{reason}.
+                            let reason = match profile {
+                                Profile::Ephemeral => "ephemeral_idle",
+                                Profile::Persistent if cfg.s3_enabled => "s3_tiered_idle",
+                                Profile::Persistent => "persistent_reap_ttl",
+                            };
+                            metrics::counter!(IDLE_REAPS_TOTAL, "reason" => reason).increment(1);
                             // PR-C-5 / #4: best-effort reap the per-session key Secret.
                             if let Err(e) = store.delete_runtime_key(&name).await {
                                 tracing::warn!(%name, error = %e, "reap runtime key failed");

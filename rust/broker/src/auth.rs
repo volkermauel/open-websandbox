@@ -23,6 +23,8 @@ use shared::is_placeholder_secret;
 use crate::error::ApiError;
 use crate::state::AppState;
 
+use crate::metrics::AUTH_FAILURES_TOTAL;
+
 /// Extract a `Bearer <token>` value from request headers (`None` if absent or
 /// not a Bearer scheme).
 fn bearer_from_headers(headers: &HeaderMap) -> Option<Vec<u8>> {
@@ -53,13 +55,25 @@ impl FromRequestParts<AppState> for Authed {
         if is_placeholder_secret(std::str::from_utf8(secret).unwrap_or("")) {
             // Misconfiguration, not "disabled": fail closed at the request path
             // regardless of the boot guard.
+            metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "misconfigured_secret")
+                .increment(1);
             return Err(ApiError::ServiceUnavailable(
                 "BROKER_SHARED_SECRET is not configured".to_string(),
             ));
         }
         match bearer_from_headers(&parts.headers) {
             Some(token) if constant_time_eq(&token, secret) => Ok(Authed),
-            _ => Err(ApiError::Unauthorized("invalid bearer token".to_string())),
+            Some(_) => {
+                // Present-but-mismatched Bearer: keep the message identical to the
+                // missing-token case so the outcome label (not the body) is the only
+                // signal — a brute-forcer learns nothing from the response text.
+                metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "bad_token").increment(1);
+                Err(ApiError::Unauthorized("invalid bearer token".to_string()))
+            }
+            None => {
+                metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "missing_token").increment(1);
+                Err(ApiError::Unauthorized("invalid bearer token".to_string()))
+            }
         }
     }
 }
