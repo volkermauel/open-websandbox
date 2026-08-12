@@ -60,7 +60,7 @@ impl AppState {
         let http = http_client(config.proxy_timeout_seconds);
         Self {
             config: Arc::new(config),
-            store: Arc::new(crate::store::StubSandboxStore::new()),
+            store: Arc::new(crate::store::test_fakes::StubSandboxStore::new()),
             http,
             runtime_upstream_override: Arc::new(None),
             s3_restore: None,

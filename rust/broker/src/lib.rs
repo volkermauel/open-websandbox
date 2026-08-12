@@ -39,18 +39,29 @@ pub use app::build_router;
 pub use client::build_client;
 pub use config::ServerConfig;
 pub use error::ApiError;
-pub use leaser::{InMemoryLease, InMemoryLeaseClient, KubeLease, LeaderGate, LeaseClient};
+#[cfg(test)]
+pub use leaser::InMemoryLeaseClient;
+pub use leaser::{InMemoryLease, KubeLease, LeaderGate, LeaseClient};
 pub use metrics::BrokerMetrics;
 pub use reaper::{NoopOffload, OffloadError, ReapOffload};
 pub use resolve::{resolve_sandbox, sandbox_name, ResolvedSandbox};
 pub use s3::{
-    s3_namespace, s3_object_key, AwsColdStore, ColdError, ColdStore, InMemoryColdStore,
-    RestoreError, RestoreOutcome, S3Offload,
+    s3_namespace, s3_object_key, AwsColdStore, ColdError, ColdStore, RestoreError, RestoreOutcome,
+    S3Offload,
 };
 pub use sandbox::{build_sandbox, extract_pod_template};
 pub use shared;
 pub use state::AppState;
-pub use store::{KubeSandboxStore, SandboxStore, StoreError, StubSandboxStore};
+pub use store::{KubeSandboxStore, SandboxStore, StoreError};
+
+/// Test-only store/lease doubles, re-exported under one clearly-named namespace so
+/// integration tests in `tests/` can reuse them without polluting the production
+/// module surface. (`InMemoryLeaseClient` is `#[cfg(test)]`-only — same-file unit
+/// tests — so it is not re-exported here.)
+pub mod test_fakes {
+    pub use crate::s3::test_fakes::InMemoryColdStore;
+    pub use crate::store::test_fakes::StubSandboxStore;
+}
 
 /// Crate version ( surfaced for `/healthz`-style diagnostics).
 #[must_use]

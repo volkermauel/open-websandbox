@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
-use broker::{build_router, resolve_sandbox, sandbox_name, ApiError, AppState, StubSandboxStore};
+use broker::test_fakes::StubSandboxStore;
+use broker::{build_router, resolve_sandbox, sandbox_name, ApiError, AppState};
 use shared::{
     BrokerConfig, Profile, Sandbox, SandboxCondition, SandboxSpec, SandboxStatus, SandboxTemplate,
     SandboxTemplateSpec,

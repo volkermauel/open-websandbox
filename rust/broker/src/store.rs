@@ -9,13 +9,9 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
-
 use async_trait::async_trait;
 use kube::api::{DeleteParams, ListParams, PostParams};
-use kube::{Api, ResourceExt};
+use kube::Api;
 use shared::{Sandbox, SandboxTemplate};
 
 /// A failure from a Kubernetes lifecycle call, classified for HTTP mapping.
@@ -297,262 +293,276 @@ impl SandboxStore for KubeSandboxStore {
     }
 }
 
-/// In-memory [`SandboxStore`] for tests and local dev (no apiserver required).
-///
-/// Shipped in the library so integration tests can reuse it; it is a
-/// straightforward map-backed double, not production code.
-pub struct StubSandboxStore {
-    sandboxes: Mutex<HashMap<String, Sandbox>>,
-    templates: Mutex<HashMap<String, SandboxTemplate>>,
-    reachable: AtomicBool,
-    /// Pod IP stamped as a Ready status onto a sandbox at create time. `None`
-    /// (default) ⇒ created sandboxes have no status, so a resolve poll will time
-    /// out unless the test later calls [`Self::mark_ready`].
-    auto_ready_on_create: Mutex<Option<String>>,
-    /// Per-session runtime API keys (PR-C-5 / #4): keyed by sandbox name (the
-    /// stub mimics the Secret the kube impl stores as
-    /// `owui-runtime-key-<sandbox>`).
-    runtime_keys: Mutex<HashMap<String, String>>,
-}
+pub mod test_fakes {
+    // In-memory doubles for tests / local dev. Kept under a clearly-named
+    // `test_fakes` namespace so they do not clutter the production module
+    // surface, but `pub` so integration tests in `tests/` can reuse them via
+    // `broker::test_fakes`.
+    use super::{SandboxStore, StoreError};
+    use async_trait::async_trait;
+    use kube::ResourceExt;
+    use shared::{Sandbox, SandboxTemplate};
+    use std::collections::{BTreeMap, HashMap};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
 
-impl StubSandboxStore {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            sandboxes: Mutex::new(HashMap::new()),
-            templates: Mutex::new(HashMap::new()),
-            reachable: AtomicBool::new(true),
-            auto_ready_on_create: Mutex::new(None),
-            runtime_keys: Mutex::new(HashMap::new()),
+    /// In-memory [`SandboxStore`] for tests and local dev (no apiserver required).
+    ///
+    /// Shipped in the library so integration tests can reuse it; it is a
+    /// straightforward map-backed double, not production code.
+    pub struct StubSandboxStore {
+        sandboxes: Mutex<HashMap<String, Sandbox>>,
+        templates: Mutex<HashMap<String, SandboxTemplate>>,
+        reachable: AtomicBool,
+        /// Pod IP stamped as a Ready status onto a sandbox at create time. `None`
+        /// (default) ⇒ created sandboxes have no status, so a resolve poll will time
+        /// out unless the test later calls [`Self::mark_ready`].
+        auto_ready_on_create: Mutex<Option<String>>,
+        /// Per-session runtime API keys (PR-C-5 / #4): keyed by sandbox name (the
+        /// stub mimics the Secret the kube impl stores as
+        /// `owui-runtime-key-<sandbox>`).
+        runtime_keys: Mutex<HashMap<String, String>>,
+    }
+
+    impl StubSandboxStore {
+        #[must_use]
+        pub fn new() -> Self {
+            Self {
+                sandboxes: Mutex::new(HashMap::new()),
+                templates: Mutex::new(HashMap::new()),
+                reachable: AtomicBool::new(true),
+                auto_ready_on_create: Mutex::new(None),
+                runtime_keys: Mutex::new(HashMap::new()),
+            }
+        }
+
+        /// Seed a template the store will return from [`get_template`](SandboxStore::get_template).
+        pub fn with_template(self, template: SandboxTemplate) -> Self {
+            self.insert_template(template);
+            self
+        }
+
+        /// Insert (or replace) a template.
+        pub fn insert_template(&self, template: SandboxTemplate) {
+            let name = template.name_any();
+            self.templates
+                .lock()
+                .expect("stub templates")
+                .insert(name, template);
+        }
+
+        /// Test seam: seed a known per-session runtime key for `sandbox_name` so a
+        /// test can assert the exact Bearer the proxy injects (otherwise
+        /// `ensure_runtime_key` mints a random one). (PR-C-5 / #4)
+        pub fn set_runtime_key(&self, sandbox_name: &str, key: &str) {
+            self.runtime_keys
+                .lock()
+                .expect("stub runtime_keys")
+                .insert(sandbox_name.to_string(), key.to_string());
+        }
+
+        /// Insert (or replace) a sandbox, e.g. to pre-seed a get/list scenario.
+        pub fn insert_sandbox(&self, sandbox: Sandbox) {
+            let name = sandbox.name_any();
+            self.sandboxes
+                .lock()
+                .expect("stub sandboxes")
+                .insert(name, sandbox);
+        }
+
+        /// Toggle whether [`apiserver_reachable`](SandboxStore::apiserver_reachable)
+        /// reports healthy (default `true`).
+        pub fn set_reachable(&self, reachable: bool) {
+            self.reachable.store(reachable, Ordering::SeqCst);
+        }
+
+        /// Stamp a Ready status (with `pod_ip`) onto every sandbox created via
+        /// [`create_sandbox`](SandboxStore::create_sandbox), simulating an instantly-
+        /// ready controller. Pass `None` to leave created sandboxes status-less
+        /// (e.g. to exercise the resolve timeout path).
+        pub fn set_auto_ready_on_create(&self, pod_ip: Option<String>) {
+            *self.auto_ready_on_create.lock().expect("stub auto_ready") = pod_ip;
+        }
+
+        /// Mark an existing sandbox Ready with `pod_ip` (flip the status the poll loop
+        /// observes). Returns `false` if the sandbox is not present.
+        pub fn mark_ready(&self, name: &str, pod_ip: &str) -> bool {
+            let mut map = self.sandboxes.lock().expect("stub sandboxes");
+            if let Some(sbx) = map.get_mut(name) {
+                sbx.status = Some(make_ready_status(pod_ip));
+                true
+            } else {
+                false
+            }
+        }
+
+        /// Snapshot of the current sandbox store (name → `Sandbox`), for assertions.
+        #[must_use]
+        pub fn snapshot(&self) -> HashMap<String, Sandbox> {
+            self.sandboxes.lock().expect("stub sandboxes").clone()
         }
     }
 
-    /// Seed a template the store will return from [`get_template`](SandboxStore::get_template).
-    pub fn with_template(self, template: SandboxTemplate) -> Self {
-        self.insert_template(template);
-        self
-    }
-
-    /// Insert (or replace) a template.
-    pub fn insert_template(&self, template: SandboxTemplate) {
-        let name = template.name_any();
-        self.templates
-            .lock()
-            .expect("stub templates")
-            .insert(name, template);
-    }
-
-    /// Test seam: seed a known per-session runtime key for `sandbox_name` so a
-    /// test can assert the exact Bearer the proxy injects (otherwise
-    /// `ensure_runtime_key` mints a random one). (PR-C-5 / #4)
-    pub fn set_runtime_key(&self, sandbox_name: &str, key: &str) {
-        self.runtime_keys
-            .lock()
-            .expect("stub runtime_keys")
-            .insert(sandbox_name.to_string(), key.to_string());
-    }
-
-    /// Insert (or replace) a sandbox, e.g. to pre-seed a get/list scenario.
-    pub fn insert_sandbox(&self, sandbox: Sandbox) {
-        let name = sandbox.name_any();
-        self.sandboxes
-            .lock()
-            .expect("stub sandboxes")
-            .insert(name, sandbox);
-    }
-
-    /// Toggle whether [`apiserver_reachable`](SandboxStore::apiserver_reachable)
-    /// reports healthy (default `true`).
-    pub fn set_reachable(&self, reachable: bool) {
-        self.reachable.store(reachable, Ordering::SeqCst);
-    }
-
-    /// Stamp a Ready status (with `pod_ip`) onto every sandbox created via
-    /// [`create_sandbox`](SandboxStore::create_sandbox), simulating an instantly-
-    /// ready controller. Pass `None` to leave created sandboxes status-less
-    /// (e.g. to exercise the resolve timeout path).
-    pub fn set_auto_ready_on_create(&self, pod_ip: Option<String>) {
-        *self.auto_ready_on_create.lock().expect("stub auto_ready") = pod_ip;
-    }
-
-    /// Mark an existing sandbox Ready with `pod_ip` (flip the status the poll loop
-    /// observes). Returns `false` if the sandbox is not present.
-    pub fn mark_ready(&self, name: &str, pod_ip: &str) -> bool {
-        let mut map = self.sandboxes.lock().expect("stub sandboxes");
-        if let Some(sbx) = map.get_mut(name) {
-            sbx.status = Some(make_ready_status(pod_ip));
-            true
-        } else {
-            false
+    impl Default for StubSandboxStore {
+        fn default() -> Self {
+            Self::new()
         }
     }
 
-    /// Snapshot of the current sandbox store (name → `Sandbox`), for assertions.
-    #[must_use]
-    pub fn snapshot(&self) -> HashMap<String, Sandbox> {
-        self.sandboxes.lock().expect("stub sandboxes").clone()
-    }
-}
-
-impl Default for StubSandboxStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl SandboxStore for StubSandboxStore {
-    async fn get_template(&self, name: &str) -> Result<Option<SandboxTemplate>, StoreError> {
-        Ok(self
-            .templates
-            .lock()
-            .expect("stub templates")
-            .get(name)
-            .cloned())
-    }
-
-    async fn create_sandbox(&self, mut sandbox: Sandbox) -> Result<Sandbox, StoreError> {
-        let mut map = self.sandboxes.lock().expect("stub sandboxes");
-        let name = sandbox.name_any();
-        if map.contains_key(&name) {
-            return Err(StoreError::Conflict);
+    #[async_trait]
+    impl SandboxStore for StubSandboxStore {
+        async fn get_template(&self, name: &str) -> Result<Option<SandboxTemplate>, StoreError> {
+            Ok(self
+                .templates
+                .lock()
+                .expect("stub templates")
+                .get(name)
+                .cloned())
         }
-        // Simulate the controller flipping a freshly-created sandbox to Ready.
-        if let Some(ip) = self
-            .auto_ready_on_create
-            .lock()
-            .expect("stub auto_ready")
-            .clone()
-        {
-            sandbox.status = Some(make_ready_status(&ip));
+
+        async fn create_sandbox(&self, mut sandbox: Sandbox) -> Result<Sandbox, StoreError> {
+            let mut map = self.sandboxes.lock().expect("stub sandboxes");
+            let name = sandbox.name_any();
+            if map.contains_key(&name) {
+                return Err(StoreError::Conflict);
+            }
+            // Simulate the controller flipping a freshly-created sandbox to Ready.
+            if let Some(ip) = self
+                .auto_ready_on_create
+                .lock()
+                .expect("stub auto_ready")
+                .clone()
+            {
+                sandbox.status = Some(make_ready_status(&ip));
+            }
+            map.insert(name.clone(), sandbox.clone());
+            Ok(sandbox)
         }
-        map.insert(name.clone(), sandbox.clone());
-        Ok(sandbox)
-    }
 
-    async fn get_sandbox(&self, name: &str) -> Result<Option<Sandbox>, StoreError> {
-        Ok(self
-            .sandboxes
-            .lock()
-            .expect("stub sandboxes")
-            .get(name)
-            .cloned())
-    }
+        async fn get_sandbox(&self, name: &str) -> Result<Option<Sandbox>, StoreError> {
+            Ok(self
+                .sandboxes
+                .lock()
+                .expect("stub sandboxes")
+                .get(name)
+                .cloned())
+        }
 
-    async fn delete_sandbox(&self, name: &str) -> Result<bool, StoreError> {
-        Ok(self
-            .sandboxes
-            .lock()
-            .expect("stub sandboxes")
-            .remove(name)
-            .is_some())
-    }
+        async fn delete_sandbox(&self, name: &str) -> Result<bool, StoreError> {
+            Ok(self
+                .sandboxes
+                .lock()
+                .expect("stub sandboxes")
+                .remove(name)
+                .is_some())
+        }
 
-    async fn list_sandboxes(
-        &self,
-        label_selector: Option<&str>,
-    ) -> Result<Vec<Sandbox>, StoreError> {
-        let items: Vec<Sandbox> = self
-            .sandboxes
-            .lock()
-            .expect("stub sandboxes")
-            .values()
-            .cloned()
-            .collect();
-        Ok(match label_selector {
-            // Support a single `key=value` selector (the subset tests/exercises use).
-            Some(sel) => {
-                let want = sel.split('=').collect::<Vec<_>>();
-                if want.len() == 2 {
-                    items
-                        .into_iter()
-                        .filter(|s| {
-                            s.metadata
-                                .labels
-                                .as_ref()
-                                .and_then(|l| l.get(want[0]))
-                                .is_some_and(|v| v == want[1])
-                        })
-                        .collect()
-                } else {
-                    items
+        async fn list_sandboxes(
+            &self,
+            label_selector: Option<&str>,
+        ) -> Result<Vec<Sandbox>, StoreError> {
+            let items: Vec<Sandbox> = self
+                .sandboxes
+                .lock()
+                .expect("stub sandboxes")
+                .values()
+                .cloned()
+                .collect();
+            Ok(match label_selector {
+                // Support a single `key=value` selector (the subset tests/exercises use).
+                Some(sel) => {
+                    let want = sel.split('=').collect::<Vec<_>>();
+                    if want.len() == 2 {
+                        items
+                            .into_iter()
+                            .filter(|s| {
+                                s.metadata
+                                    .labels
+                                    .as_ref()
+                                    .and_then(|l| l.get(want[0]))
+                                    .is_some_and(|v| v == want[1])
+                            })
+                            .collect()
+                    } else {
+                        items
+                    }
                 }
-            }
-            None => items,
-        })
-    }
+                None => items,
+            })
+        }
 
-    async fn apiserver_reachable(&self) -> bool {
-        self.reachable.load(Ordering::SeqCst)
-    }
+        async fn apiserver_reachable(&self) -> bool {
+            self.reachable.load(Ordering::SeqCst)
+        }
 
-    async fn patch_operating_mode(
-        &self,
-        name: &str,
-        mode: shared::OperatingMode,
-    ) -> Result<(), StoreError> {
-        let mut map = self.sandboxes.lock().expect("stub sandboxes");
-        match map.get_mut(name) {
-            Some(sbx) => {
-                sbx.spec.operating_mode = Some(mode);
-                Ok(())
+        async fn patch_operating_mode(
+            &self,
+            name: &str,
+            mode: shared::OperatingMode,
+        ) -> Result<(), StoreError> {
+            let mut map = self.sandboxes.lock().expect("stub sandboxes");
+            match map.get_mut(name) {
+                Some(sbx) => {
+                    sbx.spec.operating_mode = Some(mode);
+                    Ok(())
+                }
+                None => Err(StoreError::NotFound),
             }
-            None => Err(StoreError::NotFound),
+        }
+
+        async fn touch_last_used(&self, name: &str, now: i64) -> Result<(), StoreError> {
+            use crate::sandbox::LAST_USED_KEY;
+            let mut map = self.sandboxes.lock().expect("stub sandboxes");
+            match map.get_mut(name) {
+                Some(sbx) => {
+                    let annots = sbx.metadata.annotations.get_or_insert_with(BTreeMap::new);
+                    annots.insert(LAST_USED_KEY.to_string(), now.to_string());
+                    Ok(())
+                }
+                None => Err(StoreError::NotFound),
+            }
+        }
+        async fn ensure_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError> {
+            let mut keys = self.runtime_keys.lock().expect("stub runtime_keys");
+            keys.entry(sandbox_name.to_string())
+                .or_insert_with(crate::runtime_key::mint_key);
+            Ok(())
+        }
+
+        async fn read_runtime_key(&self, sandbox_name: &str) -> Result<Option<String>, StoreError> {
+            Ok(self
+                .runtime_keys
+                .lock()
+                .expect("stub runtime_keys")
+                .get(sandbox_name)
+                .cloned())
+        }
+
+        async fn delete_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError> {
+            self.runtime_keys
+                .lock()
+                .expect("stub runtime_keys")
+                .remove(sandbox_name);
+            Ok(())
         }
     }
 
-    async fn touch_last_used(&self, name: &str, now: i64) -> Result<(), StoreError> {
-        use crate::sandbox::LAST_USED_KEY;
-        let mut map = self.sandboxes.lock().expect("stub sandboxes");
-        match map.get_mut(name) {
-            Some(sbx) => {
-                let annots = sbx.metadata.annotations.get_or_insert_with(BTreeMap::new);
-                annots.insert(LAST_USED_KEY.to_string(), now.to_string());
-                Ok(())
-            }
-            None => Err(StoreError::NotFound),
-        }
-    }
-    async fn ensure_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError> {
-        let mut keys = self.runtime_keys.lock().expect("stub runtime_keys");
-        keys.entry(sandbox_name.to_string())
-            .or_insert_with(crate::runtime_key::mint_key);
-        Ok(())
-    }
-
-    async fn read_runtime_key(&self, sandbox_name: &str) -> Result<Option<String>, StoreError> {
-        Ok(self
-            .runtime_keys
-            .lock()
-            .expect("stub runtime_keys")
-            .get(sandbox_name)
-            .cloned())
-    }
-
-    async fn delete_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError> {
-        self.runtime_keys
-            .lock()
-            .expect("stub runtime_keys")
-            .remove(sandbox_name);
-        Ok(())
-    }
-}
-
-/// Build a Ready `SandboxStatus` for the stub (a controller would populate this
-/// as it scheduled the pod).
-fn make_ready_status(pod_ip: &str) -> shared::SandboxStatus {
-    use shared::{SandboxCondition, SandboxStatus};
-    SandboxStatus {
-        phase: Some("Running".to_string()),
-        pod_i_ps: Some(vec![pod_ip.to_string()]),
-        conditions: Some(vec![SandboxCondition {
-            r#type: "Ready".to_string(),
-            status: "True".to_string(),
-            reason: None,
+    /// Build a Ready `SandboxStatus` for the stub (a controller would populate this
+    /// as it scheduled the pod).
+    fn make_ready_status(pod_ip: &str) -> shared::SandboxStatus {
+        use shared::{SandboxCondition, SandboxStatus};
+        SandboxStatus {
+            phase: Some("Running".to_string()),
+            pod_i_ps: Some(vec![pod_ip.to_string()]),
+            conditions: Some(vec![SandboxCondition {
+                r#type: "Ready".to_string(),
+                status: "True".to_string(),
+                reason: None,
+                message: None,
+                last_transition_time: None,
+            }]),
+            ready: Some(true),
             message: None,
-            last_transition_time: None,
-        }]),
-        ready: Some(true),
-        message: None,
+        }
     }
 }

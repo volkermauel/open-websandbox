@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use axum::body::{to_bytes, Body, Bytes};
 use axum::http::{Method, Request, Response, StatusCode};
-use broker::{build_router, AppState, StubSandboxStore};
+use broker::test_fakes::StubSandboxStore;
+use broker::{build_router, AppState};
 use shared::{BrokerConfig, Profile, Sandbox, SandboxTemplate, SandboxTemplateSpec};
 use tower::util::ServiceExt;
 
