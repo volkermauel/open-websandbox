@@ -39,6 +39,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default (`warmPool.replicas: 0`). The vendored `kubernetes-sigs/agent-sandbox`
   controller + CRDs are byte-for-byte preserved.
 
+### Changed
+
+- **Split `runtime/src/files.rs` (#102).** The 1,481-line handler module is now a
+  `files/` directory: `io` (read/write/move/delete/view/replace + cwd/listing),
+  `tools` (agent `tool_*` + ports), `search` (grep/glob), and `archive` (upload/zip),
+  with shared path-confinement helpers (`base_of`/`modified_secs`/`file_response`)
+  kept in `mod.rs` as `pub(super)`. The public surface is unchanged — handlers are
+  re-exported from `files::`, so `app.rs` and the OpenAPI `paths(...)` registration
+  are untouched beyond pointing utoipa at the new submodule paths.
+
 ## [0.1.0] - 2026-08-07
 
 First usable release of **open-websandbox**, the multi-tenant Kubernetes sandbox
