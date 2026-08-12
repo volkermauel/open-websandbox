@@ -14,6 +14,8 @@
 //! - `open_websandbox_broker_sandboxes_created_total` (counter)
 //! - `open_websandbox_broker_sandboxes_deleted_total` (counter)
 //! - `open_websandbox_broker_runtime_hop_errors_total` (counter)
+//! - `open_websandbox_broker_auth_failures_total` (counter, `outcome` label; #99 A6)
+//! - `open_websandbox_broker_idle_reaps_total` (counter, `reason` label; #99 A6)
 //!
 //! HTTP rate/latency is recorded via [`shared::HttpMetrics`]; the lifecycle
 //! counters/gauge are recorded with `metrics::counter!` / `metrics::gauge!` at
@@ -47,6 +49,10 @@ pub(crate) const SANDBOXES_CREATED_TOTAL: &str = "open_websandbox_broker_sandbox
 pub(crate) const SANDBOXES_DELETED_TOTAL: &str = "open_websandbox_broker_sandboxes_deleted_total";
 /// Frozen runtime-hop-error counter name.
 pub(crate) const RUNTIME_HOP_ERRORS_TOTAL: &str = "open_websandbox_broker_runtime_hop_errors_total";
+/// Frozen auth-failure counter name (shared-Bearer guard + WS first-message auth).
+pub(crate) const AUTH_FAILURES_TOTAL: &str = "open_websandbox_broker_auth_failures_total";
+/// Frozen idle-reap counter name (leader reaper deletes, by reason).
+pub(crate) const IDLE_REAPS_TOTAL: &str = "open_websandbox_broker_idle_reaps_total";
 
 /// Broker HTTP rate/latency holder + the install point for the global
 /// recorder.
@@ -96,6 +102,28 @@ impl BrokerMetrics {
              (transport / connect / send errors)."
         );
         metrics::counter!(RUNTIME_HOP_ERRORS_TOTAL).increment(0);
+        metrics::describe_counter!(
+            AUTH_FAILURES_TOTAL,
+            "Broker auth-guard rejections by outcome (HTTP shared-Bearer `Authed` \
+             extractor + WS terminal first-message auth)."
+        );
+        // Seed every frozen outcome so the labelled vector materialises a live
+        // series immediately (dashboards see all outcomes before the first failure).
+        for outcome in [
+            "missing_token",
+            "bad_token",
+            "misconfigured_secret",
+            "auth_timeout",
+        ] {
+            metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => outcome).increment(0);
+        }
+        metrics::describe_counter!(
+            IDLE_REAPS_TOTAL,
+            "Sandboxes reaped (deleted) by the leader idle reaper, by reason."
+        );
+        for reason in ["ephemeral_idle", "s3_tiered_idle", "persistent_reap_ttl"] {
+            metrics::counter!(IDLE_REAPS_TOTAL, "reason" => reason).increment(0);
+        }
 
         Arc::new(Self {
             http: HttpMetrics::new(HTTP_REQUESTS_TOTAL, HTTP_REQUEST_DURATION),
@@ -253,6 +281,8 @@ mod tests {
             SANDBOXES_CREATED_TOTAL,
             SANDBOXES_DELETED_TOTAL,
             RUNTIME_HOP_ERRORS_TOTAL,
+            AUTH_FAILURES_TOTAL,
+            IDLE_REAPS_TOTAL,
         ] {
             assert!(out.contains(name), "missing frozen metric {name}:\n{out}");
         }
