@@ -5,6 +5,16 @@
 imageRegistry: ""        # prod: ghcr.io
 imageOwner: volkermauel  # canonical registry owner (override for your fork; CI uses github.repository_owner)
 imagePullPolicy: Never   # prod: IfNotPresent
+# imageTag is LANGUAGE-AGNOSTIC on purpose — it is just a Docker tag. The language each
+# platform image is built from is fixed by its Dockerfile, NOT by this tag:
+#   open-websandbox-broker   -> rust/broker/Dockerfile   (distroless Rust binary: axum + kube-rs)
+#   open-websandbox-runtime  -> rust/runtime/Dockerfile  (debian-slim Rust binary; shells out to tar/zstd/grep)
+#   open-websandbox-router   -> Go, self-built from the vendored upstream agent-sandbox@v0.5.3
+# .github/workflows/e2e.yml builds + `kind load`s all three at THIS tag and then runs the live
+# pytest tests/e2e suite against the broker (runc + gvisor matrix, plus a separate s3-tiered
+# job) — i.e. the Rust broker/runtime HAVE end-to-end coverage. release.yml publishes the
+# same images to ghcr.io/<owner>/open-websandbox-{broker,runtime,router}. There is no Python
+# image: the Rust images were a drop-in replacement at the same name/tag (see Dockerfile headers).
 imageTag: v0.1.0
 # Optional Kubernetes imagePullSecrets — a LocalObjectReference list, e.g.
 #   imagePullSecrets: [{name: ghcr-pull}]

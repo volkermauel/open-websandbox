@@ -141,10 +141,10 @@ spec:
       imagePullSecrets:
 {{- toYaml . | nindent 8 }}
 {{- end }}
-      # Restricted-PSS lockdown mirroring the router + runtime pods. readOnlyRootFilesystem
-      # means the Python process cannot write bytecode next to its source or to /; a writable
-      # emptyDir /tmp is mounted below. If the image writes bytecode elsewhere, also set
-      # PYTHONDONTWRITEBYTECODE=1 in the broker image/env.
+      # Restricted-PSS lockdown mirroring the router + runtime pods. The broker is a distroless
+      # Rust binary (no shell/interpreter) with no expected writes to its root filesystem, so
+      # readOnlyRootFilesystem is a safe, strict default. A writable emptyDir /tmp is still
+      # mounted for any runtime temp (TLS/kube CA scratch) the binary may need.
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

@@ -97,9 +97,10 @@ spec:
         startupProbe:   {httpGet: {path: /healthz, port: http}, periodSeconds: 5, failureThreshold: 30}
         livenessProbe:  {httpGet: {path: /healthz, port: http}, periodSeconds: 10, failureThreshold: 3}
         readinessProbe: {httpGet: {path: /readyz,  port: http}, periodSeconds: 5, failureThreshold: 3}
-        # Restricted-PSS lockdown mirroring the router + runtime pods. A Python process under
-        # readOnlyRootFilesystem cannot write bytecode next to its source or to /, so a writable
-        # emptyDir /tmp is mounted; set PYTHONDONTWRITEBYTECODE=1 if bytecode is written elsewhere.
+        # Restricted-PSS lockdown mirroring the router + runtime pods. The broker is a distroless
+        # Rust binary (no shell/interpreter) with no expected writes to its root filesystem, so
+        # readOnlyRootFilesystem is a safe, strict default; a writable emptyDir /tmp is mounted
+        # for any runtime temp the binary may need.
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
