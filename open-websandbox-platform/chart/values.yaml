@@ -92,6 +92,19 @@ broker:
     sizeLimit: "2Gi"            # hot-tier emptyDir sizeLimit + runtime MAX_WORKSPACE_BYTES (D2/D9)
     tmpfs: false                # true => /workspace is tmpfs (Memory) instead of disk-backed emptyDir
     reaperPollSeconds: 60       # reaper loop interval (lower = faster offload-on-reap; default 60)
+  # Ingress NetworkPolicy for the broker (#98 A2). Default-deny ingress so only
+  # the Open Web UI namespace(s) + (optional) Prometheus can reach the front door
+  # that validates BROKER_SHARED_SECRET (closes the in-cluster bearer-oracle surface).
+  # Egress is intentionally left unrestricted — the broker's egress surface
+  # (kube-apiserver, DNS, sandbox-router-svc, optional S3, optional OTLP) is
+  # cluster-specific and tracked as a follow-up. Port-forward-based KIND e2e sets
+  # enabled: false (see values-kind.yaml); set false to opt out in any environment.
+  networkPolicy:
+    enabled: true
+    ingress:
+      # Namespaces allowed to call the broker on :8080. Default: the conventional
+      # Open Web UI namespace. Add yours, e.g.  fromNamespaces: ["open-webui", "default"]
+      fromNamespaces: ["open-webui"]
 
 
 sandboxTemplate:

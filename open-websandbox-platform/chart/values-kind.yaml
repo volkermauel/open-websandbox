@@ -15,5 +15,7 @@ router:
   kubeDnsCidr: "10.96.0.10/32"
 broker:
   defaultProfile: ephemeral       # smoke the core path; per-user PVC is a separate (live) test
+  networkPolicy:
+    enabled: false                 # KIND e2e reaches the broker via port-forward (localhost); skip ingress default-deny
 sharedPvc:
   storageClass: standard          # KIND default (local-path); stays Pending (RWX, unused in ephemeral)

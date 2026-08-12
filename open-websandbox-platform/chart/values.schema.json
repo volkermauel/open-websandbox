@@ -58,7 +58,7 @@
     "broker": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sharedSecret", "warmPool", "runtimeNs", "routerUrl", "idleTtlSeconds", "parkIdleSeconds", "defaultProfile", "persistentMode", "persistentStorage", "probes", "metrics", "s3"],
+      "required": ["sharedSecret", "warmPool", "runtimeNs", "routerUrl", "idleTtlSeconds", "parkIdleSeconds", "defaultProfile", "persistentMode", "persistentStorage", "probes", "metrics", "networkPolicy", "s3"],
       "properties": {
         "replicas": {
           "type": "integer",
@@ -117,6 +117,24 @@
             "sizeLimit": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$", "description": "Hot-tier emptyDir sizeLimit + runtime MAX_WORKSPACE_BYTES (default 2Gi, D2/D9)." },
             "tmpfs": { "type": "boolean", "description": "true => /workspace is tmpfs (Memory) instead of disk-backed emptyDir." },
             "reaperPollSeconds": { "type": "integer", "minimum": 5, "description": "Reaper loop interval when s3 is enabled (lower = faster offload-on-reap; default 60)." }
+          }
+        }
+,
+        "networkPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Broker ingress NetworkPolicy (#98 A2). Default-deny ingress so only the Open Web UI namespace(s) + optional Prometheus reach the front door validating BROKER_SHARED_SECRET. Egress is intentionally left unrestricted (follow-up).",
+          "required": ["enabled", "ingress"],
+          "properties": {
+            "enabled": { "type": "boolean", "description": "Render the broker ingress NetworkPolicy. Default true (secure). KIND e2e sets false (values-kind.yaml) since it reaches the broker via port-forward." },
+            "ingress": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fromNamespaces"],
+              "properties": {
+                "fromNamespaces": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "description": "Namespace names allowed to call the broker on :8080 (the Open Web UI namespace(s))." }
+              }
+            }
           }
         }
       }
