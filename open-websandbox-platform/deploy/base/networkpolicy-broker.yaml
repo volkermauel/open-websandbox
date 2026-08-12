@@ -1,0 +1,35 @@
+# Broker ingress hardening (#98 A2). The broker is the front door validating
+# BROKER_SHARED_SECRET; without a NetworkPolicy any pod in the cluster could reach
+# it and hammer the shared-secret comparison (bearer oracle / brute-force surface).
+# Default-deny INGRESS; allow only the Open Web UI namespace + monitoring on :8080.
+# Egress is intentionally left unrestricted — the broker's egress surface (kube-apiserver
+# for Sandbox/Claim/PVC/Secret/Lease management, DNS, sandbox-router-svc, optional S3,
+# optional OTLP) is cluster-specific and tracked as a follow-up. Kubelet probes on :8080
+# are node-sourced and exempt from NetworkPolicy.
+#
+# Static base mirror of chart/templates/networkpolicy-broker.yaml. The chart parameterizes
+# the source namespace(s) via broker.networkPolicy.ingress.fromNamespaces and gates the
+# policy via broker.networkPolicy.enabled (prod) / values-kind.yaml (off).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: owui-broker
+  namespace: agent-sandbox-system
+  labels:
+    app.kubernetes.io/name: open-websandbox
+    app.kubernetes.io/component: broker
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: owui-broker
+  policyTypes:
+    - Ingress
+  ingress:
+    # Open Web UI (the legit front-door caller) on the HTTP/metrics port.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: open-webui
+      ports:
+        - protocol: TCP
+          port: 8080

@@ -1,0 +1,55 @@
+{{- $sysNs := include "open-websandbox.systemNamespace" . -}}
+{{- if .Values.broker.networkPolicy.enabled }}
+# Broker ingress hardening (#98 A2). The broker is the front door that validates
+# BROKER_SHARED_SECRET; without a NetworkPolicy any pod in the cluster could reach
+# it and hammer the shared-secret comparison (bearer oracle / brute-force surface).
+# Default-deny INGRESS and allow only:
+#   - the Open Web UI namespace(s) on :8080 (the sole legit caller)
+#   - (when monitoring.prometheus.enabled) the Prometheus scraper ns on :8080 (/metrics)
+# Egress is intentionally NOT restricted here: the broker has a broad, cluster-specific
+# egress surface (kube-apiserver for Sandbox/Claim/PVC/Secret/Lease management, DNS,
+# the router sandbox-router-svc, an optional S3 endpoint, an optional OTLP collector)
+# that needs careful, per-deployment enumeration — tracked as a follow-up. Kubelet
+# liveness/readiness/startup probes (httpGet on :8080) are sourced from the node and
+# are exempt from NetworkPolicy. Port 8080 matches the broker containerPort (http),
+# which also serves /metrics.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: owui-broker
+  namespace: {{ $sysNs }}
+  labels:
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: owui-broker
+  policyTypes:
+    - Ingress
+  ingress:
+    # Open Web UI (the legit front-door caller) on the HTTP/metrics port.
+    - from:
+        {{- range $ns := .Values.broker.networkPolicy.ingress.fromNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 8080
+    {{- if .Values.monitoring.prometheus.enabled }}
+    # Prometheus scraper (ServiceMonitor on owui-broker :8080/metrics).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.prometheus.scrapeNamespace | quote }}
+          {{- with .Values.monitoring.prometheus.scrapePodLabels }}
+          podSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+          {{- end }}
+      ports:
+        - protocol: TCP
+          port: 8080
+    {{- end }}
+{{- end }}

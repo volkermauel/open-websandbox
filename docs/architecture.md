@@ -206,6 +206,16 @@ On top of these, each sandbox is per-command bounded: `DEFAULT_TIMEOUT` (120 s) 
 `emptyDir` (`medium: Memory`, 2 Gi) that returns `ENOSPC` rather than filling the node
 disk.
 
+> **Control-plane ingress hardening (#98).** The broker — the front door that
+> validates `BROKER_SHARED_SECRET` — ships its own default-deny
+> [`NetworkPolicy`](../open-websandbox-platform/deploy/base/networkpolicy-broker.yaml)
+> (ingress only) so only the Open Web UI namespace (+ Prometheus, when enabled)
+> can reach it on `:8080`. This closes the in-cluster bearer-oracle surface where
+> any pod could otherwise hammer the shared-secret comparison. It is gated by
+> `broker.networkPolicy.enabled` (default `true`; off in KIND e2e, which reaches the
+> broker via `kubectl port-forward`), and its source namespace(s) are configurable
+> via `broker.networkPolicy.ingress.fromNamespaces`.
+
 ## Non-goals
 
 Explicitly out of scope: desktops/VMs, GPU, uncontrolled in-sandbox APIs, and
