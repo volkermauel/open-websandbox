@@ -1,0 +1,52 @@
+name: chart
+
+# Issue #100 (B3): Helm chart validation on EVERY pull request (NOT gated on
+# chart-path changes) so a broken chart / invalid manifest FAILS the gate before
+# it reaches release. Blocking job: `helm lint` + `kubeconform` (strict, k8s 1.30).
+#
+# Also runs on push to main/master so a direct push can't ship a broken chart.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: helm lint + kubeconform (strict, k8s 1.30)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+
+      # `helm lint` catches structural chart errors: bad values.schema.json
+      # references, malformed templates, undefined helpers, value violations.
+      - name: helm lint
+        run: helm lint open-websandbox-platform/chart/
+
+      # Render the full manifest set (default values) into a single file, then
+      # validate every resource against the Kubernetes 1.30 JSON schemas.
+      - name: helm template (default values)
+        run: |
+          helm template open-websandbox open-websandbox-platform/chart/ > /tmp/rendered.yaml
+          echo "Rendered $(grep -c '^kind:' /tmp/rendered.yaml) documents"
+
+      # STRICT mode: reject unknown/additional fields. The chart bundles the
+      # vendored agents.x-k8s.io CRDs (pinned upstream v0.5.3); their CR instances
+      # (SandboxTemplate / SandboxWarmPool / SandboxClaim) have no entry in the
+      # public kubernetes-json-schema catalog, so `ignore_missing_schemas` lets
+      # those pass while strict-validating every built-in resource we author
+      # (Deployments, Services, NetworkPolicies, ResourceQuota, ...). A typo or
+      # invalid field in any built-in resource still FAILS the gate.
+      - name: kubeconform
+        uses: helm/kubeconform-action@v1
+        with:
+          files: /tmp/rendered.yaml
+          kubernetes_version: "1.30.0"
+          strict: true
+          ignore_missing_schemas: true
+          summary: true

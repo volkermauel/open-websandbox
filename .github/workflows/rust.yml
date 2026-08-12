@@ -37,18 +37,20 @@ jobs:
       - name: cargo fmt --check
         run: cargo fmt --all --check
       - name: cargo clippy (-D warnings)
+        # Issue #100 (B5): clippy gate, MUST stay clean. Full `pedantic` was trialed
+        # but emits ~107 warnings here (~60 are doc-completeness lints in the same
+        # category as the deferred `missing_docs`); cleanup is tracked in a follow-up.
+        # The `cargo doc` step below makes broken intra-doc links visible.
         run: cargo clippy --all-targets -- -D warnings
+      - name: cargo doc (--no-deps, broken intra-doc links fail)
+        # Issue #100 (B5): rustdoc fails the build on broken intra-doc links.
+        run: cargo doc --no-deps --workspace
       - name: cargo test
         run: cargo test --all
 
   deny:
-    name: cargo deny (advisories / licenses / bans)
+    name: cargo deny (advisories+bans blocking, licenses warn)
     runs-on: ubuntu-latest
-    # Non-blocking: a cargo-deny infra hiccup (registry or advisory-DB outage)
-    # or a newly-flagged advisory surfaces visibly without failing the gate.
-    # Findings are triaged from this job's red/green status; the hard gates are
-    # fmt + clippy + test above.
-    continue-on-error: true
     defaults:
       run:
         working-directory: rust
@@ -60,5 +62,32 @@ jobs:
           workspaces: rust
       - name: Install cargo-deny
         run: cargo install --locked cargo-deny
-      - name: cargo deny check
-        run: cargo deny check
+      # Issue #100 (B1): advisories + bans HARD-FAIL the gate. A new RUSTSEC
+      # advisory, a yanked crate, or a disallowed dependency/source blocks merge
+      # until consciously triaged (ignore in deny.toml with a rationale, or fix).
+      - name: cargo deny check (advisories + bans) — blocking
+        run: cargo deny check advisories bans
+      # Licenses are warn-only: the curated allow-list in deny.toml is the D8
+      # review gate, but an unlisted-but-permissive license should surface for
+      # review without blocking (e.g. a new SPDX id spelling).
+      - name: cargo deny check (licenses) — warn-only
+        continue-on-error: true
+        run: cargo deny check licenses
+
+  audit:
+    # Issue #100 (B1): cargo-audit as a REPORT-ONLY second opinion against the
+    # RustSec advisory DB. Non-blocking: it cross-checks cargo-deny advisories
+    # using a separately-synced DB, so a DB-outage on one tool does not gate us
+    # and any divergence surfaces for triage without failing the build.
+    name: cargo audit (report-only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install cargo-audit
+        run: cargo install --locked cargo-audit
+      - name: cargo audit
+        run: cargo audit
