@@ -20,10 +20,6 @@ use std::env;
 use std::fmt;
 use std::str::FromStr;
 
-/// Convenience alias for fallible operations whose callers don't need a typed
-/// error. Used at the broker/runtime boundary.
-pub type AnyResult<T> = anyhow::Result<T>;
-
 /// Errors raised while loading configuration from the environment.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
