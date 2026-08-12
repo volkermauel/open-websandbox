@@ -10,7 +10,7 @@ feature. Each chat gets an isolated Linux sandbox running under **gVisor (`runsc
 agent (or a human in a terminal UI) can run shell commands, edit files, and install packages
 in what looks like a throwaway VM — but without the VM's blast radius. One gVisor sandbox
 runs **per active chat**; a warm pool hides cold-start latency; default-deny networking
-keeps sandboxes off the rest of the cluster. The control plane is a Python/FastAPI
+keeps sandboxes off the rest of the cluster. The control plane is a Rust/Axum
 **broker** + **runtime** plus a Go **sandbox-router** (self-built from the upstream
 [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox)
 controller, pinned **v0.5.3**), deployed via a **Helm chart**.
@@ -29,36 +29,33 @@ controller, pinned **v0.5.3**), deployed via a **Helm chart**.
 
 | Path | What's here |
 |------|-------------|
-| `open-websandbox-platform/broker/` | Broker (Python/FastAPI) — the front door: authenticates Open Web UI, owns sandbox lifecycle + idle reaper. |
-| `open-websandbox-platform/runtime/` | Runtime (Python/FastAPI) — runs inside each sandbox pod (`POST /execute`, `/files/*`, `/ports`, PTY terminals over WS). |
+| `rust/` | Rust workspace (`shared/`, `broker/`, `runtime/`; Axum). The **broker** is the front door — authenticates Open Web UI, owns sandbox lifecycle + idle reaper; the **runtime** runs inside each sandbox pod (`POST /execute`, `/files/*`, `/ports`, PTY terminals over WS). |
 | `open-websandbox-platform/chart/` | Helm chart: `templates/`, `values.yaml`, `values.schema.json`, `values-kind.yaml` (KIND e2e), `values-kind-gvisor.yaml`. |
 | `open-websandbox-platform/deploy/base/` | Base Kubernetes manifests the chart reproduces (kept byte-for-byte in sync). |
 | `open-websandbox-platform/upstream/` | Vendored upstream agent-sandbox CRDs + controller manifest (v0.5.3) + `SHA256SUMS`. |
 | `infra/gvisor/` | Online-safe gVisor (`runsc`) install/activate playbooks + `RuntimeClass` manifests. |
 | `docs/` | Architecture, deployment, operations, security, release-readiness docs. |
 | `openspec/` | OpenSpec specs + change proposals (how we plan non-trivial work). |
-| `tests/unit/`, `tests/e2e/` | Unit tests (no cluster needed) and KIND end-to-end tests (runc + gVisor). |
+| `rust/*/tests/`, `tests/e2e/` | Rust integration tests (no cluster needed) and Python/KIND end-to-end tests (runc + gVisor). |
 | `scripts/` | Helper scripts, e.g. `setup-kind-gvisor.sh`. |
-| `.github/workflows/` | `ci.yml`, `e2e.yml`, `release.yml`, `pages.yml` (this site). |
+| `.github/workflows/` | `ci.yml` (e2e), `rust.yml` (cargo fmt/clippy/test/deny), `e2e.yml`, `release.yml`, `pages.yml`. |
 
 ## Build / test / lint
 
 ```bash
-# Lint (Python)
-ruff check .
+# The control plane (broker + runtime) is Rust. Format + lint + test:
+cd rust
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --workspace
 
-# Unit tests — real filesystem + PTY (Linux); no cluster required
-pytest tests/unit -x
+# End-to-end tests are Python/KIND (runc locally; gVisor needs bare metal):
+pip install -r requirements-test.txt
+pytest tests/e2e --collect-only -q   # full run needs a KIND cluster (R1)
 
 # Helm chart checks
 helm lint open-websandbox-platform/chart/
 helm template open-websandbox open-websandbox-platform/chart/ -f open-websandbox-platform/chart/values-kind.yaml
-
-# Full local dev install (test deps + broker/runtime/runtime-common requirements)
-pip install -r requirements-test.txt \
-  -r open-websandbox-platform/runtime/requirements-app.txt \
-  -r open-websandbox-platform/runtime/requirements-common.txt \
-  -r open-websandbox-platform/broker/requirements.txt
 
 # Docs site (source for GitHub Pages)
 python -m venv /tmp/mkdocs-venv
@@ -79,9 +76,10 @@ values). End-to-end tests live in `tests/e2e/` (KIND). gVisor/runsc cannot nest 
   `~/.kube/config`, and never rely on the ambient default kubeconfig in a KIND test. This
   protects your real cluster context and keeps the e2e run reproducible.
 - **(R2) Test locally before you push — never push untested code.** Run the relevant checks
-  above (`ruff check .`, `pytest tests/unit -x`, and `helm lint`/`helm template` for chart
-  changes; `mkdocs build --strict` for docs changes) and confirm they pass before
-  committing/pushing. CI verifies — it is not a first run.
+  above (`cargo fmt --check`, `cargo clippy --all-targets`, `cargo test --workspace` for the
+  Rust control plane; `helm lint`/`helm template` for chart changes; `mkdocs build --strict`
+  for docs changes) and confirm they pass before committing/pushing. CI verifies — it is not
+  a first run.
 
 ## Key findings / gotchas (starter set)
 
@@ -97,8 +95,8 @@ detail.
   to internal services are *expected* to fail; that is the isolation working as designed.
 - **Set `broker.sharedSecret` — never ship the default.** `BROKER_SHARED_SECRET` must be a
   fresh 32-byte secret (`openssl rand -hex 32`) set via `broker.sharedSecret` at install.
-  Never deploy with the `dev-shared-secret-change-me` default. (Fail-open behaviour on an
-  unset/placeholder secret is tracked as a release blocker; fail-closed is the target.)
+  Never deploy with the `dev-shared-secret-change-me` default. The broker **fails closed**
+  (at boot and per-request) if the secret is unset or still the placeholder.
 - **Leader election is required before `broker.replicas > 1`.** A single
   `coordination.k8s.io` `Lease` ensures only the elected broker runs the idle reaper. Without
   it, multiple replicas cause migration races and a reaper thundering-herd. `replicas: 1`

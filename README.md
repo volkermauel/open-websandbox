@@ -23,9 +23,9 @@ default-deny networking keeps sandboxes off the rest of the cluster.
 
 ## How it works (one paragraph)
 
-Open WebUI calls the **broker** (Python/FastAPI), which authenticates the request,
+Open WebUI calls the **broker** (Rust/Axum), which authenticates the request,
 gets-or-creates the right sandbox user + session via the agent-sandbox CRDs, and
-reverse-proxies the in-sandbox **runtime** (Python/FastAPI on `:8888`) through the
+reverse-proxies the in-sandbox **runtime** (Rust/Axum on `:8888`) through the
 Go **sandbox-router** (a Pod-IP cache for the fast path; falls back to cluster DNS).
 The broker's idle reaper **parks** idle persistent sandboxes (Pod gone, PVC kept)
 and **reaps** abandoned ones. The runtime exposes `POST /execute`, `GET|POST /files/*`,
@@ -37,7 +37,7 @@ lifecycle, and the four isolation layers.
 flowchart LR
     WebUI["Open WebUI"] -->|HTTP / WS :8080| Broker
     subgraph cp["agent-sandbox-system (control plane)"]
-        Broker["broker<br/>(Python/FastAPI)"]
+        Broker["broker<br/>(Rust/Axum)"]
         Router["sandbox-router<br/>(Go)"]
         Ctrl["agent-sandbox-controller<br/>(upstream, v0.5.3)"]
     end

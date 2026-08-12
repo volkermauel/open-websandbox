@@ -8,7 +8,7 @@ blast radius.
 
 This document describes the component topology and data flow, the per-chat sandbox
 lifecycle, the two workspace modes, and the isolation layers. The decision-log
-rationale lives in [`openspec/changes/adopt-agent-sandbox/design.md`](../openspec/changes/adopt-agent-sandbox/design.md).
+rationale lives in [`openspec/changes/archive/adopt-agent-sandbox/design.md`](../openspec/changes/archive/adopt-agent-sandbox/design.md).
 
 ## Components
 

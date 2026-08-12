@@ -13,9 +13,9 @@ The control plane rests on the upstream
 controller (pinned **v0.5.3**, manifest vendored + SHA256-recorded in this repo). It is
 made of three components:
 
-- **broker** (Python/FastAPI) — the front door: authenticates Open WebUI, resolves or
+- **broker** (Rust/Axum) — the front door: authenticates Open WebUI, resolves or
   creates the sandbox for a user + session, and reverse-proxies requests to the runtime.
-- **runtime** (Python/FastAPI) — runs inside each sandbox pod: `POST /execute`,
+- **runtime** (Rust/Axum) — runs inside each sandbox pod: `POST /execute`,
   `GET|POST /files/*`, `GET /ports`, and interactive PTY terminals over WebSocket.
 - **sandbox-router** (Go, self-built from upstream) — reverse-proxies traffic to the live
   sandbox pod IP, with a Pod-IP cache fast path.

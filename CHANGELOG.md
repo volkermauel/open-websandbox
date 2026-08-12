@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Control plane rewritten in Rust (Axum).** The Python/FastAPI broker + runtime are
+  replaced by the Rust workspace under `rust/{shared,broker,runtime}`. Build & test is now
+  `cargo fmt` / `cargo clippy --all-targets` / `cargo test --workspace` (real-filesystem +
+  PTY integration tests); the Python `tests/unit` suite is removed. The broker ships as a
+  single ~40 MiB distroless image; native tar+zstd snapshot/restore (#94). The vendored
+  `kubernetes-sigs/agent-sandbox` controller + CRDs are preserved byte-for-byte, and the
+  Go sandbox-router self-build is unchanged — see [issue #18](https://github.com/volkermauel/open-websandbox/issues/18).
+
 ### Security
 
 - **Per-session broker<->runtime API key (#4).** Each sandbox pod now gets its OWN
@@ -100,7 +110,9 @@ and reverse-proxied by the broker:
 
 ### Quality
 
-- **100% unit/branch coverage** of broker + runtime (pytest), enforced in CI.
+- **Rust control-plane test suite** — `cargo test --workspace` (real-filesystem + PTY
+  integration tests), enforced in `rust.yml`; supersedes the original Python `pytest` suite
+  removed by the Rust rewrite (see [Unreleased]).
 - **gVisor KIND end-to-end** suite under `tests/e2e/` (real `runsc` cluster in
   CI; `runc` fallback for local dev).
 

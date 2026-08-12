@@ -6,8 +6,8 @@ context: |
         sandbox runtime on PLAIN infrastructure (MicroK8s + containerd), with NO
         proprietary runtime dependencies.
   Architecture: Built on kubernetes-sigs/agent-sandbox (controller + Sandbox /
-        SandboxClaim / SandboxTemplate / SandboxWarmPool CRDs). A Python FastAPI
-        **broker** manages per-user/per-chat sandboxes; a Python FastAPI **runtime**
+        SandboxClaim / SandboxTemplate / SandboxWarmPool CRDs). A Rust/Axum
+        **broker** manages per-user/per-chat sandboxes; a Rust/Axum **runtime**
         runs inside each sandbox pod (command exec, file API, WebSocket PTY) under
         gVisor (runsc); a Go **sandbox-router** (built from upstream agent-sandbox)
         reverse-proxies to sandbox pods.
@@ -20,7 +20,7 @@ context: |
   Threat model: trusted internal users (Entra OIDC). Goal is "prevent accidental
         cross-session leakage + strong practical sandboxing", not "resist a dedicated
         hostile attacker" (shared kernel is an accepted residual risk).
-  Tech: Python 3.12 (FastAPI) broker + runtime; Go sandbox-router (built from upstream
+  Tech: Rust (Axum/tokio) broker + runtime (workspace `rust/{shared,broker,runtime}`);
         agent-sandbox); MicroK8s v1.36, Calico CNI, containerd, gVisor nodes.
   Status: platform built + proven on prod (ephemeral + persistent profiles, interactive
         terminal, file API, security hardening). Now: release-prep (tests, docs,
