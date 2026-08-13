@@ -111,6 +111,22 @@ impl KubeLease {
             duration_seconds: cfg.leader_duration_seconds.max(1).min(i32::MAX as u64) as i32,
         }
     }
+
+    /// Test-only seam: override the holder identity this lease claims.
+    ///
+    /// `new` derives the identity from `HOSTNAME`/pid, which is correct in
+    /// production (one broker per pod) but makes a real two-broker leader-election
+    /// *race* impossible to build in-process: two `KubeLease` instances share the
+    /// same hostname/pid — and thus the same identity — so they can never
+    /// compete (the second always "renews" the first's lease). This builder
+    /// injects a distinct identity so `tests/kube_live.rs` can give each
+    /// competitor a unique holder and exercise the real acquire / defend /
+    /// takeover path against the apiserver. Production code never calls this.
+    #[must_use]
+    pub fn with_identity(mut self, identity: impl Into<String>) -> Self {
+        self.identity = identity.into();
+        self
+    }
 }
 
 /// True iff the kube error is an HTTP 404 (the lease doesn't exist yet / anymore).
