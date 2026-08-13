@@ -25,13 +25,16 @@
 //! Every test uses a unique object name (pid + monotonic seq) inside one shared
 //! namespace, so parallel test threads never collide.
 //!
-//! **Omitted (out of budget / not reliably testable in-process):**
-//!   * the full leader-election RACE (two brokers racing one lease) — `KubeLease`
-//!     derives its identity from `HOSTNAME`/pid, which two in-process instances
-//!     share, so a fair race cannot be constructed; the deterministic
-//!     expired-holder takeover covers the takeover branch instead;
-//!   * the WS terminal relay (`terminal.rs`) — needs a deployed runtime pod with
-//!     a PTY-equivalent upstream, heavier than this pass wires up.
+//! **Leader election:** acquire/renew/release, a deterministic expired-holder
+//!   takeover, AND the full two-broker RACE for one lease. `KubeLease` derives its
+//!   holder identity from `HOSTNAME`/pid — two in-process instances would share it
+//!   and never compete — so the race uses the test-only `KubeLease::with_identity`
+//!   seam to give each competitor a distinct holder (see
+//!   `lease_two_brokers_race_for_one_lease`).
+//!
+//! **Out of scope here:** the WS terminal relay (`terminal.rs`) — it needs a
+//!   deployed runtime pod; covered instead in `tests/ws_relay.rs` against a local
+//!   echo server.
 
 #![forbid(unsafe_code)]
 
@@ -277,8 +280,8 @@ async fn lease_acquire_renew_release_cycle() {
 }
 
 /// Deterministic takeover: a lease held by ANOTHER identity, renewed far enough
-/// in the past that it is expired, is taken over by `acquire_or_renew`. (The
-/// full two-broker race is omitted — see the module docs.)
+/// in the past that it is expired, is taken over by `acquire_or_renew`. The full
+/// two-broker race lives in `lease_two_brokers_race_for_one_lease`.
 #[tokio::test]
 async fn lease_takeover_when_holder_expired() {
     if !gated() {
@@ -314,6 +317,120 @@ async fn lease_takeover_when_holder_expired() {
     lease.release().await;
 }
 
+/// Real two-broker leader-election race for ONE lease via distinct injected
+/// identities (`KubeLease::with_identity`). Deterministic — no pure timing race:
+/// broker-A acquires first; broker-B cannot steal while A holds and renews; once
+/// A's renewal is aged past the duration, B takes over and A then defers. This is
+/// the real race the takeover test above stands in for.
+#[tokio::test]
+async fn lease_two_brokers_race_for_one_lease() {
+    if !gated() {
+        eprintln!("skipped: set OWUI_KUBE_LIVE=1 to run the live K8s tests");
+        return;
+    }
+    let client = client().await;
+    ensure_ns(&client).await;
+    let lease_name = uniq("race");
+    let cfg = BrokerConfig {
+        leader_namespace: NS.to_string(),
+        leader_lease: lease_name.clone(),
+        leader_duration_seconds: 15,
+        ..Default::default()
+    };
+    let broker_a = KubeLease::new(client.clone(), &cfg).with_identity("broker-A");
+    let broker_b = KubeLease::new(client.clone(), &cfg).with_identity("broker-B");
+
+    // 1. A acquires the empty lease first.
+    assert!(broker_a.acquire_or_renew().await, "broker-A acquires first");
+    assert_eq!(
+        lease_holder(&client, NS, &lease_name).await.as_deref(),
+        Some("broker-A"),
+        "holder is broker-A"
+    );
+
+    // 2. B cannot steal while A holds a LIVE lease.
+    assert!(
+        !broker_b.acquire_or_renew().await,
+        "broker-B defers while broker-A holds a live lease"
+    );
+    assert_eq!(
+        lease_holder(&client, NS, &lease_name).await.as_deref(),
+        Some("broker-A"),
+        "holder unchanged after broker-B's failed steal"
+    );
+
+    // 3. A renews (keeps the lease); B retries and still defers.
+    assert!(broker_a.acquire_or_renew().await, "broker-A renews");
+    assert!(
+        !broker_b.acquire_or_renew().await,
+        "broker-B still defers right after broker-A renewed"
+    );
+    assert_eq!(
+        lease_holder(&client, NS, &lease_name).await.as_deref(),
+        Some("broker-A"),
+        "holder still broker-A after renew + retry"
+    );
+
+    // 4. Simulate A's renewal stalling past the duration (deterministic, no
+    //    real-time wait): age the lease out so A's claim reads as expired.
+    age_out_lease(&client, NS, &lease_name, "broker-A", 3600, 15).await;
+
+    // 5. B now takes over the expired lease.
+    assert!(
+        broker_b.acquire_or_renew().await,
+        "broker-B takes over once broker-A's renewal is past the duration"
+    );
+    assert_eq!(
+        lease_holder(&client, NS, &lease_name).await.as_deref(),
+        Some("broker-B"),
+        "holder flipped to broker-B after takeover"
+    );
+
+    // 6. A now defers to B.
+    assert!(
+        !broker_a.acquire_or_renew().await,
+        "broker-A defers to broker-B after losing the lease"
+    );
+    assert_eq!(
+        lease_holder(&client, NS, &lease_name).await.as_deref(),
+        Some("broker-B"),
+        "holder remains broker-B"
+    );
+
+    broker_b.release().await;
+}
+
+/// Server-side rewrite of an existing Lease's `renewTime`/`acquireTime` to
+/// `age_secs` in the past (keeping `holder`), so the next `acquire_or_renew`
+/// from a DIFFERENT identity deterministically takes it over — mirroring how a
+/// real holder looks once its renewal cadence stalls past `duration`. Unlike
+/// `seed_expired_lease` (which `create`s), this `replace`s an existing lease.
+async fn age_out_lease(
+    client: &kube::Client,
+    ns: &str,
+    name: &str,
+    holder: &str,
+    age_secs: i64,
+    duration: i32,
+) {
+    let api: Api<Lease> = Api::namespaced(client.clone(), ns);
+    let mut existing = api
+        .get(name)
+        .await
+        .unwrap_or_else(|e| panic!("get lease {name} to age out: {e}"));
+    let now = jiff::Timestamp::now();
+    let past = jiff::Timestamp::from_second(now.as_second().saturating_sub(age_secs))
+        .expect("valid past epoch seconds");
+    let mut spec = existing.spec.clone().unwrap_or_default();
+    spec.holder_identity = Some(holder.to_string());
+    spec.lease_duration_seconds = Some(duration);
+    spec.acquire_time = Some(MicroTime::from(past));
+    spec.renew_time = Some(MicroTime::from(past));
+    existing.spec = Some(spec);
+    api.replace(name, &PostParams::default(), &existing)
+        .await
+        .unwrap_or_else(|e| panic!("age out lease {name}: {e}"));
+}
 /// Seed a `coordination.k8s.io/v1` Lease held by `holder`, with `renewTime`
 /// `age_secs` in the past and `leaseDurationSeconds = duration`, so a later
 /// `acquire_or_renew` deterministically takes it over.
