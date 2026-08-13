@@ -83,6 +83,8 @@ const DUPLEX_BUF: usize = 64 * 1024;
 /// `zstd -3` level (issue Q6) — matches the former `zstd -3 -q` exactly.
 const ZSTD_LEVEL: i32 = 3;
 
+/// Response body for `PUT /restore`: whether the workspace was restored and the
+/// compressed bytes ingested.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RestoreResponse {
     restored: bool,
@@ -93,6 +95,7 @@ pub struct RestoreResponse {
 // GET /snapshot
 // ---------------------------------------------------------------------------
 
+/// `GET /snapshot` — stream the workspace as a zstd-compressed tar.
 #[utoipa::path(
     get,
     path = "/snapshot",
@@ -237,6 +240,7 @@ fn build_archive(base: &Path, tx: mpsc::Sender<Bytes>) -> io::Result<()> {
 // PUT /restore
 // ---------------------------------------------------------------------------
 
+/// `PUT /restore` — unpack a zstd-compressed tar back into the workspace.
 #[utoipa::path(
     put,
     path = "/restore",

@@ -6,6 +6,7 @@
 //! `unsafe` lives inside `nix`/`std`, not in this crate.
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 pub mod app;
 pub mod auth;

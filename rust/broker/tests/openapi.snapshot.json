@@ -30,6 +30,7 @@
         "type": "object"
       },
       "CreateResponse": {
+        "description": "Response body for `POST /api/terminals` (id, created_at, pid).",
         "properties": {
           "created_at": {
             "type": "string"
@@ -94,8 +95,10 @@
         "type": "object"
       },
       "CwdRequest": {
+        "description": "Request body for `POST /files/cwd`: the workspace-relative directory to switch to.",
         "properties": {
           "path": {
+            "description": "Workspace-relative directory to make the effective cwd.",
             "type": "string"
           }
         },
@@ -105,6 +108,7 @@
         "type": "object"
       },
       "DeleteResponse": {
+        "description": "Response body for `DELETE /api/terminals/{id}`.",
         "properties": {
           "status": {
             "type": "string"
@@ -116,6 +120,7 @@
         "type": "object"
       },
       "Entry": {
+        "description": "One entry in a directory listing (name, type, size, modified time).",
         "properties": {
           "modified": {
             "format": "double",
@@ -252,6 +257,7 @@
         "type": "object"
       },
       "ListResponse": {
+        "description": "A directory listing: the resolved directory and its sorted entries.",
         "properties": {
           "dir": {
             "type": "string"
@@ -270,11 +276,14 @@
         "type": "object"
       },
       "MoveRequest": {
+        "description": "Request body for `POST /files/move`: rename `source` to `destination`.",
         "properties": {
           "destination": {
+            "description": "Workspace-relative destination path (must not already exist).",
             "type": "string"
           },
           "source": {
+            "description": "Workspace-relative path of the entry to move.",
             "type": "string"
           }
         },
@@ -293,8 +302,10 @@
         "type": "string"
       },
       "PathBody": {
+        "description": "Request body carrying a single workspace-relative path (`mkdir`, etc.).",
         "properties": {
           "path": {
+            "description": "Workspace-relative path to operate on.",
             "type": "string"
           }
         },
@@ -312,11 +323,14 @@
         "type": "string"
       },
       "ReplaceRequest": {
+        "description": "Request body for `POST /files/replace`: apply find/replace chunks to one file.",
         "properties": {
           "path": {
+            "description": "Workspace-relative file to edit.",
             "type": "string"
           },
           "replacements": {
+            "description": "Ordered find/replace chunks applied to the file.",
             "items": {
               "$ref": "#/components/schemas/ReplacementChunk"
             },
@@ -330,11 +344,14 @@
         "type": "object"
       },
       "ReplacementChunk": {
+        "description": "One find/replace chunk applied to a workspace file.",
         "properties": {
           "allow_multiple": {
+            "description": "When `true`, replace every occurrence; otherwise require exactly one match.",
             "type": "boolean"
           },
           "end_line": {
+            "description": "Optional inclusive 1-based end line for a line-scoped replacement.",
             "minimum": 0,
             "type": [
               "integer",
@@ -342,9 +359,11 @@
             ]
           },
           "replacement": {
+            "description": "Text substituted in place of `target`.",
             "type": "string"
           },
           "start_line": {
+            "description": "Optional 1-based start line for a line-scoped replacement.",
             "minimum": 0,
             "type": [
               "integer",
@@ -352,6 +371,7 @@
             ]
           },
           "target": {
+            "description": "Literal string to search for.",
             "type": "string"
           }
         },
@@ -362,6 +382,7 @@
         "type": "object"
       },
       "RestoreResponse": {
+        "description": "Response body for `PUT /restore`: whether the workspace was restored and the\ncompressed bytes ingested.",
         "properties": {
           "bytes": {
             "format": "int64",
@@ -574,6 +595,7 @@
         "type": "object"
       },
       "TermInfo": {
+        "description": "Public info for a terminal session — the `GET /api/terminals` JSON body.",
         "properties": {
           "created_at": {
             "type": "string"
@@ -595,11 +617,14 @@
         "type": "object"
       },
       "WriteRequest": {
+        "description": "Request body for `POST /files/write`: overwrite a file with the given content.",
         "properties": {
           "content": {
+            "description": "Full text content to write to the file.",
             "type": "string"
           },
           "path": {
+            "description": "Workspace-relative file to overwrite (parents created as needed).",
             "type": "string"
           }
         },
@@ -1604,6 +1629,7 @@
         "operationId": "delete_entry",
         "parameters": [
           {
+            "description": "Workspace-relative path to operate on.",
             "in": "path",
             "name": "path",
             "required": true,
@@ -1889,6 +1915,7 @@
         "operationId": "list_dir",
         "parameters": [
           {
+            "description": "Optional workspace-relative directory to list (defaults to `.`).",
             "in": "path",
             "name": "directory",
             "required": true,
@@ -2099,6 +2126,7 @@
         "operationId": "read_file",
         "parameters": [
           {
+            "description": "Workspace-relative path to operate on.",
             "in": "path",
             "name": "path",
             "required": true,
@@ -2304,6 +2332,7 @@
         "operationId": "view_file",
         "parameters": [
           {
+            "description": "Workspace-relative path to operate on.",
             "in": "path",
             "name": "path",
             "required": true,
@@ -2622,6 +2651,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "`GET /ports` — report host ports (always empty under the restricted runtime).",
         "tags": [
           "ports"
         ]
@@ -2708,6 +2738,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "`PUT /restore` — unpack a zstd-compressed tar back into the workspace.",
         "tags": [
           "snapshot"
         ]
@@ -2756,6 +2787,7 @@
             "brokerBearer": []
           }
         ],
+        "summary": "`GET /snapshot` — stream the workspace as a zstd-compressed tar.",
         "tags": [
           "snapshot"
         ]

@@ -47,6 +47,7 @@ pub(crate) const EXECUTE_TIMEOUTS_TOTAL: &str = "open_websandbox_runtime_execute
 /// install point for the global recorder.
 #[derive(Clone)]
 pub struct RuntimeMetrics {
+    /// HTTP request rate/latency holder (templated route × method × status).
     pub http: HttpMetrics,
 }
 
