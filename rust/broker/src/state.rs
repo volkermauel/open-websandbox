@@ -23,9 +23,13 @@ use crate::store::SandboxStore;
 /// resolve skips the restore hop).
 #[derive(Clone)]
 pub struct AppState {
+    /// Env-driven drop-in configuration (D12).
     pub config: Arc<shared::BrokerConfig>,
+    /// Kubernetes lifecycle backend (real or stubbed), type-erased for in-process testing.
     pub store: Arc<dyn SandboxStore>,
+    /// Shared reverse-proxy upstream client, reused per broker→runtime hop.
     pub http: reqwest::Client,
+    /// Test/dev seam repointing the proxy at a local mock server (`None` in production).
     pub runtime_upstream_override: Arc<Option<String>>,
     /// C-4 cold-tier restore driver. `Some` only when `broker.s3.enabled` (the
     /// same [`S3Offload`] the leader-gated reaper offloads through); `None`

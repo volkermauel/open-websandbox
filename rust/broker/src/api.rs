@@ -52,6 +52,7 @@ pub struct ConfigResponse {
     features: Features,
 }
 
+/// Feature-flag set returned inside `ConfigResponse`.
 #[derive(Serialize, ToSchema)]
 pub struct Features {
     terminal: bool,
@@ -111,6 +112,7 @@ pub struct SandboxObject {
 /// `GET /api/sandboxes` query: optional Kubernetes label selector.
 #[derive(Deserialize, Default, IntoParams)]
 pub struct ListQuery {
+    /// Kubernetes label selector (URL `labelSelector`) to filter listed sandboxes.
     #[serde(default, rename = "labelSelector")]
     pub label_selector: Option<String>,
 }

@@ -45,20 +45,27 @@ const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 /// Identity carried from the OWUI WS open (query params fall back to headers).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalIdentity {
+    /// Owning user id (from the `userId` query param or `X-User-Id` header).
     pub user_id: String,
+    /// Owning session/chat id.
     pub session_id: String,
+    /// Resolved persistence profile.
     pub profile: Profile,
 }
 
 /// Query params OWUI may send on the WS open.
 #[derive(Deserialize, Default, Debug)]
 pub struct TerminalWsQuery {
+    /// Optional `userId` query param (falls back to the `X-User-Id` header).
     #[serde(default)]
     pub user_id: Option<String>,
+    /// Optional `sessionId` query param.
     #[serde(default)]
     pub session_id: Option<String>,
+    /// Optional `chatId` query param.
     #[serde(default)]
     pub chat_id: Option<String>,
+    /// Optional `persistence` query param (`persistent`/`ephemeral`).
     #[serde(default)]
     pub persistence: Option<String>,
 }
