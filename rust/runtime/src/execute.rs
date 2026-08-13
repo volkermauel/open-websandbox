@@ -33,16 +33,22 @@ use crate::state::AppState;
 /// defaulting to `DEFAULT_TIMEOUT` (seconds).
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ExecuteRequest {
+    /// Shell command line to execute.
     pub command: String,
+    /// Optional wall-clock timeout in seconds (clamped into `[1, MAX_TIMEOUT]`).
     pub timeout: Option<u64>,
 }
 
 /// `POST /execute` response body (HTTP 200 even on non-zero exit).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExecuteResponse {
+    /// Captured standard output.
     pub stdout: String,
+    /// Captured standard error.
     pub stderr: String,
+    /// Process exit code (HTTP 200 even when non-zero; `124` on timeout).
     pub exit_code: i32,
+    /// Whether the command was killed for exceeding `timeout`.
     pub timed_out: bool,
 }
 
