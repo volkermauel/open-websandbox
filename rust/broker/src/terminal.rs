@@ -197,14 +197,29 @@ async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, s
         pod_ip = %resolved.pod_ip,
         "terminal ws relay started"
     );
-
     // 4. connect the upstream runtime terminal WS (plaintext in-cluster;
-    //    TLS terminates at the ingress).
+    //    TLS terminates at the ingress) and relay frames until either side
+    //    ends. The connect + bidirectional pump live in [`relay_to_upstream`]
+    //    so the byte relay is exercisable end-to-end against a local echo
+    //    server in `tests/ws_relay.rs`.
     let upstream_url = format!(
         "ws://{}:{RUNTIME_PORT}/api/terminals/{session_id}",
         resolved.pod_ip
     );
-    let upstream = match tokio_tungstenite::connect_async(&upstream_url).await {
+    relay_to_upstream(client, &upstream_url).await;
+}
+
+/// Connect the upstream runtime terminal WS (`upstream_url`) and relay frames
+/// bidirectionally with the OWUI client `WebSocket` until either side closes
+/// (first-completed-wins; the other pump task is aborted). On upstream-connect
+/// failure the client socket is closed with 1011.
+///
+/// Factored out of `relay` (steps 4–5) as a test seam: the rest of `relay`
+/// needs an [`AppState`] plus a resolved sandbox pod, which is heavier than a
+/// test wires up, but this connect + pump path is fully exercisable against a
+/// local in-process echo server (see `tests/ws_relay.rs`).
+pub async fn relay_to_upstream(mut client: WebSocket, upstream_url: &str) {
+    let upstream = match tokio_tungstenite::connect_async(upstream_url).await {
         Ok((stream, _)) => stream,
         Err(e) => {
             tracing::warn!(%upstream_url, "terminal ws upstream connect failed: {e}");
@@ -218,7 +233,7 @@ async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, s
         }
     };
 
-    // 5. bidirectional relay until either side ends.
+    // Bidirectional relay until either side ends.
     let (mut up_sink, mut up_stream) = upstream.split();
     let (mut client_sink, mut client_stream) = client.split();
 
