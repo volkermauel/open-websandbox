@@ -9,6 +9,7 @@
 //! PR-A is intentionally representative: the full CRD / `OpenAPI` type sets and
 //! the complete config object arrive in PR-B (runtime) and PR-C (broker).
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 pub mod auth;
 pub mod config;
