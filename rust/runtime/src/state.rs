@@ -15,7 +15,9 @@ use crate::terminals::TerminalRegistry;
 /// `Arc`-ed so all handlers share one mtime cache).
 #[derive(Clone)]
 pub struct AppState {
+    /// Runtime configuration (workdir, caps, shell) shared across handlers.
     pub config: Arc<RuntimeConfig>,
+    /// Per-session Bearer key store (shared, cached mtime source).
     pub key_store: Arc<SessionKeyStore>,
     /// In-process PTY terminal sessions (`/api/terminals`).
     pub terminals: Arc<TerminalRegistry>,
@@ -24,6 +26,8 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Build an `AppState` from its config and key store, wiring the metrics registry
+    /// and an empty terminal registry.
     pub fn new(config: RuntimeConfig, key_store: SessionKeyStore) -> Self {
         Self {
             config: Arc::new(config),

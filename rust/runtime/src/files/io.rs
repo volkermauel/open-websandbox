@@ -13,6 +13,7 @@ use crate::error::ApiError;
 use crate::safe_path::{open_read, open_write, safe_path};
 use crate::state::AppState;
 
+/// One entry in a directory listing (name, type, size, modified time).
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct Entry {
     name: String,
@@ -22,6 +23,7 @@ pub struct Entry {
     modified: f64,
 }
 
+/// A directory listing: the resolved directory and its sorted entries.
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct ListResponse {
     #[schema(value_type = String)]
@@ -59,8 +61,10 @@ pub async fn get_cwd(
     })))
 }
 
+/// Request body for `POST /files/cwd`: the workspace-relative directory to switch to.
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct CwdRequest {
+    /// Workspace-relative directory to make the effective cwd.
     pub path: String,
 }
 
@@ -99,8 +103,10 @@ pub async fn set_cwd(
 
 // --- /files/list -------------------------------------------------------------
 
+/// Query parameters for `GET /files/list`: an optional directory (defaults to `.`).
 #[derive(Deserialize, utoipa::IntoParams)]
 pub struct ListQuery {
+    /// Optional workspace-relative directory to list (defaults to `.`).
     pub directory: Option<String>,
 }
 
@@ -187,8 +193,10 @@ fn entry_for(p: &Path) -> Option<Entry> {
 
 // --- /files/read -------------------------------------------------------------
 
+/// Query parameter naming a single workspace-relative path.
 #[derive(Deserialize, utoipa::IntoParams)]
 pub struct PathQuery {
+    /// Workspace-relative path to operate on.
     pub path: String,
 }
 
@@ -258,9 +266,12 @@ pub async fn read_file(
 
 // --- /files/write ------------------------------------------------------------
 
+/// Request body for `POST /files/write`: overwrite a file with the given content.
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct WriteRequest {
+    /// Workspace-relative file to overwrite (parents created as needed).
     pub path: String,
+    /// Full text content to write to the file.
     pub content: String,
 }
 
@@ -349,16 +360,21 @@ pub async fn mkdir(
     Ok(Json(serde_json::json!({ "path": full })))
 }
 
+/// Request body carrying a single workspace-relative path (`mkdir`, etc.).
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct PathBody {
+    /// Workspace-relative path to operate on.
     pub path: String,
 }
 
 // --- /files/move -------------------------------------------------------------
 
+/// Request body for `POST /files/move`: rename `source` to `destination`.
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct MoveRequest {
+    /// Workspace-relative path of the entry to move.
     pub source: String,
+    /// Workspace-relative destination path (must not already exist).
     pub destination: String,
 }
 
@@ -492,19 +508,28 @@ pub async fn view_file(
 
 // --- /files/replace ---------------------------------------------------------
 
+/// One find/replace chunk applied to a workspace file.
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct ReplacementChunk {
+    /// Literal string to search for.
     pub target: String,
+    /// Text substituted in place of `target`.
     pub replacement: String,
+    /// Optional 1-based start line for a line-scoped replacement.
     pub start_line: Option<usize>,
+    /// Optional inclusive 1-based end line for a line-scoped replacement.
     pub end_line: Option<usize>,
+    /// When `true`, replace every occurrence; otherwise require exactly one match.
     #[serde(default)]
     pub allow_multiple: bool,
 }
 
+/// Request body for `POST /files/replace`: apply find/replace chunks to one file.
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct ReplaceRequest {
+    /// Workspace-relative file to edit.
     pub path: String,
+    /// Ordered find/replace chunks applied to the file.
     pub replacements: Vec<ReplacementChunk>,
 }
 

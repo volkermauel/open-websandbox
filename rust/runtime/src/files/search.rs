@@ -14,6 +14,7 @@ use crate::state::AppState;
 
 // --- /files/grep -------------------------------------------------------------
 
+/// Query parameters for `GET /files/grep`: a literal/regex search of the workspace.
 #[derive(Deserialize, utoipa::IntoParams)]
 pub struct GrepQuery {
     query: String,
@@ -142,6 +143,7 @@ fn collect_files(dir: &Path, include: Option<&[String]>, out: &mut Vec<PathBuf>)
 
 // --- /files/glob -------------------------------------------------------------
 
+/// Query parameters for `GET /files/glob`: match entries by pattern and optional type.
 #[derive(Deserialize, utoipa::IntoParams)]
 pub struct GlobQuery {
     pattern: String,

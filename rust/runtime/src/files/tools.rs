@@ -13,6 +13,7 @@ use crate::state::AppState;
 
 // --- /ports -----------------------------------------------------------------
 
+/// `GET /ports` — report host ports (always empty under the restricted runtime).
 #[utoipa::path(
     get,
     path = "/ports",

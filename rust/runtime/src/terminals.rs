@@ -89,6 +89,7 @@ pub struct TerminalRegistry {
 }
 
 impl TerminalRegistry {
+    /// Build an empty terminal-session registry.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -117,6 +118,7 @@ impl Drop for Session {
     }
 }
 
+/// Public info for a terminal session — the `GET /api/terminals` JSON body.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TermInfo {
     id: String,
@@ -124,6 +126,7 @@ pub struct TermInfo {
     pid: u32,
 }
 
+/// Response body for `POST /api/terminals` (id, created_at, pid).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CreateResponse {
     id: String,
@@ -131,6 +134,7 @@ pub struct CreateResponse {
     pid: u32,
 }
 
+/// Response body for `DELETE /api/terminals/{id}`.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteResponse {
     status: &'static str,
