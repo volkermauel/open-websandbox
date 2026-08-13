@@ -1,0 +1,94 @@
+name: integration
+
+# Real-backend integration tests for the broker (issue #101, items C1 + C2):
+#   * kube_live.rs — real kube-rs backends (KubeSandboxStore + KubeLease) vs a
+#     live KIND cluster (C1);
+#   * s3_live.rs   — real aws-sdk-s3 AwsColdStore vs a MinIO service container (C2).
+#
+# Both tests are env-gated (OWUI_KUBE_LIVE / OWUI_S3_LIVE) and skip cleanly
+# otherwise; this job stands the infra up and opts the tests in. It is far
+# lighter than e2e.yml: no images are built and the platform is NOT deployed —
+# the backends are exercised directly against the apiserver + the S3 API.
+#
+# Not triggered on every push (billing-conscious): runs on PRs touching the
+# broker control plane / CRDs / this file, and on manual dispatch.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "rust/**"
+      - "rust-toolchain.toml"
+      - "open-websandbox-platform/chart/crds/**"
+      - ".github/workflows/integration.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  live-backends:
+    name: broker live backends (KIND + MinIO)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      # C2 target: MinIO S3 API on :9000 (no health-cmd; minio/minio ships no
+      # curl — a `Wait for MinIO` step below polls the runner-side health URL).
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: minio
+          MINIO_ROOT_PASSWORD: minio123
+        ports:
+          - 9000:9000
+    env:
+      KIND_CLUSTER: owui-c1c2
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      # --- C2: MinIO ---------------------------------------------------------
+      - name: Wait for MinIO (:9000)
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live >/dev/null && exit 0
+            sleep 2
+          done
+          echo "MinIO never became healthy"; exit 1
+
+      - name: C2 — live S3 cold-tier test (OWUI_S3_LIVE=1)
+        working-directory: rust
+        run: cargo test -p broker --test s3_live -- --nocapture
+        env:
+          OWUI_S3_LIVE: "1"
+
+      # --- C1: KIND cluster + CRDs ------------------------------------------
+      # helm/kind-action writes the kubeconfig to $HOME/.kube/config (the
+      # e2e.yml convention). The ephemeral CI runner has no real kubeconfig to
+      # clobber, so this is safe here; locally the tests use an explicit
+      # `--kubeconfig` path per repo rule R1.
+      - name: Create KIND cluster
+        uses: helm/kind-action@v1
+        with:
+          version: v0.27.0
+          cluster_name: ${{ env.KIND_CLUSTER }}
+          node_image: kindest/node:v1.31.0
+          wait: 60s
+
+      - uses: azure/setup-kubectl@v5
+
+      - name: Apply broker CRDs (agents.x-k8s.io)
+        run: |
+          kubectl apply -f open-websandbox-platform/chart/crds/upstream-agent-sandbox-v0.5.3-crds.yaml
+          kubectl wait --for=condition=Established --all crd --timeout=120s
+
+      - name: C1 — live K8s backend tests (OWUI_KUBE_LIVE=1)
+        working-directory: rust
+        run: cargo test -p broker --test kube_live -- --nocapture --test-threads=1
+        env:
+          OWUI_KUBE_LIVE: "1"
+          KUBECONFIG: /home/runner/.kube/config
