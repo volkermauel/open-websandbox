@@ -32,7 +32,7 @@ pub struct UploadQuery {
 /// `axum::extract::Multipart` (this struct exists only to describe the wire
 /// contract for OpenAPI/Scalar — it is never deserialized). The on-disk name
 /// is the basename of the part's `Content-Disposition` `filename`; path
-/// components are stripped as defense-in-depth (see [`upload_basename`]).
+/// components are stripped as defense-in-depth (see `upload_basename`).
 #[derive(utoipa::ToSchema)]
 pub struct FileUpload {
     /// Binary file content (one part named `file`).

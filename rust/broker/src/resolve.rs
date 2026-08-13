@@ -1,7 +1,7 @@
 //! Deterministic session→sandbox resolution + ready-polling.
 //!
 //! Per-session sandbox resolution (PR-C-2): compute the deterministic per-session
-//! Sandbox name, get-or-create it via the [`SandboxStore`], then poll the store
+//! Sandbox name, get-or-create it via the `SandboxStore`, then poll the store
 //! until the upstream controller reports `Ready` **and** a pod IP (reusing
 //! [`SandboxStatus::is_ready`](shared::SandboxStatus::is_ready) +
 //! [`pod_ip`](shared::SandboxStatus::pod_ip)).
@@ -105,11 +105,11 @@ fn now_unix() -> i64 {
 /// Resolve the per-session Sandbox: get-or-create, then poll until Ready + IP.
 ///
 /// 1. Compute the deterministic [`sandbox_name`].
-/// 2. [`SandboxStore::get_sandbox`]; if absent, clone the base template's
-///    `podTemplate` via [`build_sandbox`] and [`SandboxStore::create_sandbox`].
+/// 2. `SandboxStore::get_sandbox`; if absent, clone the base template's
+///    `podTemplate` via [`build_sandbox`] and `SandboxStore::create_sandbox`.
 ///    A `Conflict` means a concurrent create won — fall through to the poll.
-/// 3. Poll [`SandboxStore::get_sandbox`] every [`READY_POLL_INTERVAL`] until
-///    [`ready_pod_ip`] or the configured `claim_timeout_seconds` deadline
+/// 3. Poll `SandboxStore::get_sandbox` every `READY_POLL_INTERVAL` until
+///    `ready_pod_ip` or the configured `claim_timeout_seconds` deadline
 ///    (→ 503, matching the PR-C-2 spec).
 ///
 /// Returns the ready [`ResolvedSandbox`] (name + pod IP).

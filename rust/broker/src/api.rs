@@ -4,7 +4,7 @@
 //!
 //! * **Open** (no auth): `GET /healthz`, `GET /readyz`, `GET /metrics`,
 //!   `GET /openapi.json`, `GET /docs` — registered without an auth guard.
-//! * **Gated** (shared Bearer via [`Authed`](crate::auth::Authed)):
+//! * **Gated** (shared Bearer via `Authed`):
 //!   `GET /api/config`, `GET /api/status` (broker-served, OpenAPI-defined),
 //!   the Sandbox lifecycle CRUD (`/api/sandboxes[/{name}]`), and the catch-all
 //!   reverse proxy (`/{*path}`).

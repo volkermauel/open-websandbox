@@ -4,7 +4,7 @@
 //! handlers (probes, `/api/config`, `/api/status`, sandbox CRUD) with the runtime surface
 //! (`/execute`, `/files/*`, `/snapshot`, `/restore`, `/api/terminals*`) that OWUI reaches
 //! through the broker's reverse proxy — issue #75 **Q1 = "all"**. The runtime handlers
-//! are annotated in [`runtime::openapi`] and merged in here via [`OpenApi::merge`].
+//! are annotated in [`runtime::openapi`] and merged in here via `OpenApi::merge`.
 //!
 //! `info.version` is the broker crate version: utoipa fills `info.version`/`info.license`
 //! from `CARGO_PKG_VERSION`/`CARGO_PKG_LICENSE` at compile time, so it tracks

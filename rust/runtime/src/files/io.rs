@@ -35,7 +35,7 @@ pub struct ListResponse {
 ///
 /// # Errors
 ///
-/// Returns [`ApiError`] (via [`base_of`]) if `X-Workspace-Subdir` is invalid.
+/// Returns [`ApiError`] (via `base_of`) if `X-Workspace-Subdir` is invalid.
 #[utoipa::path(
     get,
     path = "/files/cwd",

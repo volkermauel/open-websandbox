@@ -3,7 +3,7 @@
 //! Every handler funnels its caller-supplied path through
 //! [`safe_path`](crate::safe_path) first, so traversal/escape attempts come back
 //! as HTTP 400 rather than leaking bytes outside the workspace base. Auth is via
-//! the [`Authed`] extractor (the per-session key guard).
+//! the `Authed` extractor (the per-session key guard).
 
 #![forbid(unsafe_code)]
 

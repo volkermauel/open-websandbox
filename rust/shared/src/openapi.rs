@@ -18,7 +18,7 @@ use utoipa::Modify;
 /// resolves consistently across the merged document.
 pub const BEARER_SCHEME: &str = "brokerBearer";
 
-/// Registers the [`BEARER_SCHEME`] HTTP Bearer security scheme on an [`OpenApi`] document.
+/// Registers the [`BEARER_SCHEME`] HTTP Bearer security scheme on an `OpenApi` document.
 ///
 /// Used as a `modifiers(...)` entry by both the broker and runtime `#[derive(OpenApi)]`
 /// structs so gated operations show the 🔒 lock. Adding the scheme in both crates keeps

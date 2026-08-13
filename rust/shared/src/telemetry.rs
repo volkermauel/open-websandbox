@@ -12,7 +12,7 @@
 //!   can `shutdown()` it on graceful exit (best-effort — the batch processor
 //!   flushes periodically regardless).
 //! - The OTLP transport is selected by `OTEL_EXPORTER_OTLP_PROTOCOL`
-//!   (`grpc` [default] or `http`); see [`OTEL_PROTOCOL_ENV`].
+//!   (`grpc` default or `http`); see [`OTEL_PROTOCOL_ENV`].
 //! - When the endpoint env var is unset/empty, OR building the exporter fails,
 //!   OR the `telemetry-otlp` feature is compiled out, tracing is a no-op: the
 //!   subscriber falls back to `fmt`-only. **Boot and serve never depend on a

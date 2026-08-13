@@ -5,7 +5,7 @@
 //! sends its identity via query params (`user_id`, `session_id`/`chat_id`,
 //! `persistence`) with the chat id in the path, and the shared secret as the
 //! first `{"type":"auth","token":...}` text message. After validating those we
-//! [`resolve_sandbox`](crate::resolve::resolve_sandbox), open an outbound WS to
+//! `resolve_sandbox`, open an outbound WS to
 //! the runtime pod's terminal endpoint (`ws://<pod-ip>:8888/api/terminals/{id}`),
 //! and relay frames bidirectionally until either side closes (first-completed-
 //! wins).
@@ -66,7 +66,7 @@ pub struct TerminalWsQuery {
 /// Resolve the terminal identity from query params, then headers, then the path
 /// session id. `X-User-Id` is required (1008
 /// close when absent); `X-Session-Id`/chat falls back to the path id; profile
-/// resolves via [`profile_from_header`].
+/// resolves via `profile_from_header`.
 pub fn terminal_identity(
     query: &TerminalWsQuery,
     headers: &HeaderMap,
@@ -121,7 +121,7 @@ fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 }
 
 /// `GET /api/terminals/{id}` (WebSocket upgrade). Validates identity, then hands
-/// off to [`relay`] inside the upgrade future (post-accept auth + resolve + relay).
+/// off to `relay` inside the upgrade future (post-accept auth + resolve + relay).
 pub async fn terminal_ws(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,

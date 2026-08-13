@@ -217,7 +217,7 @@
         "type": "object"
       },
       "FileUpload": {
-        "description": "Typed `multipart/form-data` body for the upload endpoints: a single binary\n`file` part. The runtime consumes the stream directly via\n`axum::extract::Multipart` (this struct exists only to describe the wire\ncontract for OpenAPI/Scalar — it is never deserialized). The on-disk name\nis the basename of the part's `Content-Disposition` `filename`; path\ncomponents are stripped as defense-in-depth (see [`upload_basename`]).",
+        "description": "Typed `multipart/form-data` body for the upload endpoints: a single binary\n`file` part. The runtime consumes the stream directly via\n`axum::extract::Multipart` (this struct exists only to describe the wire\ncontract for OpenAPI/Scalar — it is never deserialized). The on-disk name\nis the basename of the part's `Content-Disposition` `filename`; path\ncomponents are stripped as defense-in-depth (see `upload_basename`).",
         "properties": {
           "file": {
             "description": "Binary file content (one part named `file`).",
@@ -1482,7 +1482,7 @@
     },
     "/files/cwd": {
       "get": {
-        "description": "# Errors\n\nReturns [`ApiError`] (via [`base_of`]) if `X-Workspace-Subdir` is invalid.",
+        "description": "# Errors\n\nReturns [`ApiError`] (via `base_of`) if `X-Workspace-Subdir` is invalid.",
         "operationId": "get_cwd",
         "responses": {
           "200": {

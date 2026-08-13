@@ -44,6 +44,8 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: cargo doc (--no-deps, broken intra-doc links fail)
         # Issue #100 (B5): rustdoc fails the build on broken intra-doc links.
+        env:
+          RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --no-deps --workspace
       - name: cargo test
         run: cargo test --all

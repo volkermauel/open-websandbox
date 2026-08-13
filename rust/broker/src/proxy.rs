@@ -2,14 +2,14 @@
 //! sandbox pod.
 //!
 //! The shared Bearer is validated up-front by
-//! [`Authed`](crate::auth::Authed); here we:
+//! `Authed`; here we:
 //!
 //! 1. read the OWUI request identity (`X-User-Id` required; `X-Session-Id`
 //!    defaults to the user; `X-Persistence` selects the profile, else the
 //!    configured default);
 //! 2. [`resolve_sandbox`] for that identity (get-or-create + Ready poll);
 //! 3. rebuild the headers: strip the hop-by-hop + broker-managed set
-//!    ([`HOP`], including the inbound `Authorization`), then inject the runtime
+//!    (`HOP`, including the inbound `Authorization`), then injects the runtime
 //!    Bearer (`BROKER_RUNTIME_API_KEY` — C-2 shared key; C-3 rotates per session)
 //!    and the `X-Sandbox-*` identity the runtime echoes;
 //! 4. forward method + path + query + body to `http://<pod-ip>:8888<path>` over
@@ -121,7 +121,7 @@ pub(crate) fn profile_from_header(headers: &HeaderMap, default_profile: Profile)
 
 /// Build the header map forwarded to the runtime pod.
 ///
-/// Copies every inbound header whose lowercased name is NOT in [`HOP`], then
+/// Copies every inbound header whose lowercased name is NOT in `HOP`, then
 /// injects the runtime Bearer (when a runtime key is configured) and the
 /// `X-Sandbox-*` / `X-Session-Id` identity the runtime echoes back.
 #[must_use]

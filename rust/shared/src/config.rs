@@ -11,7 +11,7 @@
 //! Note on testing: [`BrokerConfig::from_env`] reads the process environment
 //! directly, and [`std::env::set_var`]/[`remove_var`](std::env::remove_var) are
 //! `unsafe` since Rust 1.83 — incompatible with `#![forbid(unsafe_code)]`. The
-//! pure parsing core is therefore factored into [`BrokerConfig::from_map`],
+//! pure parsing core is therefore factored into `BrokerConfig::from_map`,
 //! which the unit tests exercise without touching the live environment.
 
 #![forbid(unsafe_code)]
@@ -230,7 +230,7 @@ pub struct BrokerConfig {
     pub s3_enabled: bool,
 
     /// S3-compatible endpoint URL (env `BROKER_S3_ENDPOINT`). Empty ⇒ the AWS
-    /// default (<https://s3>.<region>.amazonaws.com). Set for MinIO/R2/Proxmox
+    /// default (`https://s3.<region>.amazonaws.com`). Set for MinIO/R2/Proxmox
     /// (e.g. `http://minio:9000`).
     #[serde(default)]
     pub s3_endpoint: String,
