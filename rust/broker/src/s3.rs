@@ -435,8 +435,8 @@ pub struct S3Offload {
 impl S3Offload {
     /// Build the driver from the broker config + a concrete cold store + the
     /// shared proxy HTTP client. Retry policy + retention default to the documented
-    /// values ([`DEFAULT_OFFLOAD_MAX_ATTEMPTS`] / [`DEFAULT_OFFLOAD_BACKOFF`] /
-    /// [`DEFAULT_RETENTION_DAYS`]).
+    /// values (`DEFAULT_OFFLOAD_MAX_ATTEMPTS` / `DEFAULT_OFFLOAD_BACKOFF` /
+    /// `DEFAULT_RETENTION_DAYS`).
     #[must_use]
     pub fn new(cfg: &BrokerConfig, cold: Arc<dyn ColdStore>, http: reqwest::Client) -> Self {
         Self {

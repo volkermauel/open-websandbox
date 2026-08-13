@@ -2,7 +2,7 @@
 //! chart's env blocks are unchanged).
 //!
 //! [`RuntimeConfig::from_env`] reads the process environment directly; the pure
-//! parsing core is factored into [`parse_value`] (mirroring `shared::config`) so
+//! parsing core is factored into `parse_value` (mirroring `shared::config`) so
 //! the unit tests exercise it without mutating the live environment. `set_var`
 //! has been `unsafe` since Rust 1.83, which is incompatible with
 //! `#![forbid(unsafe_code)]`.

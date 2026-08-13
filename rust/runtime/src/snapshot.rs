@@ -24,7 +24,7 @@
 //!
 //! ## Size safety (D9 fail-on-exceed)
 //! * `/snapshot` pre-checks the apparent workspace size against
-//!   [`RuntimeConfig::max_workspace_bytes`] and returns **413 before streaming**;
+//!   `RuntimeConfig::max_workspace_bytes` and returns **413 before streaming**;
 //! * `/restore` counts the COMPRESSED incoming bytes and aborts with **413** the
 //!   instant the running total exceeds the cap (it never buffers the whole body).
 //!
@@ -37,7 +37,7 @@
 //!
 //! ## Path-traversal security (issue Q5)
 //! Every restore entry is confined to `base` by an explicit guard
-//! ([`confine_entry`]) BEFORE unpacking: entries resolving outside `base` (`..`,
+//! (`confine_entry`) BEFORE unpacking: entries resolving outside `base` (`..`,
 //! absolute, or a symlink/hardlink whose target escapes) abort the restore with a
 //! **500** and write nothing outside `base`. This is layered on top of the `tar`
 //! crate's own traversal guard — defense-in-depth.

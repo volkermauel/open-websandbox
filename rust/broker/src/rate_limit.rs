@@ -1,6 +1,6 @@
 //! Per-user rate limiting (#98 A3).
 //!
-//! A [`governor`] token-bucket keyed by `X-User-Id` caps create / execute / file /
+//! A `governor` token-bucket keyed by `X-User-Id` caps create / execute / file /
 //! terminal traffic on the broker's gated routes. Open probes (`/healthz`,
 //! `/readyz`, `/metrics`) are mounted on a separate, unlimited router in
 //! [`crate::app::build_router`]. When a user's bucket is empty the request fails

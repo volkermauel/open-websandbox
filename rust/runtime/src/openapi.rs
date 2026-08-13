@@ -73,7 +73,7 @@ use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
 pub struct RuntimeApiDoc;
 
 /// Build the runtime tool-surface `OpenAPI` document (consumed by the broker's
-/// `openapi_document()` via [`OpenApi::merge`]).
+/// `openapi_document()` via `OpenApi::merge`).
 #[must_use]
 pub fn openapi_document() -> utoipa::openapi::OpenApi {
     RuntimeApiDoc::openapi()

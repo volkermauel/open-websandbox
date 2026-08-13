@@ -141,7 +141,7 @@ pub fn safe_path(rel: &str, base: &Path) -> Result<PathBuf, ApiError> {
 /// Effective workspace base for a request: `workdir`, or `workdir/<subdir>`.
 ///
 /// Direct port of `server._request_base(subdir)`. The subdir is validated
-/// against [`SUBDIR_RE`] (no slashes / traversal / over-length) and created on
+/// against `SUBDIR_RE` (no slashes / traversal / over-length) and created on
 /// first use; a subdir that escapes `workdir` is rejected.
 ///
 /// # Errors
