@@ -23,6 +23,7 @@ use crate::error::ApiError;
 /// Managed-by label key/value the broker stamps on every Sandbox it owns
 /// (`app.kubernetes.io/managed-by=owui-broker`).
 pub const MANAGED_BY_KEY: &str = "app.kubernetes.io/managed-by";
+/// Managed-by label value the broker stamps on every Sandbox it owns.
 pub const MANAGED_BY_VALUE: &str = "owui-broker";
 /// Label key recording a Sandbox's persistence profile.
 pub const PROFILE_LABEL_KEY: &str = "broker-profile";

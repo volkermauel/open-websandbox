@@ -268,11 +268,9 @@ impl ColdStore for AwsColdStore {
     }
 }
 
+/// In-memory doubles for tests / local dev, re-exported so integration tests in
+/// `tests/` can reuse them via `broker::test_fakes`.
 pub mod test_fakes {
-    // In-memory doubles for tests / local dev. Kept under a clearly-named
-    // `test_fakes` namespace so they do not clutter the production module
-    // surface, but `pub` so integration tests in `tests/` can reuse them via
-    // `broker::test_fakes`.
     use super::{ColdError, ColdStore};
     use async_trait::async_trait;
     use bytes::Bytes;

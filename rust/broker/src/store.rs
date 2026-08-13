@@ -293,11 +293,9 @@ impl SandboxStore for KubeSandboxStore {
     }
 }
 
+/// In-memory doubles for tests and local dev, re-exported so integration tests in
+/// `tests/` can reuse them without a live apiserver.
 pub mod test_fakes {
-    // In-memory doubles for tests / local dev. Kept under a clearly-named
-    // `test_fakes` namespace so they do not clutter the production module
-    // surface, but `pub` so integration tests in `tests/` can reuse them via
-    // `broker::test_fakes`.
     use super::{SandboxStore, StoreError};
     use async_trait::async_trait;
     use kube::ResourceExt;
@@ -325,6 +323,7 @@ pub mod test_fakes {
     }
 
     impl StubSandboxStore {
+        /// Construct an empty store with no sandboxes or templates.
         #[must_use]
         pub fn new() -> Self {
             Self {

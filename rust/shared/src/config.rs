@@ -26,7 +26,12 @@ pub enum ConfigError {
     /// An environment variable was present but could not be parsed into the
     /// declared type.
     #[error("invalid value for {var}: {message}")]
-    Invalid { var: &'static str, message: String },
+    Invalid {
+        /// The environment variable name whose value failed to parse.
+        var: &'static str,
+        /// Human-readable reason the value was rejected.
+        message: String,
+    },
 }
 
 /// Known-unsafe placeholder values for `BROKER_SHARED_SECRET`. The broker's boot

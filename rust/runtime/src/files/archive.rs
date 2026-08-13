@@ -17,13 +17,17 @@ use crate::state::AppState;
 
 // --- PR-B-5: /files/archive (zip) + /files/upload + /upload (multipart) ------
 
+/// `POST /files/archive` request body.
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct ArchiveRequest {
+    /// Workspace-relative paths to include in the archive.
     pub paths: Vec<String>,
 }
 
+/// `POST /files/upload` query params.
 #[derive(Deserialize, utoipa::IntoParams)]
 pub struct UploadQuery {
+    /// Optional subdirectory under the workspace root to upload into.
     pub directory: Option<String>,
 }
 

@@ -2,8 +2,10 @@
   "components": {
     "schemas": {
       "ArchiveRequest": {
+        "description": "`POST /files/archive` request body.",
         "properties": {
           "paths": {
+            "description": "Workspace-relative paths to include in the archive.",
             "items": {
               "type": "string"
             },
@@ -156,9 +158,11 @@
         "description": "`POST /execute` request body. `timeout` is clamped into `[1, MAX_TIMEOUT]`,\ndefaulting to `DEFAULT_TIMEOUT` (seconds).",
         "properties": {
           "command": {
+            "description": "Shell command line to execute.",
             "type": "string"
           },
           "timeout": {
+            "description": "Optional wall-clock timeout in seconds (clamped into `[1, MAX_TIMEOUT]`).",
             "format": "int64",
             "minimum": 0,
             "type": [
@@ -176,16 +180,20 @@
         "description": "`POST /execute` response body (HTTP 200 even on non-zero exit).",
         "properties": {
           "exit_code": {
+            "description": "Process exit code (HTTP 200 even when non-zero; `124` on timeout).",
             "format": "int32",
             "type": "integer"
           },
           "stderr": {
+            "description": "Captured standard error.",
             "type": "string"
           },
           "stdout": {
+            "description": "Captured standard output.",
             "type": "string"
           },
           "timed_out": {
+            "description": "Whether the command was killed for exceeding `timeout`.",
             "type": "boolean"
           }
         },
@@ -198,6 +206,7 @@
         "type": "object"
       },
       "Features": {
+        "description": "Feature-flag set returned inside `ConfigResponse`.",
         "properties": {
           "desktop": {
             "type": "boolean"
@@ -673,6 +682,7 @@
         "operationId": "list_sandboxes",
         "parameters": [
           {
+            "description": "Kubernetes label selector (URL `labelSelector`) to filter listed sandboxes.",
             "in": "path",
             "name": "labelSelector",
             "required": true,
@@ -2224,6 +2234,7 @@
         "operationId": "upload",
         "parameters": [
           {
+            "description": "Optional subdirectory under the workspace root to upload into.",
             "in": "path",
             "name": "directory",
             "required": true,

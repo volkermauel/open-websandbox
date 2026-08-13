@@ -63,6 +63,7 @@ pub(crate) const IDLE_REAPS_TOTAL: &str = "open_websandbox_broker_idle_reaps_tot
 /// templated labels + buckets are shared with the runtime).
 #[derive(Clone)]
 pub struct BrokerMetrics {
+    /// HTTP request rate/latency pair (templated labels + buckets shared with the runtime).
     pub http: HttpMetrics,
 }
 

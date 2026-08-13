@@ -14,6 +14,7 @@
 //! tree, never from a hand-written `unsafe` block here.
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 pub mod api;
 pub mod app;
