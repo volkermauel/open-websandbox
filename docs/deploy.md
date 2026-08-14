@@ -29,8 +29,9 @@ for day-2 runbook steps see [`operations.md`](operations.md).
   worker (`install-gvisor-node.sh`), activate online-safe
   (`activate-gvisor-node.sh`), and verify with the probe pod in
   [`infra/gvisor/manifests/`](../infra/gvisor/manifests/). Pinned reference
-  release: `release-20260727.0`. For best performance the workers are VMs with
-  `/dev/kvm` (vmx/svm) for the systrap KVM fast path.
+  release: `release-20260727.0`. The default **systrap** platform needs no `/dev/kvm`;
+  the higher-throughput **kvm** platform (`RUNSC_PLATFORM=kvm`) requires VM workers with
+  `/dev/kvm` (vmx/svm).
 - A **RWX `StorageClass`** for persistent workspaces. The reference cluster uses
   `cephfs` (CephFS via the hypervisor, `ReadWriteMany`). Any RWX Filesystem
   class works; set its name in chart values (`profile.persistentStorageClass`).

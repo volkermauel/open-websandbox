@@ -16,7 +16,7 @@ set -Eeuo pipefail
 CLUSTER_NAME="${CLUSTER_NAME:-open-websandbox-e2e}"
 NODE_IMAGE="${NODE_IMAGE:-kindest-node-nofile:v1.31.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 KIND_CFG="$ROOT/infra/kind/kind-config-gvisor.yaml"
 CTX="kind-$CLUSTER_NAME"
 

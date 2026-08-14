@@ -7,7 +7,7 @@
 # Why host-mount instead of baking runsc into a custom node image: since 2026-07 gVisor
 # releases are multi-file (runsc needs gvisor-bin/ next to itself), which broke the old
 # bake-into-image build. Host-mounting avoids that entirely and matches the upstream
-# agent-sandbox gVisor-in-KIND example. GHA ubuntu runners are full VMs, so runsc runs.
+# agent-sandbox gVisor-in-KIND example. systrap needs no KVM, so runsc runs on any host.
 #
 # Override GVISOR_RELEASE (e.g. release/20260807.0) to pin a known-good runsc.
 set -Eeuo pipefail

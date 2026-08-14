@@ -49,7 +49,7 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test --workspace
 
-# End-to-end tests are Python/KIND (runc locally; gVisor needs bare metal):
+# End-to-end tests are Python/KIND (both runc and gVisor run locally — see below):
 pip install -r requirements-test.txt
 pytest tests/e2e --collect-only -q   # full run needs a KIND cluster (R1)
 
@@ -64,8 +64,8 @@ python -m venv /tmp/mkdocs-venv
 ```
 
 Keep `deploy/base/` and the chart reproducing the same manifests (parameterized only via
-values). End-to-end tests live in `tests/e2e/` (KIND). gVisor/runsc cannot nest inside KIND
-— see `scripts/setup-kind-gvisor.sh` (or use `runc` for local dev only).
+values). End-to-end tests live in `tests/e2e/` (KIND). Both `runc` and `gVisor` run in KIND
+locally — `scripts/setup-kind-gvisor.sh` brings up a gVisor cluster (systrap needs no KVM).
 
 ## Rules (do not break these)
 
@@ -101,10 +101,13 @@ detail.
   `coordination.k8s.io` `Lease` ensures only the elected broker runs the idle reaper. Without
   it, multiple replicas cause migration races and a reaper thundering-herd. `replicas: 1`
   (the default) is always safe; do not raise it on a build that lacks the lease.
-- **gVisor `runsc` uses the `systrap` platform and cannot nest in KIND.** `runsc`/systrap
-  wants `/dev/kvm` (vmx/svm) for its KVM fast path. Inside KIND / non-nested-virt you cannot
-  run the real runsc — use `scripts/setup-kind-gvisor.sh`, or fall back to `runc`
-  (`runtimeClassName: ""`) for local/e2e only. Production must always run under `gvisor`.
+- **gVisor `runsc` (systrap) runs in KIND without KVM — don't fall back to `runc` unnecessarily.**
+  `runsc` uses the **systrap** platform (a userspace syscall interceptor) by default; systrap needs
+  **no `/dev/kvm` or nested virtualization**, so it runs inside KIND on any Linux host — including
+  VMs without nested virt (verified: the full e2e suite passes under gVisor on a KVM-guest dev box
+  with no `/dev/kvm`; run `scripts/setup-kind-gvisor.sh`). Only the opt-in **`kvm`** platform
+  (`RUNSC_PLATFORM=kvm`) requires `/dev/kvm`. Production must always run under `gvisor`; `runc`
+  (`runtimeClassName: ""`) is fine only when you deliberately want the faster, weaker-isolation path.
 
 ## License
 
