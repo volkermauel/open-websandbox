@@ -33,8 +33,9 @@ from upstream `kubernetes-sigs/agent-sandbox`), and a **Helm chart** for deploym
   helm template open-websandbox-platform/chart >/dev/null
   ```
 
-- **End-to-end (KIND):** see `tests/e2e/`. Runs on **runc** — gVisor/runsc cannot nest in
-  KIND, so gVisor-specific checks are a separate manual smoke (`scripts/smoke-gvisor-sandbox.yaml`).
+- **End-to-end (KIND):** see `tests/e2e/`. Both **runc** and **gVisor** run in KIND locally —
+  gVisor uses the systrap platform (no `/dev/kvm` needed); see `scripts/setup-kind-gvisor.sh`
+  for the gVisor cluster (its final step is a gVisor smoke pod).
 
 ## Planning & changes
 

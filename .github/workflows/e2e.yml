@@ -5,8 +5,9 @@ name: e2e
 #   - runc:   plain KIND node. Weaker isolation (no syscall filter) but it fully exercises
 #             the broker→router→runtime path, the Helm chart, and the agent-sandbox
 #             controller — the bulk of the integration surface.
-#   - gvisor: runsc installed on the runner host (a full VM) and bind-mounted into the
-#             KIND node. The closest local analog to production gVisor isolation.
+#   - gvisor: runsc installed on the runner host and bind-mounted into the KIND node.
+#             systrap needs no KVM, so this also runs locally (scripts/setup-kind-gvisor.sh).
+#             The closest analog to production gVisor isolation.
 #
 # The router is self-built from upstream agent-sandbox@v0.5.3 (its Dockerfile COPYs
 # internal/ api/ extensions/api/, so the build context is the upstream checkout).
@@ -40,7 +41,7 @@ jobs:
           cache-dependency-path: requirements-test.txt
 
       # gVisor leg only: install runsc + shim + gvisor-bin sidecar dir on the host so the
-      # KIND node can bind-mount them. GHA ubuntu runners are full VMs → runsc runs.
+      # KIND node can bind-mount them. systrap needs no KVM, so this runs on any runner.
       - name: Install gVisor runsc on host
         if: matrix.runtime == 'gvisor'
         run: bash infra/kind/install-runsc.sh

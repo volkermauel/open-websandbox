@@ -1,8 +1,9 @@
 # KIND/runc profile for the local e2e suite + CI (tests/e2e).
 #
-# gVisor cannot nest inside KIND's containerized nodes, so this runs the runtime under
-# plain runc. That weakens isolation (no syscall filter) but fully exercises the
-# broker→router→runtime path, the Helm chart, and the agent-sandbox controller.
+# This runc profile is the fastest local loop (no runsc cold-start). gVisor CAN also run in
+# KIND (systrap needs no KVM — see values-kind-gvisor.yaml / scripts/setup-kind-gvisor.sh),
+# but plain runc fully exercises the broker→router→runtime path, the Helm chart, and the
+# agent-sandbox controller for iterative dev.
 # Image names are bare (imageRegistry=""), imagePullPolicy=Never — images are loaded
 # directly into the node via `kind load docker-image` / `docker buildx --load`.
 sandboxTemplate:
