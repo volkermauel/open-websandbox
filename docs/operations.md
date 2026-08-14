@@ -19,7 +19,8 @@ open-websandbox-platform/scripts/sandbox-status.sh -w     # + recent reaper/erro
 ## Observability: Prometheus metrics + OpenTelemetry tracing
 
 The Rust broker/runtime ship two independent observability surfaces (issue
-# 83 / decision D9):
+
+# 83 / decision D9)
 
 - **Prometheus `/metrics` (always-on).** The `metrics` facade fronts a single
   per-process `metrics-exporter-prometheus` recorder. `/metrics` is served
@@ -501,3 +502,40 @@ is stateless and recovers claims on restart) / `deploy/sandbox-router`.
   fail it over before activating (per its operator's docs) — see the gVisor
   README's stateful-primary caveat. Re-verify with `manifests/gvisor-verify.yaml`
   after any node or MicroK8s upgrade.
+
+### Helm upgrade & version skew
+
+When the platform is Helm-managed (the usual install), the image rollout above is a
+tag bump through the release, and rollback is revision-based:
+
+```bash
+# Upgrade every platform image to a new tag (broker, router AND runtime):
+helm upgrade open-websandbox open-websandbox-platform/chart \
+  --reuse-values --set imageTag=<new-tag> --wait --timeout 5m
+
+# Roll back to the previous revision (chart + values as they were):
+helm history open-websandbox          # pick the revision to return to
+helm rollback open-websandbox <rev> --wait --timeout 5m
+```
+
+**Per-user PVCs survive both directions** — `shutdownPolicy: Retain` keeps the volume
+when the runtime pod is recreated, and the controller reattaches it on the next claim
+(park/resume). This path is exercised end-to-end by
+[`tests/e2e/test_upgrade_rollback.py`](../tests/e2e/test_upgrade_rollback.py) — an
+opt-in lane (`E2E_UPGRADE=1`) that writes a marker file to a persistent sandbox,
+upgrades, asserts the file survives, rolls back, and asserts the image reverts.
+
+**Version-skew rules**
+
+- The three platform images roll together under the single chart `imageTag`. The broker,
+  router and runtime speak a small, versioned HTTP/WS contract; skew *within* a chart
+  release is not a supported combination — upgrade all three atomically via `helm upgrade`.
+- The broker is stateless (it recovers claims from labelled `SandboxClaim` objects), so a
+  broker/router rollback never strands user sandboxes; only the runtime image affects
+  what is *inside* a sandbox pod.
+- Live persistent sandbox pods keep their old runtime image until recycled — the
+  `SandboxTemplate` change only affects newly built pods. Recycle them (see
+  [Roll the runtime image](#roll-the-runtime-image)) to force the new image.
+- The vendored upstream controller is **upstream-driven**: CRD conversion-webhook needs
+  flow from `kubernetes-sigs/agent-sandbox`, not from this chart. Follow the CRD-ordering
+  rule above (forward-compatible CRDs first) whenever the vendored version moves.
