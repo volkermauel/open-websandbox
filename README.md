@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/volkermauel/open-websandbox/actions/workflows/ci.yml/badge.svg)](https://github.com/volkermauel/open-websandbox/actions/workflows/ci.yml)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](./LICENSE)
-[![Status: pre-release](https://img.shields.io/badge/status-pre--release%20%7C%20v0.1.0-orange.svg)](./docs/release-readiness.md)
+![Status: pre-release](https://img.shields.io/badge/status-pre--release%20%7C%20v0.1.0-orange.svg)
 
 **A Kubernetes sandbox runtime that backs Open WebUI's *Open Terminal* feature.**
 
@@ -58,8 +58,22 @@ flowchart LR
 **v0.1.0 — pre-release.** The platform is functionally complete and unit-tested, and
 the full install path runs green in the KIND e2e suite, but it has **not** carried
 real tenant traffic in production. Treat it as ready for evaluation and staging, not
-as battle-proven. What is proven vs. open is tracked in
-[`docs/release-readiness.md`](./docs/release-readiness.md).
+as battle-proven. Outstanding work and known risks are tracked in
+[GitHub issues](https://github.com/volkermauel/open-websandbox/issues) (see the `roadmap`
+and `known-limitation` labels).
+
+## Known limitations
+
+**Single shared broker secret (no per-tenant identity).** open-websandbox authenticates
+Open WebUI with one shared `BROKER_SHARED_SECRET` and trusts the `X-User-Id` /
+`X-Session-Id` headers it forwards, so **any holder of that secret can impersonate any
+user.** Per-tenant OIDC / short-lived identity tokens **will not be implemented in the
+foreseeable future** — this is recorded as a `wontfix` decision in the issue tracker. The
+intended deployment posture is **behind a trusted gateway** (e.g. Open WebUI) that performs
+its own authentication and never exposes the shared secret to end users. The broker ingress
+is default-deny, and the broker fails closed if the secret is unset or still the placeholder.
+If you need cryptographic per-tenant identity isolation, that is currently out of scope — do
+not deploy this without the trusted-gateway posture.
 
 ## Quick start
 
@@ -132,7 +146,6 @@ and Open WebUI wiring, see [`docs/deploy.md`](./docs/deploy.md).
 | [Deployment guide](./docs/deploy.md) | Full prerequisites + install: gVisor nodes, controller + CRDs, RWX storage, namespaces, private-registry image pull, building/loading the 3 images, broker shared-secret, Open WebUI wiring, broker env-var table, production values presets. |
 | [Operations runbook](./docs/operations.md) | Warm-pool tuning, idle park/reap policy, ResourceQuota/LimitRange limits, Backup & Restore (per-user PVCs), troubleshooting, rolling the runtime image, upgrade/rollback. |
 | [Security model](./docs/security.md) | The four isolation layers and threat model. |
-| [Release readiness](./docs/release-readiness.md) | What is *not* proven production yet; open risks. |
 | [Production-readiness checklist](./docs/production-readiness-checklist.md) | Table-stakes hardening before real tenants. |
 | [`infra/gvisor/`](./infra/gvisor/) | Online-safe gVisor install/activate + `RuntimeClass`. |
 | [`CHANGELOG.md`](./CHANGELOG.md) | Release history. |

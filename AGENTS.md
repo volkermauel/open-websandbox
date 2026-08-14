@@ -34,7 +34,7 @@ controller, pinned **v0.5.3**), deployed via a **Helm chart**.
 | `open-websandbox-platform/deploy/base/` | Base Kubernetes manifests the chart reproduces (kept byte-for-byte in sync). |
 | `open-websandbox-platform/upstream/` | Vendored upstream agent-sandbox CRDs + controller manifest (v0.5.3) + `SHA256SUMS`. |
 | `infra/gvisor/` | Online-safe gVisor (`runsc`) install/activate playbooks + `RuntimeClass` manifests. |
-| `docs/` | Architecture, deployment, operations, security, release-readiness docs. |
+| `docs/` | Architecture, deployment, operations, and security docs. |
 | `openspec/` | OpenSpec specs + change proposals (how we plan non-trivial work). |
 | `rust/*/tests/`, `tests/e2e/` | Rust integration tests (no cluster needed) and Python/KIND end-to-end tests (runc + gVisor). |
 | `scripts/` | Helper scripts, e.g. `setup-kind-gvisor.sh`. |
@@ -83,8 +83,7 @@ locally — `scripts/setup-kind-gvisor.sh` brings up a gVisor cluster (systrap n
 
 ## Key findings / gotchas (starter set)
 
-Distilled from `docs/operations.md` and `docs/release-readiness.md` — read those for full
-detail.
+Distilled from `docs/operations.md` — read it for full detail.
 
 - **Persistent sandboxes need an RWX StorageClass.** `profile.persistentStorageClass` must
   point at a real `ReadWriteMany` class (e.g. CephFS). With only block/RWO storage, per-user

@@ -81,7 +81,6 @@ nav:
   - Operations runbook: operations.md
   - S3-tiered storage: s3-tiered-storage.md
   - Security model: security.md
-  - Release readiness: release-readiness.md
   - Production-readiness checklist: production-readiness-checklist.md
 
 extra:

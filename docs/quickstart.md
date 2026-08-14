@@ -248,7 +248,7 @@ kubectl -n agent-sandbox-system logs -f deploy/owui-broker | \
 - **Tune the warm pool, idle policy, and quotas; back up per-user PVCs; roll the runtime
   image:** [Operations runbook](operations.md).
 - **Go to production:** the [Production-readiness checklist](production-readiness-checklist.md)
-  and [Release readiness](release-readiness.md) list what is *not* proven yet.
+  lists what is *not* proven yet.
 
 ## Teardown
 
