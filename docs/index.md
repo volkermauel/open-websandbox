@@ -31,10 +31,11 @@ made of three components:
 | [Deployment guide](deploy.md) | Full install: gVisor nodes, upstream controller + CRDs, RWX storage, image build/load, broker shared-secret, Open WebUI wiring, Helm values reference. |
 | [Operations runbook](operations.md) | Warm-pool tuning, idle park/reap policy, quotas, backup & restore, troubleshooting, upgrades. |
 | [Security model](security.md) | Threat model, defense-in-depth isolation layers, residual risks. |
-| [Release readiness](release-readiness.md) | What is and isn't proven production-ready; open risks. |
 | [Production-readiness checklist](production-readiness-checklist.md) | Table-stakes vs. advanced checklist, benchmarked against peers. |
 
 ## Project status
 
-Pre-release. See [Release readiness](release-readiness.md) for the gap analysis and the
-intended meaning of `v0.1.0` ("functional first cut") vs. a production `v1.0`.
+Pre-release. Outstanding work and known risks are tracked in
+[GitHub issues](https://github.com/volkermauel/open-websandbox/issues) (look for the
+`roadmap` and `known-limitation` labels); see also the
+[Production-readiness checklist](production-readiness-checklist.md).

@@ -35,6 +35,14 @@ kernel is an accepted residual risk**; resisting a dedicated, hostile tenant is 
 **out of scope** for v0.1.0. See `openspec/changes/adopt-agent-sandbox/design.md` for the
 full model and `docs/security.md` for the layer-by-layer breakdown.
 
+**Identity model (single shared secret).** The broker authenticates Open WebUI with one
+shared `BROKER_SHARED_SECRET` and trusts the `X-User-Id` / `X-Session-Id` headers it
+forwards, so any holder of the secret can impersonate any user. **Per-tenant OIDC /
+short-lived tokens will not be implemented in the foreseeable future** (a `wontfix` decision
+recorded in the issue tracker); open-websandbox must run behind a trusted,
+separately-authenticated gateway (e.g. Open WebUI) that never exposes the secret to end
+users.
+
 ## License
 
 open-websandbox is licensed under the **GNU Affero General Public License v3.0 only**
