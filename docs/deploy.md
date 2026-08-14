@@ -280,6 +280,43 @@ plus the dedicated, tainted sandbox nodes. gVisor node prep (install/activate
 online-safely, the RuntimeClass, and a verify probe) is documented in
 [`infra/gvisor/`](../infra/gvisor/) — not repeated here.
 
+### Dedicated sandbox node pools
+
+Sandbox pods can be pinned to dedicated (optionally tainted) nodes — the
+recommended posture for untrusted tenants, noisy workloads, or gVisor-only
+hardware. The chart renders `sandboxTemplate.nodeSelector` / `tolerations` /
+`affinity` straight onto the runtime `podTemplate`; the broker and router stay
+on ordinary nodes.
+
+1. **Label + taint the pool** (only the sandbox nodes):
+
+   ```bash
+   kubectl label node <node> sandbox.open-websandbox.dev/type=sandbox
+   kubectl taint node <node> sandbox.open-websandbox.dev/dedicated=true:NoSchedule
+   ```
+
+2. **Pin + tolerate in your values** (`my-values.yaml`):
+
+   ```yaml
+   sandboxTemplate:
+     nodeSelector:
+       sandbox.open-websandbox.dev/type: sandbox
+     tolerations:
+       - key: sandbox.open-websandbox.dev/dedicated
+         operator: Equal
+         value: "true"
+         effect: NoSchedule
+   ```
+
+3. `helm upgrade` — only newly built sandbox pods move; recycle the warm pool
+   (`kubectl -n agent-sandbox-runtime delete pods -l app=code-standard,profile=ephemeral`)
+   so it rebuilds on the pool immediately. Persistent sandboxes reattach their
+   per-user PVCs on the pool nodes at the next resume (RWX storage required).
+
+Without the taint, `nodeSelector` alone is a soft preference that other
+workloads can share; with it, **only** pods carrying the toleration — the
+sandboxes — can schedule there.
+
 ## 4. Install the chart
 
 ```bash

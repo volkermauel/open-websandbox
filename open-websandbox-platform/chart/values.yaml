@@ -131,6 +131,14 @@ sandboxTemplate:
   runtimeRepository: open-websandbox-runtime
   maxProcs: 256
   uid: 1000
+  # Dedicated sandbox node pools (issue #126): rendered onto the runtime podTemplate.
+  # Pair with a labeled (+ optionally tainted) node pool, e.g. label
+  # sandbox.open-websandbox.dev/type=sandbox and taint
+  # sandbox.open-websandbox.dev/dedicated=true:NoSchedule — see docs/deploy.md
+  # §Dedicated sandbox node pools.
+  nodeSelector: {}   # e.g. {sandbox.open-websandbox.dev/type: sandbox}
+  tolerations: []    # e.g. [{key: sandbox.open-websandbox.dev/dedicated, operator: Equal, value: "true", effect: NoSchedule}]
+  affinity: {}       # full pod-affinity block when needed
   # No shared runtimeApiKey anymore (issue #4): each sandbox pod receives its OWN
   # per-session key, minted by the broker and delivered as a projected Secret volume
   # (owui-runtime-key-<sandbox>). The chart no longer injects a shared runtime key.
