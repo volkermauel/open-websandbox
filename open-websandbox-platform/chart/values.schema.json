@@ -160,6 +160,31 @@
         "runtimeRepository": { "type": "string", "minLength": 1 },
         "maxProcs": { "type": "integer", "minimum": 1 },
         "uid": { "type": "integer", "minimum": 0, "description": "Non-root UID the sandbox runs as." },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Node labels constraining where sandbox pods run (dedicated node pools)."
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations allowing sandbox pods onto tainted dedicated nodes.",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "key": { "type": "string" },
+              "operator": { "type": "string" },
+              "value": { "type": "string" },
+              "effect": { "type": "string" },
+              "tolerationSeconds": { "type": "integer" }
+            }
+          }
+        },
+        "affinity": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Affinity rules for the runtime podTemplate (node/pod affinity)."
+        },
         "dns": {
           "type": "object",
           "additionalProperties": false,

@@ -39,6 +39,18 @@ spec:
       {{- with .Values.sandboxTemplate.runtimeClassName }}
       runtimeClassName: {{ . }}
       {{- end }}
+{{- with .Values.sandboxTemplate.nodeSelector }}
+      nodeSelector:
+{{- toYaml . | nindent 8 }}
+{{- end }}
+{{- with .Values.sandboxTemplate.tolerations }}
+      tolerations:
+{{- toYaml . | nindent 8 }}
+{{- end }}
+{{- with .Values.sandboxTemplate.affinity }}
+      affinity:
+{{- toYaml . | nindent 8 }}
+{{- end }}
       dnsPolicy: {{ .Values.sandboxTemplate.dns.policy }}
       dnsConfig:
         nameservers:
