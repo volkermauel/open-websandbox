@@ -8,37 +8,63 @@
 //! * `POST /api/terminals` (Authed) → `200 {"id","created_at","pid"}`; spawns the
 //!   configured `$SHELL` on a 24×80 PTY in `request_base(workdir, X-Workspace-Subdir)`
 //!   (terminals DO honour the subdir header, unlike snapshot/restore — D11). Reaps
-//!   dead sessions, recreates an existing id, and answers **429** once
-//!   `MAX_TERMINAL_SESSIONS` live sessions are reached; **503** on PTY spawn failure.
+//!   dead sessions, **reuses a live session carrying the same id** (issue #129: the
+//!   broker's reconnect path resumes that shell instead of killing it), and answers
+//!   **429** once `MAX_TERMINAL_SESSIONS` live sessions are reached (resuming an
+//!   existing session consumes no new slot, so it bypasses the cap); **503** on PTY
+//!   spawn failure. A session whose id has a flushed scrollback file under the
+//!   workspace is created with that tail preloaded (see *SIGTERM flush* below).
 //! * `GET /api/terminals` (Authed) → `200 [{"id","created_at","pid"}, …]`, reaping
 //!   any dead entries it observes.
 //! * `GET /api/terminals/{id}` (Authed) → `200 {"id","created_at","pid"}` / **404**.
-//! * `DELETE /api/terminals/{id}` (Authed) → `200 {"status":"deleted"}` (idempotent).
+//! * `DELETE /api/terminals/{id}` (Authed) → `200 {"status":"deleted"}` (idempotent;
+//!   also removes any flushed scrollback file so a later session with the same id
+//!   starts clean).
 //! * `GET /api/terminals/{id}` WebSocket (Authed at upgrade — 401 before the socket
 //!   is accepted): **1:1 binary/text frames** relayed byte-for-byte.
 //!   Inbound **binary** frames are raw stdin to the PTY; inbound **text** frames are
 //!   JSON control messages (`{"type":"resize","rows":N,"cols":M}`, tolerated
 //!   `{"type":"auth",…}`); PTY output is relayed back as **binary** frames. An
-//!   unknown/dead session is closed with code **4004**.
+//!   unknown/dead session is closed with code **4004**; a second concurrent attach
+//!   to a live session is closed with **4009**. On attach the scrollback tail is
+//!   replayed first (one binary frame), so a reattached client sees recent output.
+//!
+//! # Session lifecycle — detach & resume (issue #129)
+//!
+//! The PTY outlives any single WS connection: a **client-side disconnect detaches**
+//! (output keeps draining into the bounded scrollback ring; input stops) and a later
+//! attach to the same id **resumes** the same shell. The PTY ends only when the shell
+//! exits, `DELETE` runs, or the idle-detached sweep reaps a session no client has
+//! reattached to within `TERMINAL_DETACH_TTL_SECS`. This is what lets a terminal
+//! survive broker restarts and network blips — and, combined with the SIGTERM flush
+//! below, node drain (new pod, same PVC, replayed tail).
+//!
+//! # SIGTERM flush (issue #129)
+//!
+//! On SIGTERM (pod eviction / drain) the runtime writes every live session's
+//! scrollback ring to `<workdir>/.open-websandbox/scrollback/<id>.log` before
+//! exiting. For persistent sandboxes the workspace volume is the per-user RWX PVC,
+//! so the tail survives pod death and preloads the recreated session; for ephemeral
+//! ones (emptyDir) the write is harmless and dies with the pod. Process state is
+//! never preserved — only output.
 //!
 //! # Clean shutdown (no zombie)
 //!
-//! Each `Session` owns the `portable-pty` master + child. `portable-pty` spawns the
-//! shell with `setsid()`, so the shell is its own session/process-group leader
-//! (pgid == pid) — equivalent to `start_new_session=True`. On teardown
-//! (WS close, `DELETE`, dead-session reap, or process exit) we `killpg(SIGKILL)` the
-//! whole group (`os.killpg(os.getpgid(pid), SIGKILL)`) and
-//! `child.wait()` to reap, so no zombie shell survives. The per-connection reader and
-//! stdin-writer threads own independent `dup`'d master fds and self-terminate once
-//! the child dies (the master read returns EOF/EIO) or the relay ends.
+//! Each `Session` owns the `portable-pty` master + child plus two permanent pump
+//! threads (stdin writer, output reader) for its whole life. `portable-pty` spawns
+//! the shell with `setsid()`, so the shell is its own session/process-group leader
+//! (pgid == pid). On teardown (shell exit, `DELETE`, dead-session reap) we
+//! `killpg(SIGKILL)` the whole group and `wait()` to reap, so no zombie shell
+//! survives; the pump threads self-terminate once the child dies (the master read
+//! returns EOF/EIO).
 
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::Path;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::{Duration, Instant, SystemTime};
 
 use axum::body::Bytes;
 use axum::extract::ws::rejection::WebSocketUpgradeRejection;
@@ -62,6 +88,10 @@ use crate::state::AppState;
 
 /// WebSocket close code for an unknown or already-ended session.
 const CLOSE_UNKNOWN: u16 = 4004;
+/// WebSocket close code for a live session that already has an attached client.
+const CLOSE_BUSY: u16 = 4009;
+/// Interval between idle-detached sweeps (see [`spawn_detached_sweep`]).
+const SWEEP_INTERVAL: Duration = Duration::from_mins(1);
 /// Default window size every PTY is created with (24×80).
 const PTY_SIZE: PtySize = PtySize {
     rows: 24,
@@ -96,6 +126,39 @@ impl TerminalRegistry {
     }
 }
 
+/// Bounded tail of recent PTY output, replayed to a reattaching client and
+/// flushed to the workspace on SIGTERM. Appended by the permanent reader pump.
+struct Scrollback {
+    buf: Vec<u8>,
+    cap: usize,
+}
+
+impl Scrollback {
+    fn new(cap: usize) -> Self {
+        Self {
+            buf: Vec::new(),
+            cap,
+        }
+    }
+
+    /// Append `bytes`, evicting the OLDEST once `cap` is exceeded (the tail is
+    /// what a reattaching client needs). `cap == 0` disables capture.
+    fn push(&mut self, bytes: &[u8]) {
+        if self.cap == 0 || bytes.is_empty() {
+            return;
+        }
+        self.buf.extend_from_slice(bytes);
+        let excess = self.buf.len().saturating_sub(self.cap);
+        if excess > 0 {
+            self.buf.drain(..excess);
+        }
+    }
+
+    fn snapshot(&self) -> Vec<u8> {
+        self.buf.clone()
+    }
+}
+
 /// One live PTY session. Shared between the registry and the (single) active WS
 /// relay via `Arc<Mutex<Session>>`; cheap brief locks guard every operation.
 struct Session {
@@ -103,6 +166,14 @@ struct Session {
     child: Box<dyn Child + Send + Sync>,
     created_at: String,
     pid: u32,
+    /// Scrollback tail — appended by the reader pump, replayed on attach.
+    ring: Arc<StdMutex<Scrollback>>,
+    /// Sink of the attached WS relay (`None` while detached).
+    out_tx: Arc<StdMutex<Option<mpsc::Sender<Vec<u8>>>>>,
+    /// Feed of the permanent stdin pump — cloned per attached relay.
+    stdin_tx: mpsc::Sender<Vec<u8>>,
+    /// When the WS client last detached (drives the idle-detached sweep).
+    detached_since: StdMutex<Option<Instant>>,
 }
 
 impl Drop for Session {
@@ -227,42 +298,78 @@ pub async fn create_terminal(
             }
         }
 
-        // Cap is checked AFTER reaping but BEFORE recreating an existing id
-        // (`len(_terminals) >= MAX` ordering).
-        if map.len() >= cap as usize {
-            drop(map);
-            for s in to_teardown {
-                teardown_one(s).await;
-            }
-            return Err(ApiError::TooManyRequests(format!(
-                "max {cap} terminals reached"
-            )));
-        }
-
         let id = session_id.unwrap_or_else(random_id);
-        if let Some(existing) = map.remove(&id) {
-            to_teardown.push(existing);
-        }
 
-        let session = match spawn_pty(&state.config.shell, &base) {
-            Ok(s) => s,
-            Err(e) => {
+        // D12 resume (issue #129): REUSE a live session carrying this id — a
+        // reconnecting client (the broker's `ensure_pty`) is resuming that
+        // shell, not replacing it. Only a dead leftover (a child that died
+        // after the sweep above) is torn down and recreated.
+        let reuse: Option<CreateResponse> = match map.get(&id).cloned() {
+            Some(existing) if is_alive(&existing).await => {
+                let g = existing.lock().await;
+                Some(CreateResponse {
+                    id: id.clone(),
+                    created_at: g.created_at.clone(),
+                    pid: g.pid,
+                })
+            }
+            Some(_) => {
+                if let Some(s) = map.remove(&id) {
+                    to_teardown.push(s);
+                }
+                None
+            }
+            None => None,
+        };
+
+        if let Some(resp) = reuse {
+            resp
+        } else {
+            // Cap is checked AFTER reaping; resuming an existing live
+            // session consumes no new slot, so it bypasses the cap.
+            if map.len() >= cap as usize {
                 drop(map);
                 for s in to_teardown {
                     teardown_one(s).await;
                 }
-                return Err(ApiError::ServiceUnavailable(format!(
-                    "pty spawn failed: {e}"
+                return Err(ApiError::TooManyRequests(format!(
+                    "max {cap} terminals reached"
                 )));
             }
-        };
-        let resp = CreateResponse {
-            id: id.clone(),
-            created_at: session.created_at.clone(),
-            pid: session.pid,
-        };
-        map.insert(id, Arc::new(Mutex::new(session)));
-        resp
+
+            // Scrollback replay across pod generations (issue #129): the
+            // SIGTERM flush persisted this id's output tail under the
+            // workspace; preload it so the first attach replays it.
+            let replay = read_scrollback(
+                &state.config.workdir,
+                &id,
+                state.config.terminal_scrollback_bytes,
+            );
+            let session = match spawn_pty(
+                &state.config.shell,
+                &base,
+                state.config.terminal_scrollback_bytes,
+                &replay,
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    drop(map);
+                    for s in to_teardown {
+                        teardown_one(s).await;
+                    }
+                    return Err(ApiError::ServiceUnavailable(format!(
+                        "pty spawn failed: {e}"
+                    )));
+                }
+            };
+            let resp = CreateResponse {
+                id: id.clone(),
+                created_at: session.created_at.clone(),
+                pid: session.pid,
+            };
+            map.insert(id, Arc::new(Mutex::new(session)));
+            resp
+        }
     };
 
     for s in to_teardown {
@@ -271,9 +378,18 @@ pub async fn create_terminal(
     Ok(Json(resp))
 }
 
-/// Build a PTY `Session`: `openpty` (24×80), spawn `$SHELL` in `cwd` with
-/// `TERM=xterm-256color`, take the writer/reader handles lazily (per WS connection).
-fn spawn_pty(shell: &str, cwd: &Path) -> Result<Session, String> {
+/// Build a PTY `Session` (24×80, `$SHELL`, `cwd`, `TERM=xterm-256color`) plus its
+/// two PERMANENT pump threads — the master writer is single-take (portable-pty),
+/// so one thread owns it for the session's whole life and input is fed via a
+/// channel; the reader drains forever, into the scrollback ring while detached
+/// and on to the attached relay otherwise. `replay` preloads the ring (issue #129:
+/// the SIGTERM flush from a previous pod generation).
+fn spawn_pty(
+    shell: &str,
+    cwd: &Path,
+    scrollback_cap: usize,
+    replay: &[u8],
+) -> Result<Session, String> {
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PTY_SIZE).map_err(|e| format!("{e}"))?;
     let mut cmd = CommandBuilder::new(shell);
@@ -289,11 +405,72 @@ fn spawn_pty(shell: &str, cwd: &Path) -> Result<Session, String> {
     // shell exits, the master read sees EOF/EIO (`os.close(slave_fd)`).
     drop(pair.slave);
 
+    // Scrollback ring — preloaded with any flushed tail from a previous pod
+    // generation so the first attach replays it.
+    let ring = Arc::new(StdMutex::new(Scrollback::new(scrollback_cap)));
+    ring.lock().expect("scrollback lock").push(replay);
+
+    // Permanent stdin pump: owns the once-only master writer; fed by `stdin_tx`.
+    // A bounded channel applies backpressure — if the shell stops reading, the
+    // relay stops draining the socket.
+    let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(IN_CHAN);
+    let writer = master.take_writer().map_err(|e| format!("{e}"))?;
+    std::thread::spawn(move || {
+        let mut writer = writer;
+        while let Some(bytes) = stdin_rx.blocking_recv() {
+            // Best-effort; a closed PTY surfaces as an error we simply drop.
+            let _ = writer.write_all(&bytes);
+        }
+        // stdin_tx dropped (session teardown) → writer drops → EOF to the slave.
+    });
+
+    // Permanent output pump: drains the master forever. While a relay is
+    // attached it forwards each chunk (blocking send = PTY backpressure, as
+    // before); while detached it keeps draining into the scrollback ring so the
+    // shell never blocks on a terminal nobody is watching.
+    let reader = master.try_clone_reader().map_err(|e| format!("{e}"))?;
+    let sink = Arc::new(StdMutex::new(None::<mpsc::Sender<Vec<u8>>>));
+    let ring_out = Arc::clone(&ring);
+    let sink_out = Arc::clone(&sink);
+    std::thread::spawn(move || {
+        let mut reader = reader;
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                // portable-pty maps the Linux EIO-on-slave-close to Ok(0), so EOF
+                // and read errors both end the pump (shell exited).
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let chunk = buf[..n].to_vec();
+                    if let Ok(mut r) = ring_out.lock() {
+                        r.push(&chunk);
+                    }
+                    let relay = sink_out.lock().ok().and_then(|g| (*g).clone());
+                    if let Some(tx) = relay {
+                        if tx.blocking_send(chunk).is_err() {
+                            // Relay vanished without detaching — clear the stale
+                            // sink and keep draining into the ring.
+                            if let Ok(mut g) = sink_out.lock() {
+                                *g = None;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Reader end (shell exit): an attached relay observes its channel close
+        // and tears the session down; a detached one is reaped by the sweep.
+    });
+
     Ok(Session {
         master,
         child,
         created_at: now_iso_utc(),
         pid,
+        ring,
+        out_tx: sink,
+        stdin_tx,
+        detached_since: StdMutex::new(None),
     })
 }
 
@@ -426,6 +603,10 @@ pub async fn kill_terminal(
 ) -> Json<DeleteResponse> {
     if let Some(arc) = state.terminals.sessions.lock().await.remove(&id) {
         teardown_one(arc).await;
+        // A killed terminal must not replay later: drop any flushed scrollback.
+        if let Some(p) = scrollback_path(&state.config.workdir, &id) {
+            let _ = std::fs::remove_file(p);
+        }
     }
     Json(DeleteResponse { status: "deleted" })
 }
@@ -434,9 +615,11 @@ pub async fn kill_terminal(
 // WebSocket relay
 // ---------------------------------------------------------------------------
 
-/// Bidirectional PTY↔WS relay for one connection. Runs until EITHER side ends
-/// (client disconnect, PTY EOF, or a heartbeat-detected dead shell), then tears the
-/// session down so the PTY is killed rather than leaking to the per-pod cap (→ 429).
+/// Bidirectional PTY↔WS relay for one connection — the CLIENT side of a session's
+/// lifecycle. A client-side disconnect DETACHES (issue #129): the shell lives on,
+/// output keeps draining into the scrollback ring, and a later attach to the same
+/// id resumes it. The PTY side ending (shell exit / heartbeat-detected death)
+/// still tears the session down.
 async fn relay(state: AppState, mut socket: WebSocket, id: String) {
     let Some(session) = state.terminals.sessions.lock().await.get(&id).cloned() else {
         close_unknown(&mut socket).await;
@@ -450,56 +633,40 @@ async fn relay(state: AppState, mut socket: WebSocket, id: String) {
         return;
     }
 
-    // Take the (once-only) writer and a reader clone for this connection.
-    let pair = {
-        let g = session.lock().await;
-        match (g.master.take_writer(), g.master.try_clone_reader()) {
-            (Ok(w), Ok(r)) => Some((w, r)),
-            _ => None,
-        }
-    };
-    let Some((writer, reader)) = pair else {
-        close_unknown(&mut socket).await;
-        return;
-    };
-
-    // Stdin pump: a dedicated OS thread owns the blocking master writer so a full PTY
-    // input buffer never stalls the async runtime. A bounded channel applies
-    // backpressure: if the shell stops reading, the relay stops draining the socket.
-    let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(IN_CHAN);
-    let writer_thread = std::thread::spawn(move || {
-        let mut writer = writer;
-        while let Some(bytes) = stdin_rx.blocking_recv() {
-            // Best-effort; a closed PTY surfaces as an error we simply drop.
-            let _ = writer.write_all(&bytes);
-        }
-        // `writer` drops → EOF to the slave (helps the shell notice a gone client).
-    });
-
-    // Output pump: another OS thread drains the blocking master reader and forwards
-    // each chunk to the relay via a bounded channel.
+    // Attach: exactly one live relay per session — a second concurrent attach
+    // would split PTY output between two cloned readers, so it is rejected.
     let (out_tx, mut out_rx) = mpsc::channel::<Vec<u8>>(OUT_CHAN);
-    let reader_thread = std::thread::spawn(move || {
-        let mut reader = reader;
-        let mut buf = [0u8; 4096];
-        loop {
-            match reader.read(&mut buf) {
-                // portable-pty maps the Linux EIO-on-slave-close to Ok(0), so EOF and
-                // read errors both end the pump.
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if out_tx.blocking_send(buf[..n].to_vec()).is_err() {
-                        break; // relay gone — stop reading
-                    }
-                }
-            }
+    let stdin_tx = {
+        let g = session.lock().await;
+        if g.out_tx.lock().map_or(true, |s| s.is_some()) {
+            drop(g);
+            close_busy(&mut socket).await;
+            return;
         }
-    });
+        // Statement-position locks: the guards drop at the `;`, so the session
+        // lock is free for the `stdin_tx` clone below (no if-let temp lifetime).
+        *g.out_tx.lock().expect("out_tx lock") = Some(out_tx);
+        *g.detached_since.lock().expect("detached_since lock") = None;
+        g.stdin_tx.clone()
+    };
+
+    // Replay the scrollback tail first, so a reattaching client sees recent
+    // output (and, after a pod recreation, the flushed pre-eviction tail).
+    {
+        let g = session.lock().await;
+        let replay = g.ring.lock().map(|r| r.snapshot()).unwrap_or_default();
+        if !replay.is_empty() {
+            let _ = socket.send(Message::Binary(Bytes::from(replay))).await;
+        }
+    }
 
     let mut heartbeat = tokio::time::interval(HEARTBEAT);
     // The first interval tick fires immediately; skip it so we don't tear down a
     // healthy session before its first output.
     heartbeat.tick().await;
+
+    // Which side ended the loop — a gone CLIENT detaches; a gone PTY tears down.
+    let mut client_gone = false;
 
     loop {
         tokio::select! {
@@ -513,7 +680,10 @@ async fn relay(state: AppState, mut socket: WebSocket, id: String) {
                 Some(Ok(Message::Text(text))) => {
                     apply_control(&text, &session).await;
                 }
-                Some(Ok(Message::Close(_)) | Err(_)) | None => break,
+                Some(Ok(Message::Close(_)) | Err(_)) | None => {
+                    client_gone = true;
+                    break;
+                }
                 // Ping/Pong are auto-answered by axum; ignore everything else.
                 _ => {}
             },
@@ -521,6 +691,7 @@ async fn relay(state: AppState, mut socket: WebSocket, id: String) {
             chunk = out_rx.recv() => match chunk {
                 Some(c) => {
                     if socket.send(Message::Binary(Bytes::from(c))).await.is_err() {
+                        client_gone = true;
                         break;
                     }
                 }
@@ -536,17 +707,21 @@ async fn relay(state: AppState, mut socket: WebSocket, id: String) {
         }
     }
 
-    // --- teardown -----------------------------------------------------------
-    // Drop the channels so the writer pump flushes+exits; the reader pump exits once
-    // the child is killed (master read → EOF/EIO).
-    drop(stdin_tx);
+    // --- detach / teardown -------------------------------------------------
+    // Drop our receiver FIRST so a reader pump parked on a full channel
+    // unblocks the instant we stop draining it.
     drop(out_rx);
-    remove_if_eq(&state.terminals, &id, &session).await;
-    teardown_one(session).await;
-    // Join the pumps so the test harness never observes a lingering thread. The
-    // reader unblocks promptly after teardown SIGKILLs the group (PTY closes).
-    let _ = reader_thread.join();
-    let _ = writer_thread.join();
+    if client_gone && is_alive(&session).await {
+        // Detach (issue #129): the shell lives on — output keeps draining
+        // into the scrollback and a reconnect to the same id resumes this PTY.
+        let g = session.lock().await;
+        *g.out_tx.lock().expect("out_tx lock") = None;
+        *g.detached_since.lock().expect("detached_since lock") = Some(Instant::now());
+    } else {
+        // PTY gone (shell exit / heartbeat) or unknown failure: full teardown.
+        remove_if_eq(&state.terminals, &id, &session).await;
+        teardown_one(session).await;
+    }
 }
 
 /// Gracefully close the socket with the 4004 (unknown/ended session) code.
@@ -557,6 +732,153 @@ async fn close_unknown(socket: &mut WebSocket) {
             reason: "unknown or ended session".into(),
         })))
         .await;
+}
+
+/// Gracefully close the socket with the 4009 (already attached) code.
+async fn close_busy(socket: &mut WebSocket) {
+    let _ = socket
+        .send(Message::Close(Some(CloseFrame {
+            code: CLOSE_BUSY,
+            reason: "terminal already attached".into(),
+        })))
+        .await;
+}
+
+// ---------------------------------------------------------------------------
+// SIGTERM flush + idle-detached sweep (issue #129)
+// ---------------------------------------------------------------------------
+
+/// Path of the flushed scrollback file for `id`, or `None` when `id` could not
+/// appear in a filesystem path safely (charset-restricted: the broker derives
+/// ids from k8s object names, but the header is client-controlled).
+fn scrollback_path(workdir: &Path, id: &str) -> Option<PathBuf> {
+    let safe = !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_')
+        && !id.starts_with('.');
+    safe.then(|| {
+        workdir
+            .join(".open-websandbox")
+            .join("scrollback")
+            .join(format!("{id}.log"))
+    })
+}
+
+/// Read the flushed scrollback tail for `id` (best-effort, bounded to `cap`).
+/// Empty when absent, unreadable, disabled (`cap == 0`), or the id is unsafe.
+fn read_scrollback(workdir: &Path, id: &str, cap: usize) -> Vec<u8> {
+    use std::io::{Seek, SeekFrom};
+    if cap == 0 {
+        return Vec::new();
+    }
+    let Some(path) = scrollback_path(workdir, id) else {
+        return Vec::new();
+    };
+    let Ok(mut f) = std::fs::File::open(&path) else {
+        return Vec::new();
+    };
+    let len = f.metadata().map_or(0, |m| m.len());
+    // Only the tail `cap` bytes matter — seek past anything older.
+    if len > cap as u64 && f.seek(SeekFrom::Start(len - cap as u64)).is_err() {
+        return Vec::new();
+    }
+    let mut buf = Vec::new();
+    let _ = f.read_to_end(&mut buf);
+    buf.truncate(cap);
+    buf
+}
+
+/// Write every live session's scrollback tail under the workspace — the SIGTERM
+/// path (issue #129). For persistent sandboxes the workspace volume IS the RWX
+/// PVC, so the tails survive pod death and preload the recreated sessions; for
+/// ephemeral ones (emptyDir) the writes are harmless and die with the pod.
+/// Bounded rings keep this fast enough to finish well inside the default 30s
+/// termination grace period. Returns how many sessions were flushed.
+pub async fn flush_scrollbacks(state: &AppState) -> usize {
+    if state.config.terminal_scrollback_bytes == 0 {
+        return 0;
+    }
+    let dir = state
+        .config
+        .workdir
+        .join(".open-websandbox")
+        .join("scrollback");
+    if std::fs::create_dir_all(&dir).is_err() {
+        tracing::warn!(dir = %dir.display(), "scrollback dir unavailable — flush skipped");
+        return 0;
+    }
+    let map = state.terminals.sessions.lock().await;
+    let mut written = 0usize;
+    for (id, s) in map.iter() {
+        let bytes = s
+            .lock()
+            .await
+            .ring
+            .lock()
+            .map(|r| r.snapshot())
+            .unwrap_or_default();
+        if bytes.is_empty() {
+            continue;
+        }
+        let Some(path) = scrollback_path(&state.config.workdir, id) else {
+            continue;
+        };
+        match std::fs::write(&path, &bytes) {
+            Ok(()) => written += 1,
+            Err(e) => tracing::warn!(id = %id, error = %e, "scrollback flush failed"),
+        }
+    }
+    written
+}
+
+/// Spawn the idle-detached sweep (issue #129): periodically reap sessions whose
+/// WS client has been gone longer than `TERMINAL_DETACH_TTL_SECS` — without it,
+/// a detached PTY would count against `MAX_TERMINAL_SESSIONS` forever.
+pub fn spawn_detached_sweep(state: AppState) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(SWEEP_INTERVAL);
+        tick.tick().await; // first tick is immediate — skip it
+        loop {
+            tick.tick().await;
+            let reaped = sweep_once(&state).await;
+            if reaped > 0 {
+                tracing::info!(
+                    count = reaped,
+                    "idle-detached terminal sweep reaped sessions"
+                );
+            }
+        }
+    })
+}
+
+/// One sweep pass: remove + teardown every session detached for longer than the
+/// TTL. Sessions are re-verified under the registry lock, so an attach racing
+/// this sweep keeps its session (it would have cleared `detached_since`).
+async fn sweep_once(state: &AppState) -> usize {
+    let ttl = Duration::from_secs(state.config.terminal_detach_ttl_secs);
+    let now = Instant::now();
+    let mut expired: Vec<Arc<Mutex<Session>>> = Vec::new();
+    {
+        let mut map = state.terminals.sessions.lock().await;
+        for id in map.keys().cloned().collect::<Vec<_>>() {
+            let Some(s) = map.get(&id).cloned() else {
+                continue;
+            };
+            let idle = s.lock().await.detached_since.lock().ok().and_then(|g| *g);
+            if idle.is_some_and(|since| now.duration_since(since) > ttl) {
+                map.remove(&id);
+                expired.push(s);
+            }
+        }
+    }
+    let reaped = expired.len();
+    // Teardown AFTER releasing the registry lock (same pattern as create).
+    for s in expired {
+        teardown_one(s).await;
+    }
+    reaped
 }
 
 /// Apply one inbound TEXT control frame. Only `resize` is honoured; an `auth` frame

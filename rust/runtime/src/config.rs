@@ -33,6 +33,13 @@ const DEFAULT_SHELL: &str = "/bin/bash";
 /// Projected-Secret volume holding the per-session API key (env
 /// `RUNTIME_KEY_FILE`).
 const DEFAULT_RUNTIME_KEY_FILE: &str = "/etc/runtime-key/api-key";
+/// Scrollback captured per terminal, in bytes (env
+/// `TERMINAL_SCROLLBACK_BYTES`). Replayed to a reattaching WS client and flushed
+/// to the workspace on SIGTERM (issue #129); `0` disables capture, replay and flush.
+const DEFAULT_TERMINAL_SCROLLBACK_BYTES: usize = 128 * 1024;
+/// How long a DETACHED terminal (WS client gone, shell alive) survives awaiting
+/// a resume, in seconds (env `TERMINAL_DETACH_TTL_SECS`) before the sweep reaps it.
+const DEFAULT_TERMINAL_DETACH_TTL_SECS: u64 = 900;
 
 /// Runtime configuration loaded from the environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +62,10 @@ pub struct RuntimeConfig {
     pub shell: String,
     /// Path to the projected-Secret per-session key file.
     pub runtime_key_file: PathBuf,
+    /// Scrollback bytes captured per terminal (issue #129; 0 disables).
+    pub terminal_scrollback_bytes: usize,
+    /// Seconds a detached terminal survives before the idle sweep reaps it.
+    pub terminal_detach_ttl_secs: u64,
 }
 
 impl Default for RuntimeConfig {
@@ -69,6 +80,8 @@ impl Default for RuntimeConfig {
             max_terminal_sessions: DEFAULT_MAX_TERMINAL_SESSIONS,
             shell: DEFAULT_SHELL.to_string(),
             runtime_key_file: PathBuf::from(DEFAULT_RUNTIME_KEY_FILE),
+            terminal_scrollback_bytes: DEFAULT_TERMINAL_SCROLLBACK_BYTES,
+            terminal_detach_ttl_secs: DEFAULT_TERMINAL_DETACH_TTL_SECS,
         }
     }
 }
@@ -105,6 +118,16 @@ impl RuntimeConfig {
         if let Some(v) = get("RUNTIME_KEY_FILE") {
             cfg.runtime_key_file = PathBuf::from(v);
         }
+        cfg.terminal_scrollback_bytes = env_t(
+            &get,
+            "TERMINAL_SCROLLBACK_BYTES",
+            cfg.terminal_scrollback_bytes,
+        );
+        cfg.terminal_detach_ttl_secs = env_t(
+            &get,
+            "TERMINAL_DETACH_TTL_SECS",
+            cfg.terminal_detach_ttl_secs,
+        );
         cfg
     }
 }

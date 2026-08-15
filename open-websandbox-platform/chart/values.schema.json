@@ -153,12 +153,14 @@
     "sandboxTemplate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "runtimeClassName", "runtimeRepository", "maxProcs", "uid", "dns", "storage"],
+      "required": ["name", "runtimeClassName", "runtimeRepository", "maxProcs", "terminalScrollbackBytes", "terminalDetachTtlSecs", "uid", "dns", "storage"],
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "runtimeClassName": { "type": "string", "description": "gVisor runtime class; empty => field omitted (runc, for KIND e2e)." },
         "runtimeRepository": { "type": "string", "minLength": 1 },
         "maxProcs": { "type": "integer", "minimum": 1 },
+        "terminalScrollbackBytes": { "type": "integer", "minimum": 0, "description": "Per-terminal scrollback ring in bytes, replayed on WS reattach and flushed on SIGTERM (issue #129); 0 disables." },
+        "terminalDetachTtlSecs": { "type": "integer", "minimum": 1, "description": "Seconds a detached terminal survives awaiting a resume before the idle sweep reaps it." },
         "uid": { "type": "integer", "minimum": 0, "description": "Non-root UID the sandbox runs as." },
         "nodeSelector": {
           "type": "object",

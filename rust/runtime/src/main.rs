@@ -10,7 +10,7 @@
 use std::net::SocketAddr;
 use std::process::ExitCode;
 
-use runtime::{build_router, AppState, RuntimeConfig, SessionKeyStore};
+use runtime::{build_router, terminals, AppState, RuntimeConfig, SessionKeyStore};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -33,7 +33,11 @@ async fn main() -> ExitCode {
     let addr = SocketAddr::from(([0, 0, 0, 0], 8888));
 
     let state = AppState::new(cfg, key_store);
-    let app = build_router(state);
+    // Idle-detached terminal sweep (issue #129): reaps PTYs whose WS client has
+    // been gone longer than TERMINAL_DETACH_TTL_SECS, so detached sessions never
+    // leak up to MAX_TERMINAL_SESSIONS.
+    let _sweep = terminals::spawn_detached_sweep(state.clone());
+    let app = build_router(state.clone());
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
@@ -42,10 +46,30 @@ async fn main() -> ExitCode {
         }
     };
     tracing::info!("runtime listening on {addr}");
-    if let Err(e) = axum::serve(listener, app).await {
-        tracing::error!("serve failed: {e}");
-        return ExitCode::from(1);
+
+    // SIGTERM = pod eviction / drain (issue #129): stop serving and flush every
+    // terminal's scrollback under the workspace so the recreated pod can replay
+    // it (bounded rings — completes well inside the default 30s grace period).
+    // SIGINT gets the same treatment for local runs. WS relays do NOT drain
+    // gracefully (they never end) — the select below returns as soon as the
+    // signal arrives and the process exits after the flush.
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("install SIGTERM handler");
+    let served = axum::serve(listener, app);
+
+    tokio::select! {
+        r = served => {
+            if let Err(e) = r {
+                tracing::error!("serve failed: {e}");
+                shared::shutdown_telemetry(otel_provider);
+                return ExitCode::from(1);
+            }
+        }
+        _ = sigterm.recv() => {}
+        _ = tokio::signal::ctrl_c() => {}
     }
+    let flushed = terminals::flush_scrollbacks(&state).await;
+    tracing::info!(sessions = flushed, "terminal scrollback flushed; exiting");
     // D9 — best-effort flush of the OTLP batch processor on graceful exit.
     shared::shutdown_telemetry(otel_provider);
     ExitCode::SUCCESS

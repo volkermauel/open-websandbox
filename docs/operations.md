@@ -539,3 +539,42 @@ upgrades, asserts the file survives, rolls back, and asserts the image reverts.
 - The vendored upstream controller is **upstream-driven**: CRD conversion-webhook needs
   flow from `kubernetes-sigs/agent-sandbox`, not from this chart. Follow the CRD-ordering
   rule above (forward-compatible CRDs first) whenever the vendored version moves.
+
+## Node drain & terminal resume (issue #129)
+
+When a runtime node is drained — or a sandbox pod is evicted for any reason — the
+**process state inside the pod dies** (the shell, its environment, running jobs). What
+survives, and what a reconnecting client gets:
+
+| What | Eviction outcome |
+| --- | --- |
+| PVC files (persistent profile) | ✅ survive — the controller recreates the pod and reattaches the volume |
+| Scrollback tail (last `TERMINAL_SCROLLBACK_BYTES`) | ✅ survives — the runtime traps SIGTERM and flushes it to `<workspace>/.open-websandbox/scrollback/<id>.log` before exiting; the recreated session preloads it |
+| Terminal session id | ✅ survives — the broker's `ensure_pty` reuses the same id on the new pod |
+| Shell process, `cwd`, environment, running jobs | ❌ lost — a resumed terminal starts a **fresh shell** with the replayed tail |
+| Ephemeral (emptyDir) workspaces | ❌ lost with the pod |
+
+For a **transient WS drop without pod death** (broker restart, network blip, client
+refresh) nothing is lost at all: the runtime *detaches* instead of killing the PTY —
+output keeps draining into the scrollback ring — and the next attach to the same id
+resumes the **same shell** with the tail replayed first.
+
+**Contract notes**
+
+- One live WS relay per terminal: a second concurrent attach is closed with `4009`;
+  an unknown/ended session still closes with `4004`.
+- `POST /api/terminals` with an existing live id **reuses** that session (this is how the
+  broker's reconnect path resumes a shell); only a dead session is recreated.
+- A detached terminal survives for `TERMINAL_DETACH_TTL_SECS` (default 900) before the
+  runtime's idle sweep reaps it — detached PTYs never leak to `MAX_TERMINAL_SESSIONS`.
+- `DELETE /api/terminals/{id}` also removes the flushed scrollback file: a killed
+  terminal never replays.
+- Both knobs are chart values: `sandboxTemplate.terminalScrollbackBytes` (default
+  128 KiB; `0` disables capture, replay and flush) and `sandboxTemplate.terminalDetachTtlSecs`.
+
+Cross-node drain needs an **RWX** storage class for the persistent profile (see
+[PVC Pending](#pvc-pending-persistent-workspace)); single-node KIND's default RWO class
+works because the recreated pod lands on the same node. The whole flow is exercised
+end-to-end by [`tests/e2e/test_node_drain.py`](../tests/e2e/test_node_drain.py) — an
+opt-in lane (`E2E_DRAIN=1`) that opens a terminal, deletes the sandbox pod, and asserts
+the reconnect replays the pre-eviction tail with the marker file intact.
