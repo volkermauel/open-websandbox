@@ -111,6 +111,10 @@ ephemeral profile.
 
 ## Idle policy: park & reap
 
+> Parking preserves **files only** (PVC). Whether process/memory state can also be
+preserved via gVisor checkpoint/restore is assessed in
+[Container snapshots (C/R) feasibility](container-snapshots.md) (#134).
+
 The broker's reaper runs every 60 s and acts on the `broker-last-used`
 annotation (see [Lifecycle](architecture.md#lifecycle)). Defaults:
 

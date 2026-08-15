@@ -80,6 +80,7 @@ nav:
   - Deployment guide: deploy.md
   - Operations runbook: operations.md
   - S3-tiered storage: s3-tiered-storage.md
+  - Container snapshots (C/R) feasibility: container-snapshots.md
   - Security model: security.md
   - Production-readiness checklist: production-readiness-checklist.md
 
