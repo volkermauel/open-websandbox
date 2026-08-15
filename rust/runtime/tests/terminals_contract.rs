@@ -32,6 +32,7 @@ use tokio_tungstenite::tungstenite::Message;
 struct Server {
     port: u16,
     key: &'static str,
+    state: AppState,
     _tmp: TempDir,
 }
 
@@ -52,7 +53,8 @@ impl Server {
             max_terminal_sessions: max,
             ..RuntimeConfig::default()
         };
-        let app = build_router(AppState::new(config, SessionKeyStore::new(&key_path)));
+        let state = AppState::new(config, SessionKeyStore::new(&key_path));
+        let app = build_router(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move {
@@ -61,6 +63,7 @@ impl Server {
         Server {
             port,
             key: common::STRONG_KEY,
+            state,
             _tmp: tmp,
         }
     }
@@ -207,6 +210,30 @@ async fn poll_cleaned(srv: &Server, id: &str, timeout: f64) -> bool {
     }
 }
 
+/// Poll GET /api/terminals/{id} until it answers 200 (session alive), with a
+/// budget. The detach-era counterpart of [`poll_cleaned`].
+async fn poll_alive(srv: &Server, id: &str, timeout: f64) -> bool {
+    let deadline = tokio::time::sleep(Duration::from_secs_f64(timeout));
+    tokio::pin!(deadline);
+    loop {
+        let (s, _) = http(
+            srv.port,
+            "GET",
+            &format!("/api/terminals/{id}"),
+            &[("Authorization", &srv.auth())],
+            None,
+        )
+        .await;
+        if s == 200 {
+            return true;
+        }
+        tokio::select! {
+            () = &mut deadline => return false,
+            () = tokio::time::sleep(Duration::from_millis(100)) => {}
+        }
+    }
+}
+
 // --- HTTP contract -----------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
@@ -317,28 +344,31 @@ async fn list_reports_live_sessions() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn recreate_existing_id_spawns_new_session() {
+async fn post_reuses_live_session_until_dead() {
     let srv = Server::start().await;
-    let (_, body) = http(
-        srv.port,
-        "POST",
-        "/api/terminals",
-        &[("Authorization", &srv.auth()), ("X-Session-Id", "dup")],
-        None,
-    )
-    .await;
-    let pid1 = json(&body)["pid"].as_i64().unwrap();
-    let (_, body) = http(
-        srv.port,
-        "POST",
-        "/api/terminals",
-        &[("Authorization", &srv.auth()), ("X-Session-Id", "dup")],
-        None,
-    )
-    .await;
-    let pid2 = json(&body)["pid"].as_i64().unwrap();
-    assert_ne!(pid1, pid2, "recreate should spawn a fresh shell");
+    let pid1 = create_pid(&srv, "dup").await;
+    // Issue #129: a reconnecting client (broker ensure_pty) must RESUME the
+    // live shell, not kill it — same id returns the same pid.
+    let pid2 = create_pid(&srv, "dup").await;
+    assert_eq!(pid1, pid2, "POST with a live id must reuse the session");
+    // Only once the session is gone does the same id get a fresh shell.
     let _ = delete(&srv, "dup").await;
+    let pid3 = create_pid(&srv, "dup").await;
+    assert_ne!(pid1, pid3, "POST after DELETE must spawn a fresh shell");
+    let _ = delete(&srv, "dup").await;
+}
+
+/// POST /api/terminals with `X-Session-Id` = `id`; returns the spawned pid.
+async fn create_pid(srv: &Server, id: &str) -> i64 {
+    let (_, body) = http(
+        srv.port,
+        "POST",
+        "/api/terminals",
+        &[("Authorization", &srv.auth()), ("X-Session-Id", id)],
+        None,
+    )
+    .await;
+    json(&body)["pid"].as_i64().unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -446,10 +476,13 @@ async fn ws_echo_resize_then_cleanup() {
         "session died after resize frame"
     );
     drop(ws);
+    // Client-side disconnect DETACHES (issue #129): the shell survives for a
+    // later resume — only DELETE removes it.
     assert!(
-        poll_cleaned(&srv, "echo1", 5.0).await,
-        "terminal entry survived WS disconnect (PTY leak)"
+        poll_alive(&srv, "echo1", 5.0).await,
+        "detach tore the session down"
     );
+    let _ = delete(&srv, "echo1").await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -474,7 +507,8 @@ async fn ws_control_frames_tolerated() {
         "control frames killed the session"
     );
     drop(ws);
-    assert!(poll_cleaned(&srv, "ctrl", 5.0).await);
+    assert!(poll_alive(&srv, "ctrl", 5.0).await);
+    let _ = delete(&srv, "ctrl").await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -538,4 +572,128 @@ async fn delete(srv: &Server, id: &str) -> u16 {
     )
     .await
     .0
+}
+
+// --- Detach / resume / scrollback (issue #129) --------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ws_second_attach_while_attached_is_4009() {
+    let srv = Server::start().await;
+    create(&srv, "busy").await;
+    let first = ws_connect(srv.port, "/api/terminals/busy", Some(srv.key)).await;
+    // A second concurrent attach must be rejected (one live relay per session),
+    // not silently split PTY output between two readers.
+    let mut second = ws_connect(srv.port, "/api/terminals/busy", Some(srv.key)).await;
+    assert_eq!(first_close_code(&mut second).await, 4009);
+    drop(first);
+    let _ = delete(&srv, "busy").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ws_detach_resume_replays_scrollback() {
+    let srv = Server::start().await;
+    let pid0 = create_pid(&srv, "resume").await;
+    let mut ws = ws_connect(srv.port, "/api/terminals/resume", Some(srv.key)).await;
+    ws.send(Message::Binary(Bytes::from_static(b"echo MARKER_A\n")))
+        .await
+        .unwrap();
+    assert!(
+        wait_for(&mut ws, b"MARKER_A", 5.0).await,
+        "PTY did not echo MARKER_A"
+    );
+    // Drop the client: the shell must SURVIVE (detach, issue #129).
+    drop(ws);
+    assert!(
+        poll_alive(&srv, "resume", 5.0).await,
+        "detach tore the session down"
+    );
+    // Reconnect (retrying briefly — the relay task needs a beat to detach).
+    let mut ws2 = None;
+    for _ in 0..40 {
+        let mut c = ws_connect(srv.port, "/api/terminals/resume", Some(srv.key)).await;
+        // The FIRST frame after reattach is the replayed scrollback tail.
+        let replayed = wait_for(&mut c, b"MARKER_A", 2.0).await;
+        if replayed {
+            ws2 = Some(c);
+            break;
+        }
+    }
+    let mut ws2 = ws2.expect("reattach never replayed the scrollback");
+    // Live I/O still works after resume, on the SAME shell.
+    ws2.send(Message::Binary(Bytes::from_static(b"echo MARKER_C\n")))
+        .await
+        .unwrap();
+    assert!(
+        wait_for(&mut ws2, b"MARKER_C", 5.0).await,
+        "resumed PTY did not echo MARKER_C"
+    );
+    let (_, body) = http(
+        srv.port,
+        "GET",
+        "/api/terminals/resume",
+        &[("Authorization", &srv.auth())],
+        None,
+    )
+    .await;
+    assert_eq!(
+        json(&body)["pid"].as_i64(),
+        Some(pid0),
+        "resume must return the SAME shell"
+    );
+    let _ = ws2.close(None).await;
+    let _ = delete(&srv, "resume").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sigterm_flush_replays_across_pod_recreate() {
+    // The full #129 story in one process: marker output → flush (as SIGTERM
+    // would) → shell dies (pod-death stand-in: state lost) → same id recreated
+    // → the flushed tail replays on attach.
+    let srv = Server::start().await;
+    let pid0 = create_pid(&srv, "gen0").await;
+    let mut ws = ws_connect(srv.port, "/api/terminals/gen0", Some(srv.key)).await;
+    ws.send(Message::Binary(Bytes::from_static(b"echo PRE_EVICT\n")))
+        .await
+        .unwrap();
+    assert!(wait_for(&mut ws, b"PRE_EVICT", 5.0).await);
+    drop(ws);
+    // The SIGTERM-path flush (bounded, best-effort, under the workspace).
+    let n = runtime::terminals::flush_scrollbacks(&srv.state).await;
+    assert_eq!(n, 1, "exactly one session should flush");
+    let sb = srv
+        .state
+        .config
+        .workdir
+        .join(".open-websandbox")
+        .join("scrollback")
+        .join("gen0.log");
+    assert!(sb.exists(), "scrollback file missing at {}", sb.display());
+    // Kill the shell via the terminal (pod-death stand-in; DELETE would also
+    // remove the scrollback file, which a drained pod would NOT).
+    // Reattach with retry: under a loaded test runtime the first relay's
+    // detach may lag our reconnect, which would 4009 the attempt instead of
+    // delivering the `exit`. Each pass re-sends and waits a second.
+    for _ in 0..10 {
+        let mut ws2 = ws_connect(srv.port, "/api/terminals/gen0", Some(srv.key)).await;
+        let _ = ws2
+            .send(Message::Binary(Bytes::from_static(b"exit\n")))
+            .await;
+        let _ = ws2.close(None).await;
+        if poll_cleaned(&srv, "gen0", 1.0).await {
+            break;
+        }
+    }
+    assert!(poll_cleaned(&srv, "gen0", 8.0).await, "shell did not exit");
+    // New "pod": same id, fresh shell (different pid) + replayed pre-eviction tail.
+    let pid1 = create_pid(&srv, "gen0").await;
+    assert_ne!(pid0, pid1, "a recreated session is a NEW shell");
+    let mut ws3 = ws_connect(srv.port, "/api/terminals/gen0", Some(srv.key)).await;
+    assert!(
+        wait_for(&mut ws3, b"PRE_EVICT", 5.0).await,
+        "flushed scrollback did not replay on the recreated session"
+    );
+    let _ = ws3.close(None).await;
+    let _ = delete(&srv, "gen0").await;
+    // DELETE must also clean the flushed file (a killed terminal never replays).
+    assert!(!sb.exists(), "DELETE left the scrollback file behind");
 }

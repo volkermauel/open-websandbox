@@ -98,7 +98,6 @@ module_name_repetitions = "allow"
 similar_names = "allow"
 match_same_arms = "allow"
 too_many_lines = "allow"
-string_collect = "allow"
 format_push_string = "allow"
 cast_precision_loss = "allow"
 # restriction-group lints (style nits surfaced late by the full pedantic sweep):

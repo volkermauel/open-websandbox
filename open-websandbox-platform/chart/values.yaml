@@ -130,6 +130,13 @@ sandboxTemplate:
   runtimeClassName: gvisor         # "" => omit field (runc, for KIND e2e)
   runtimeRepository: open-websandbox-runtime
   maxProcs: 256
+  # Terminal scrollback ring per session, bytes (issue #129): replayed to a
+  # reattached WS client and flushed to the workspace on SIGTERM (node drain).
+  # 0 disables capture, replay and flush.
+  terminalScrollbackBytes: 131072
+  # Seconds a DETACHED terminal (WS gone, shell alive) survives awaiting a
+  # resume before the runtime's idle sweep reaps it.
+  terminalDetachTtlSecs: 900
   uid: 1000
   # Dedicated sandbox node pools (issue #126): rendered onto the runtime podTemplate.
   # Pair with a labeled (+ optionally tainted) node pool, e.g. label

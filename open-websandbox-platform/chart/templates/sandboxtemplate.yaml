@@ -80,6 +80,13 @@ spec:
         # Per-sandbox process cap (RLIMIT_NPROC); gVisor enforces it.
         - name: MAX_PROCS
           value: {{ .Values.sandboxTemplate.maxProcs | quote }}
+        # Terminal scrollback ring (issue #129): replayed on WS reattach and
+        # flushed to the workspace on SIGTERM (pod eviction / node drain).
+        - name: TERMINAL_SCROLLBACK_BYTES
+          value: {{ .Values.sandboxTemplate.terminalScrollbackBytes | quote }}
+        # How long a detached terminal survives awaiting a WS resume (seconds).
+        - name: TERMINAL_DETACH_TTL_SECS
+          value: {{ .Values.sandboxTemplate.terminalDetachTtlSecs | quote }}
         # Suppress kubelet-injected KUBERNETES_* env (leaks service-CIDR / API IP).
         - name: KUBERNETES_SERVICE_HOST
           value: ""
