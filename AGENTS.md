@@ -85,7 +85,7 @@ locally — `scripts/setup-kind-gvisor.sh` brings up a gVisor cluster (systrap n
 
 Distilled from `docs/operations.md` — read it for full detail.
 
-- **Persistent sandboxes need an RWX StorageClass.** `profile.persistentStorageClass` must
+- **Persistent sandboxes need an RWX StorageClass.** `broker.persistentStorageClass` must
   point at a real `ReadWriteMany` class (e.g. CephFS). With only block/RWO storage, per-user
   PVCs stick `Pending` and park/resume cannot work.
 - **The runtime namespace is default-deny, including cloud IMDS.** The runtime NetworkPolicy

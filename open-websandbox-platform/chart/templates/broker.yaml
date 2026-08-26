@@ -177,6 +177,15 @@ spec:
           value: {{ .Values.broker.persistentStorage | quote }}
         - name: BROKER_PERSISTENT_MODE
           value: {{ .Values.broker.persistentMode | quote }}
+        # PVC hot tiers (#140): per-user PVC knobs (ignored in s3-tiered).
+        - name: BROKER_PERSISTENT_STORAGE_CLASS
+          value: {{ .Values.broker.persistentStorageClass | quote }}
+        - name: BROKER_PERSISTENT_ACCESS_MODES
+          value: {{ join "," .Values.broker.persistentAccessModes | quote }}
+        - name: BROKER_SHARED_PVC
+          value: {{ .Values.sharedPvc.name | quote }}
+        - name: BROKER_PER_USER_PVC_PREFIX
+          value: {{ .Values.broker.perUserPvcPrefix | quote }}
         - name: BROKER_PARK_IDLE_SECONDS
           value: {{ .Values.broker.parkIdleSeconds | quote }}
         {{- if .Values.broker.s3.enabled }}

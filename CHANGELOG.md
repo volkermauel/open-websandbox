@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **PVC hot tiers restored, with per-chat isolation (#140).** `broker.persistentMode`
+  `per-user-pvc` (default; one broker-created PVC per user, every chat mounting its own
+  `chats/<sha256(user/session)[:12]>` subPath) and `shared-subpath` (one chart-rendered
+  `workspace-shared` PVC, per-user/per-chat subPaths) are implemented in the Rust broker
+  again — the rewrite had silently dropped them, leaving every "persistent" sandbox on an
+  emptyDir (data destroyed on park/reap). `s3-tiered` is unchanged. New chart knobs:
+  `broker.persistentStorageClass`, `broker.persistentAccessModes`,
+  `broker.perUserPvcPrefix`, `sharedPvc.accessModes`; the shared PVC now renders only in
+  `shared-subpath` mode; the broker fails closed at boot on unknown modes and on
+  `s3-tiered` ⟺ `broker.s3.enabled` mismatches. New opt-in e2e lane (E2E_PVC=1, both
+  modes) proves persistence across Sandbox deletion, cross-chat and cross-user isolation.
 - **LibreOffice in the runtime image.** Debian's `-nogui` LibreOffice suite
   (writer/calc/impress/draw, headless `soffice`) plus Liberation/DejaVu core fonts
   is installed in `open-websandbox-runtime` (installed size ≈ 750 MiB — the dominant

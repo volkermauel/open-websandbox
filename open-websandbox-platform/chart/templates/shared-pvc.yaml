@@ -1,8 +1,15 @@
-# Shared RWX PVC backing /workspace for the shared-subPath persistent profile
-# (BROKER_PERSISTENT_MODE=shared-subpath). One volume shared by all users; each
-# user's sandbox mounts only users/<user-id>/ of it at /workspace (hard isolation).
-# NOT used by the per-user-pvc profile, which gives every user their own PVC via
-# SandboxClaim volumeClaimTemplates.
+{{/* Shared RWX PVC backing /workspace for the shared-subpath persistent mode
+     (BROKER_PERSISTENT_MODE=shared-subpath) — issue #140. ONE volume shared by
+     every chat sandbox; each mounts only its own
+     users/<sha256(user)[:12]>/chats/<sha256(user/session)[:12]> slice at
+     /workspace (hard cross-user AND cross-chat isolation — a chat's terminal
+     can only ever see or delete its own directory).
+
+     Rendered ONLY in shared-subpath mode: the broker mounts it by name (and
+     fails closed if it is missing). per-user-pvc mode instead gives every user
+     their own PVC (created directly by the broker); s3-tiered needs no PVC at
+     all — rendering it there just left a forever-Pending claim in KIND. */}}
+{{- if eq .Values.broker.persistentMode "shared-subpath" }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -13,8 +20,11 @@ metadata:
     {{- include "open-websandbox.labelsNoManagedBy" . | nindent 4 }}
 spec:
   accessModes:
-  - ReadWriteMany
+  {{- range .Values.sharedPvc.accessModes }}
+  - {{ . }}
+  {{- end }}
   storageClassName: {{ .Values.sharedPvc.storageClass }}
   resources:
     requests:
       storage: {{ .Values.sharedPvc.size }}
+{{- end }}

@@ -99,6 +99,69 @@ impl FromStr for Profile {
     }
 }
 
+/// Deploy-selectable backing for the **persistent** profile (env
+/// `BROKER_PERSISTENT_MODE`, default `per-user-pvc`) — issue #140.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    utoipa::ToSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum PersistentMode {
+    /// One PVC per user (`workspace-p-<sha256(user)[:12]>`, broker-created),
+    /// each chat mounting its own `chats/<sha256(user/session)[:12]>` subPath.
+    #[default]
+    PerUserPvc,
+    /// One shared RWX PVC (chart-rendered `workspace-shared`), each chat
+    /// mounting `users/<sha256(user)[:12]>/chats/<sha256(user/session)[:12]>`.
+    SharedSubpath,
+    /// emptyDir hot tier + S3 cold tier (issue #52); requires
+    /// `BROKER_S3_ENABLED`.
+    S3Tiered,
+}
+
+impl PersistentMode {
+    /// Whether this mode backs `/workspace` with a PVC the broker must
+    /// ensure/mount (both PVC hot tiers; `false` for `s3-tiered`).
+    #[must_use]
+    pub fn is_pvc(self) -> bool {
+        matches!(
+            self,
+            PersistentMode::PerUserPvc | PersistentMode::SharedSubpath
+        )
+    }
+
+    /// Lowercase wire value (`per-user-pvc` / `shared-subpath` / `s3-tiered`),
+    /// used for the `broker-persistent-mode` Sandbox label.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PersistentMode::PerUserPvc => "per-user-pvc",
+            PersistentMode::SharedSubpath => "shared-subpath",
+            PersistentMode::S3Tiered => "s3-tiered",
+        }
+    }
+}
+
+impl FromStr for PersistentMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "per-user-pvc" => Ok(PersistentMode::PerUserPvc),
+            "shared-subpath" => Ok(PersistentMode::SharedSubpath),
+            "s3-tiered" => Ok(PersistentMode::S3Tiered),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Broker configuration loaded from the environment.
 ///
 /// Field names mirror the env-var names the chart honours (D12 — drop-in).
@@ -135,6 +198,42 @@ pub struct BrokerConfig {
     /// `BROKER_DEFAULT_PROFILE`, default `persistent`).
     #[serde(default)]
     pub default_profile: Profile,
+
+    /// Backing for the persistent profile (env `BROKER_PERSISTENT_MODE`,
+    /// default `per-user-pvc`). Unknown values fail boot (fail-closed) — a
+    /// silently ignored mode is how #140's emptyDir data loss happened.
+    #[serde(default)]
+    pub persistent_mode: PersistentMode,
+
+    /// Size of each per-user PVC in `per-user-pvc` mode (env
+    /// `BROKER_PERSISTENT_STORAGE`, default `10Gi`).
+    #[serde(default = "default_persistent_storage")]
+    pub persistent_storage: String,
+
+    /// StorageClass for per-user PVCs (env `BROKER_PERSISTENT_STORAGE_CLASS`).
+    /// Empty ⇒ the cluster default StorageClass. Should be an RWX class
+    /// (e.g. CephFS) in production — chat sandboxes of one user mount the
+    /// same PVC concurrently.
+    #[serde(default)]
+    pub persistent_storage_class: String,
+
+    /// Access modes for per-user PVCs (env `BROKER_PERSISTENT_ACCESS_MODES`,
+    /// comma-separated; default `ReadWriteMany`). KIND/local-path deployments
+    /// may set `ReadWriteOnce` (single-node clusters keep every chat pod of a
+    /// user co-scheduled on one node).
+    #[serde(default = "default_persistent_access_modes")]
+    pub persistent_access_modes: Vec<String>,
+
+    /// Name of the chart-rendered shared PVC used in `shared-subpath` mode
+    /// (env `BROKER_SHARED_PVC`, default `workspace-shared`).
+    #[serde(default = "default_shared_pvc_name")]
+    pub shared_pvc_name: String,
+
+    /// Prefix for per-user PVC names in `per-user-pvc` mode (env
+    /// `BROKER_PER_USER_PVC_PREFIX`, default `workspace-p-`); the full name is
+    /// `<prefix><sha256(user)[:12]>`.
+    #[serde(default = "default_per_user_pvc_prefix")]
+    pub per_user_pvc_prefix: String,
 
     /// Shared broker→runtime API key the broker injects as `Authorization:
     /// Bearer <key>` on the direct pod hop (env `BROKER_RUNTIME_API_KEY`).
@@ -352,6 +451,22 @@ const fn default_s3_path_style() -> bool {
     true
 }
 
+fn default_persistent_storage() -> String {
+    "10Gi".to_string()
+}
+
+fn default_persistent_access_modes() -> Vec<String> {
+    vec!["ReadWriteMany".to_string()]
+}
+
+fn default_shared_pvc_name() -> String {
+    "workspace-shared".to_string()
+}
+
+fn default_per_user_pvc_prefix() -> String {
+    "workspace-p-".to_string()
+}
+
 /// The all-defaults broker config (the same value `BrokerConfig::from_map(|_| None)`
 /// yields), exposed as [`Default`] so tests can override single fields with
 /// `BrokerConfig { shared_secret: "...", ..Default::default() }`.
@@ -364,6 +479,12 @@ impl Default for BrokerConfig {
             runtime_ns: default_runtime_ns(),
             base_template: default_base_template(),
             default_profile: Profile::Persistent,
+            persistent_mode: PersistentMode::PerUserPvc,
+            persistent_storage: default_persistent_storage(),
+            persistent_storage_class: String::new(),
+            persistent_access_modes: default_persistent_access_modes(),
+            shared_pvc_name: default_shared_pvc_name(),
+            per_user_pvc_prefix: default_per_user_pvc_prefix(),
             runtime_api_key: String::new(),
             claim_timeout_seconds: default_claim_timeout_seconds(),
             proxy_timeout_seconds: default_proxy_timeout_seconds(),
@@ -426,7 +547,7 @@ impl BrokerConfig {
             &get("BROKER_S3_ACCESS_KEY_ID").unwrap_or_default(),
             &get("BROKER_S3_SECRET_ACCESS_KEY").unwrap_or_default(),
         );
-        Ok(Self {
+        let cfg = Self {
             max_terminal_sessions: env_value("MAX_TERMINAL_SESSIONS", &get)?
                 .unwrap_or_else(default_max_terminal_sessions),
             max_output_bytes: env_value("MAX_OUTPUT_BYTES", &get)?
@@ -437,6 +558,34 @@ impl BrokerConfig {
             default_profile: get("BROKER_DEFAULT_PROFILE")
                 .and_then(|raw| raw.parse().ok())
                 .unwrap_or_default(),
+            persistent_mode: get("BROKER_PERSISTENT_MODE")
+                .map(|raw| {
+                    raw.parse::<PersistentMode>()
+                        .map_err(|()| ConfigError::Invalid {
+                            var: "BROKER_PERSISTENT_MODE",
+                            message: format!(
+                                "{raw:?} is not one of per-user-pvc | shared-subpath | s3-tiered",
+                            ),
+                        })
+                })
+                .transpose()?
+                .unwrap_or_default(),
+            persistent_storage: get("BROKER_PERSISTENT_STORAGE")
+                .unwrap_or_else(default_persistent_storage),
+            persistent_storage_class: get("BROKER_PERSISTENT_STORAGE_CLASS").unwrap_or_default(),
+            persistent_access_modes: get("BROKER_PERSISTENT_ACCESS_MODES")
+                .map(|raw| {
+                    raw.split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(default_persistent_access_modes),
+            shared_pvc_name: get("BROKER_SHARED_PVC").unwrap_or_else(default_shared_pvc_name),
+            per_user_pvc_prefix: get("BROKER_PER_USER_PVC_PREFIX")
+                .unwrap_or_else(default_per_user_pvc_prefix),
             runtime_api_key: get("BROKER_RUNTIME_API_KEY").unwrap_or_default(),
             claim_timeout_seconds: env_value("BROKER_CLAIM_TIMEOUT_SECONDS", &get)?
                 .unwrap_or_else(default_claim_timeout_seconds),
@@ -471,7 +620,30 @@ impl BrokerConfig {
             s3_access_key_id,
             s3_secret_access_key,
             s3_path_style: get("BROKER_S3_PATH_STYLE").is_none_or(|raw| parse_bool(&raw)),
-        })
+        };
+        // Mode exclusivity (#140): the S3 cold tier is wired ONLY into the
+        // s3-tiered mode (offload-on-reap + restore-on-resume would fight a
+        // PVC-backed workspace), and s3-tiered without S3 configured cannot
+        // keep any promise of persistence. Fail closed at boot either way.
+        match (cfg.persistent_mode, cfg.s3_enabled) {
+            (PersistentMode::S3Tiered, false) => {
+                return Err(ConfigError::Invalid {
+                    var: "BROKER_PERSISTENT_MODE",
+                    message: "s3-tiered requires broker.s3.enabled=true (BROKER_S3_ENABLED)"
+                        .to_string(),
+                });
+            }
+            (mode, true) if !matches!(mode, PersistentMode::S3Tiered) => {
+                return Err(ConfigError::Invalid {
+                    var: "BROKER_PERSISTENT_MODE",
+                    message: format!(
+                        "broker.s3.enabled=true requires BROKER_PERSISTENT_MODE=s3-tiered (got {mode:?})",
+                    ),
+                });
+            }
+            _ => {}
+        }
+        Ok(cfg)
     }
 }
 
@@ -673,6 +845,12 @@ mod tests {
             rate_limit_enabled: true,
             rate_limit_per_second: 7,
             rate_limit_burst: 14,
+            persistent_mode: PersistentMode::S3Tiered,
+            persistent_storage: "5Gi".into(),
+            persistent_storage_class: "cephfs".into(),
+            persistent_access_modes: vec!["ReadWriteMany".into()],
+            shared_pvc_name: "shared-ws".into(),
+            per_user_pvc_prefix: "ws-p-".into(),
         };
         let json = serde_json::to_string(&cfg).expect("serialize");
         assert!(json.contains("\"max_terminal_sessions\":2"), "{json}");
@@ -705,6 +883,7 @@ mod tests {
             ("BROKER_LEADER_DURATION_SECONDS", "30"),
             ("BROKER_LEADER_RENEW_SECONDS", "10"),
             ("BROKER_S3_ENABLED", "yes"),
+            ("BROKER_PERSISTENT_MODE", "s3-tiered"),
             ("BROKER_S3_ENDPOINT", "http://minio:9000"),
             ("BROKER_S3_REGION", "eu-west-1"),
             ("BROKER_S3_BUCKET", "owui-cold"),
@@ -838,6 +1017,7 @@ mod tests {
     fn s3_sse_read_from_env() {
         let cfg = BrokerConfig::from_map(|k: &str| match k {
             "BROKER_S3_ENABLED" => Some("true".to_string()),
+            "BROKER_PERSISTENT_MODE" => Some("s3-tiered".to_string()),
             "BROKER_S3_SSE" => Some("AES256".to_string()),
             "BROKER_S3_BUCKET" => Some("b".to_string()),
             _ => None,
@@ -845,5 +1025,80 @@ mod tests {
         .expect("config");
         assert_eq!(cfg.s3_sse, "AES256");
         assert!(cfg.s3_enabled);
+    }
+
+    #[test]
+    fn persistent_mode_defaults_and_parses() {
+        let cfg = BrokerConfig::from_map(|_| None).expect("config");
+        assert_eq!(cfg.persistent_mode, PersistentMode::PerUserPvc);
+        assert_eq!(cfg.persistent_storage, "10Gi");
+        assert_eq!(cfg.persistent_storage_class, "");
+        assert_eq!(cfg.persistent_access_modes, ["ReadWriteMany".to_string()]);
+        assert_eq!(cfg.shared_pvc_name, "workspace-shared");
+        assert_eq!(cfg.per_user_pvc_prefix, "workspace-p-");
+
+        let cfg = BrokerConfig::from_map(|k| match k {
+            "BROKER_PERSISTENT_MODE" => Some("shared-subpath".to_string()),
+            "BROKER_PERSISTENT_STORAGE" => Some("5Gi".to_string()),
+            "BROKER_PERSISTENT_STORAGE_CLASS" => Some("cephfs".to_string()),
+            "BROKER_PERSISTENT_ACCESS_MODES" => Some(" ReadWriteOnce ,  ".to_string()),
+            "BROKER_SHARED_PVC" => Some("ws".to_string()),
+            "BROKER_PER_USER_PVC_PREFIX" => Some("p-".to_string()),
+            _ => None,
+        })
+        .expect("config");
+        assert_eq!(cfg.persistent_mode, PersistentMode::SharedSubpath);
+        assert!(cfg.persistent_mode.is_pvc());
+        assert_eq!(cfg.persistent_storage, "5Gi");
+        assert_eq!(cfg.persistent_storage_class, "cephfs");
+        assert_eq!(cfg.persistent_access_modes, ["ReadWriteOnce".to_string()]);
+        assert_eq!(cfg.shared_pvc_name, "ws");
+        assert_eq!(cfg.per_user_pvc_prefix, "p-");
+    }
+
+    #[test]
+    fn unknown_persistent_mode_fails_closed() {
+        let err = BrokerConfig::from_map(|k| {
+            (k == "BROKER_PERSISTENT_MODE").then(|| "nonsense".to_string())
+        })
+        .expect_err("unknown mode must fail boot");
+        assert!(matches!(
+            err,
+            ConfigError::Invalid {
+                var: "BROKER_PERSISTENT_MODE",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn s3_mode_exclusivity_fails_closed() {
+        // s3-tiered without S3 configured.
+        let err = BrokerConfig::from_map(|k| {
+            (k == "BROKER_PERSISTENT_MODE").then(|| "s3-tiered".to_string())
+        })
+        .expect_err("s3-tiered without S3 must fail boot");
+        assert!(matches!(
+            err,
+            ConfigError::Invalid {
+                var: "BROKER_PERSISTENT_MODE",
+                ..
+            }
+        ));
+
+        // S3 enabled with a PVC mode.
+        let err = BrokerConfig::from_map(|k| match k {
+            "BROKER_S3_ENABLED" => Some("true".to_string()),
+            "BROKER_PERSISTENT_MODE" => Some("per-user-pvc".to_string()),
+            _ => None,
+        })
+        .expect_err("S3 with a PVC mode must fail boot");
+        assert!(matches!(
+            err,
+            ConfigError::Invalid {
+                var: "BROKER_PERSISTENT_MODE",
+                ..
+            }
+        ));
     }
 }

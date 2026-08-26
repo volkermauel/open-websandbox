@@ -16,13 +16,13 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
-use shared::{Profile, Sandbox, SandboxStatus};
+use shared::{PersistentMode, Profile, Sandbox, SandboxStatus};
 
 use crate::error::ApiError;
 use crate::metrics::SANDBOXES_CREATED_TOTAL;
-use crate::sandbox::{build_sandbox, extract_pod_template};
+use crate::sandbox::{apply_persistent_volume, build_sandbox, extract_pod_template};
 use crate::state::AppState;
-use crate::store::StoreError;
+use crate::store::{StoreError, WorkspacePvcSpec};
 
 /// Prefix for ephemeral (per-SESSION, emptyDir) sandboxes.
 pub const EPHEMERAL_PREFIX: &str = "owui-";
@@ -74,6 +74,36 @@ fn hex12(input: &[u8]) -> String {
     hasher.update(input);
     let out = hasher.finalize();
     out.iter().take(6).map(|b| format!("{b:02x}")).collect()
+}
+
+/// PVC claim name + per-chat subPath for a persistent sandbox (#140).
+///
+/// PVC granularity is the **user** (quota/reclaim), subPath granularity is
+/// the **chat** (isolation — a chat's terminal only ever sees its own
+/// directory). Every path component is a `sha256` hex prefix, so raw
+/// `X-User-Id` / `X-Session-Id` bytes never reach a volume name or a path
+/// (no traversal, no invalid characters), and every broker replica computes
+/// the identical layout for a given (user, session):
+///
+/// * `per-user-pvc`  → (`<prefix><sha256(user)[:12]>`, `chats/<sha256(user/session)[:12]>`)
+/// * `shared-subpath` → (`<sharedPvc>`, `users/<sha256(user)[:12]>/chats/<sha256(user/session)[:12]>`)
+fn workspace_layout(
+    config: &shared::BrokerConfig,
+    user_id: &str,
+    session_id: &str,
+) -> (String, String) {
+    let user = hex12(user_id.as_bytes());
+    let chat = hex12(format!("{user_id}/{session_id}").as_bytes());
+    match config.persistent_mode {
+        PersistentMode::SharedSubpath => (
+            config.shared_pvc_name.clone(),
+            format!("users/{user}/chats/{chat}"),
+        ),
+        PersistentMode::PerUserPvc | PersistentMode::S3Tiered => (
+            format!("{}{user}", config.per_user_pvc_prefix),
+            format!("chats/{chat}"),
+        ),
+    }
 }
 
 /// Pod IP of a `Ready` sandbox, or `None`.
@@ -141,7 +171,33 @@ pub async fn resolve_sandbox(
                     state.config.base_template
                 ))
             })?;
-        let pod_template = extract_pod_template(&template)?;
+        let mut pod_template = extract_pod_template(&template)?;
+
+        // PVC hot tiers (#140): ensure the backing PVC exists, then repoint
+        // the cloned pod template's `workspace` volume at it with the
+        // per-chat subPath. s3-tiered keeps its emptyDir hot tier (the S3
+        // restore below handles persistence) and skips this block.
+        if profile == Profile::Persistent && state.config.persistent_mode.is_pvc() {
+            let (claim, sub_path) = workspace_layout(&state.config, user_id, session_id);
+            let create = (state.config.persistent_mode == PersistentMode::PerUserPvc).then(|| {
+                WorkspacePvcSpec {
+                    access_modes: state.config.persistent_access_modes.clone(),
+                    storage: state.config.persistent_storage.clone(),
+                    storage_class: state.config.persistent_storage_class.clone(),
+                }
+            });
+            state
+                .store
+                .ensure_workspace_pvc(&claim, create.as_ref())
+                .await
+                .map_err(|e| match e {
+                    StoreError::NotFound => ApiError::Internal(format!(
+                        "persistentMode=shared-subpath but PVC '{claim}' not found — install the chart with sharedPvc configured",
+                    )),
+                    other => map_store_err(other),
+                })?;
+            apply_persistent_volume(&mut pod_template, &claim, &sub_path)?;
+        }
 
         // PR-C-5 / #4: ensure the per-session runtime-key Secret exists BEFORE
         // the Sandbox is created, so the non-optional runtime-key volume is
@@ -152,7 +208,7 @@ pub async fn resolve_sandbox(
             .ensure_runtime_key(&name)
             .await
             .map_err(map_store_err)?;
-        let sandbox = build_sandbox(
+        let mut sandbox = build_sandbox(
             &name,
             Some(user_id),
             Some(session_id),
@@ -161,6 +217,16 @@ pub async fn resolve_sandbox(
             &state.config.runtime_ns,
             now_unix(),
         );
+        // #140: stamp the hot-tier mode onto the Sandbox for ops
+        // (`kubectl get sandbox -l broker-persistent-mode=shared-subpath`).
+        if profile == Profile::Persistent {
+            if let Some(labels) = sandbox.metadata.labels.as_mut() {
+                labels.insert(
+                    crate::sandbox::PERSISTENT_MODE_LABEL_KEY.to_string(),
+                    state.config.persistent_mode.as_str().to_string(),
+                );
+            }
+        }
         match state.store.create_sandbox(sandbox).await {
             Ok(_) => {
                 // D9: a new sandbox was actually created (resolve path).
@@ -285,7 +351,38 @@ mod tests {
         assert_ne!(e, p, "ephemeral and persistent must differ");
         // Same inputs ⇒ same name.
         assert_eq!(e, sandbox_name("u", "s", Profile::Ephemeral));
+        assert_eq!(e, sandbox_name("u", "s", Profile::Ephemeral));
         assert_eq!(p, sandbox_name("u", "s", Profile::Persistent));
+    }
+
+    #[test]
+    fn workspace_layout_per_user_pvc_is_user_pvc_plus_chat_subpath() {
+        let config = shared::BrokerConfig::default(); // per-user-pvc
+        let (claim, sub) = workspace_layout(&config, "user-1", "chat-1");
+        let user = hex12(b"user-1");
+        let chat = hex12(b"user-1/chat-1");
+        assert_eq!(claim, format!("workspace-p-{user}"));
+        assert_eq!(sub, format!("chats/{chat}"));
+        // Deterministic + hash-only: raw ids never leak into the path.
+        assert_eq!(sub, workspace_layout(&config, "user-1", "chat-1").1);
+        assert!(!sub.contains("user-1") && !sub.contains("chat-1"));
+    }
+
+    #[test]
+    fn workspace_layout_shared_subpath_namespaces_by_user() {
+        let config = shared::BrokerConfig {
+            persistent_mode: PersistentMode::SharedSubpath,
+            shared_pvc_name: "workspace-shared".to_string(),
+            ..Default::default()
+        };
+        let (claim, sub) = workspace_layout(&config, "user-1", "chat-1");
+        let user = hex12(b"user-1");
+        let chat = hex12(b"user-1/chat-1");
+        assert_eq!(claim, "workspace-shared");
+        assert_eq!(sub, format!("users/{user}/chats/{chat}"));
+        // Two chats of one user share the PVC (and user dir) but NOT the subPath.
+        let (_, sub2) = workspace_layout(&config, "user-1", "chat-2");
+        assert_ne!(sub, sub2);
     }
 
     #[test]

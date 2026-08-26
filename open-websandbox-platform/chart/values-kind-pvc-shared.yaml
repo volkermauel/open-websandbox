@@ -1,0 +1,20 @@
+# KIND/runc profile for the shared-subpath e2e lane (issue #140).
+#
+# Exercises the shared PVC hot tier: ONE chart-rendered RWX PVC (workspace-shared
+# on local-path, RWO — single-node KIND), every chat sandbox mounting only its own
+# users/<sha256(user)[:12]>/chats/<sha256(user/session)[:12]> slice at /workspace.
+sandboxTemplate:
+  runtimeClassName: ""            # runc (KIND can't nest gVisor)
+  maxProcs: 100000               # KIND shared-kernel NPROC collision (see values-kind.yaml)
+router:
+  kubeApiServerCidr: "10.96.0.1/32"   # KIND service CIDR (kubeadm default)
+  kubeDnsCidr: "10.96.0.10/32"
+broker:
+  defaultProfile: persistent
+  persistentMode: shared-subpath
+  networkPolicy:
+    enabled: false                 # KIND e2e reaches the broker via port-forward (localhost)
+sharedPvc:
+  storageClass: standard            # KIND local-path
+  accessModes: [ReadWriteOnce]      # single-node KIND: RWO suffices
+  size: 5Gi

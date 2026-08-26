@@ -19,4 +19,5 @@ broker:
   networkPolicy:
     enabled: false                 # KIND e2e reaches the broker via port-forward (localhost); skip ingress default-deny
 sharedPvc:
-  storageClass: standard          # KIND default (local-path); stays Pending (RWX, unused in ephemeral)
+  storageClass: standard            # local-path
+  accessModes: [ReadWriteOnce]      # local-path is RWO (unused in this lane)

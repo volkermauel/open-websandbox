@@ -78,6 +78,13 @@
         "defaultProfile": { "type": "string", "enum": ["persistent", "ephemeral"] },
         "persistentMode": { "type": "string", "enum": ["per-user-pvc", "shared-subpath", "s3-tiered"] },
         "persistentStorage": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" },
+        "persistentStorageClass": { "type": "string" },
+        "persistentAccessModes": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"] },
+          "minItems": 1
+        },
+        "perUserPvcPrefix": { "type": "string", "minLength": 1 },
         "probes": {
           "type": "object",
           "additionalProperties": false,
@@ -230,11 +237,16 @@
     "sharedPvc": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "size", "storageClass"],
+      "required": ["name", "size", "storageClass", "accessModes"],
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "size": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" },
-        "storageClass": { "type": "string" }
+        "storageClass": { "type": "string" },
+        "accessModes": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"] },
+          "minItems": 1
+        }
       }
     },
     "quota": {

@@ -106,6 +106,33 @@ pub trait SandboxStore: Send + Sync {
     /// Best-effort reap of the per-session key Secret with the sandbox
     /// (404-tolerant).
     async fn delete_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError>;
+
+    /// Ensure the workspace PVC backing a persistent sandbox exists in the
+    /// runtime namespace (#140).
+    ///
+    /// * `Some(spec)` (`per-user-pvc`): create-if-missing with the given
+    ///   spec — a concurrent create (409) is tolerated.
+    /// * `None` (`shared-subpath`): existence-check only. The chart renders
+    ///   the shared PVC; a missing one is an install misconfiguration and
+    ///   surfaces as [`StoreError::NotFound`] for the caller to turn into a
+    ///   clear error.
+    async fn ensure_workspace_pvc(
+        &self,
+        name: &str,
+        create: Option<&WorkspacePvcSpec>,
+    ) -> Result<(), StoreError>;
+}
+
+/// Spec of the per-user workspace PVC the broker creates in `per-user-pvc`
+/// mode (#140). All fields come straight from `BrokerConfig`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspacePvcSpec {
+    /// e.g. `["ReadWriteMany"]`.
+    pub access_modes: Vec<String>,
+    /// Kubernetes quantity string, e.g. `10Gi`.
+    pub storage: String,
+    /// StorageClass name; empty ⇒ cluster default.
+    pub storage_class: String,
 }
 
 /// Real Kubernetes backend: typed [`Api`]s over a [`kube::Client`].
@@ -232,6 +259,52 @@ impl SandboxStore for KubeSandboxStore {
         }
     }
 
+    async fn ensure_workspace_pvc(
+        &self,
+        name: &str,
+        create: Option<&WorkspacePvcSpec>,
+    ) -> Result<(), StoreError> {
+        use k8s_openapi::api::core::v1::PersistentVolumeClaim;
+
+        let pvcs: Api<PersistentVolumeClaim> =
+            Api::namespaced(self.client.clone(), &self.namespace);
+        match pvcs.get(name).await {
+            Ok(_) => Ok(()),
+            Err(kube::Error::Api(e)) if e.code == 404 => {
+                let Some(spec) = create else {
+                    // shared-subpath: the chart owns this PVC's lifecycle.
+                    return Err(StoreError::NotFound);
+                };
+                let mut pvc_spec = serde_json::json!({
+                    "accessModes": spec.access_modes,
+                    "resources": {"requests": {"storage": spec.storage}},
+                });
+                if !spec.storage_class.is_empty() {
+                    pvc_spec["storageClassName"] =
+                        serde_json::Value::String(spec.storage_class.clone());
+                }
+                let pvc: PersistentVolumeClaim = serde_json::from_value(serde_json::json!({
+                    "apiVersion": "v1",
+                    "kind": "PersistentVolumeClaim",
+                    "metadata": {
+                        "name": name,
+                        "labels": {
+                            "app.kubernetes.io/managed-by": "owui-broker",
+                        },
+                    },
+                    "spec": pvc_spec,
+                }))
+                .map_err(|e| StoreError::Kube(kube::Error::SerdeError(e)))?;
+                match pvcs.create(&PostParams::default(), &pvc).await {
+                    Ok(_) => Ok(()),
+                    Err(kube::Error::Api(e)) if e.code == 409 => Ok(()), // concurrent ensure won
+                    Err(err) => Err(StoreError::classify(err)),
+                }
+            }
+            Err(err) => Err(StoreError::classify(err)),
+        }
+    }
+
     async fn list_sandboxes(
         &self,
         label_selector: Option<&str>,
@@ -296,7 +369,7 @@ impl SandboxStore for KubeSandboxStore {
 /// In-memory doubles for tests and local dev, re-exported so integration tests in
 /// `tests/` can reuse them without a live apiserver.
 pub mod test_fakes {
-    use super::{SandboxStore, StoreError};
+    use super::{SandboxStore, StoreError, WorkspacePvcSpec};
     use async_trait::async_trait;
     use kube::ResourceExt;
     use shared::{Sandbox, SandboxTemplate};
@@ -320,6 +393,10 @@ pub mod test_fakes {
         /// stub mimics the Secret the kube impl stores as
         /// `owui-runtime-key-<sandbox>`).
         runtime_keys: Mutex<HashMap<String, String>>,
+        /// Workspace PVCs "created" via
+        /// [`ensure_workspace_pvc`](SandboxStore::ensure_workspace_pvc), by name
+        /// (#140).
+        pvcs: Mutex<Vec<String>>,
     }
 
     impl StubSandboxStore {
@@ -332,6 +409,7 @@ pub mod test_fakes {
                 reachable: AtomicBool::new(true),
                 auto_ready_on_create: Mutex::new(None),
                 runtime_keys: Mutex::new(HashMap::new()),
+                pvcs: Mutex::new(Vec::new()),
             }
         }
 
@@ -543,6 +621,23 @@ pub mod test_fakes {
                 .lock()
                 .expect("stub runtime_keys")
                 .remove(sandbox_name);
+            Ok(())
+        }
+
+        async fn ensure_workspace_pvc(
+            &self,
+            name: &str,
+            create: Option<&WorkspacePvcSpec>,
+        ) -> Result<(), StoreError> {
+            let mut pvcs = self.pvcs.lock().expect("stub pvcs");
+            if pvcs.iter().any(|n| n == name) {
+                return Ok(());
+            }
+            let Some(spec) = create else {
+                return Err(StoreError::NotFound); // shared PVC must be pre-seeded
+            };
+            let _ = spec; // recorded by name; spec fields asserted via the kube impl's tests
+            pvcs.push(name.to_string());
             Ok(())
         }
     }
