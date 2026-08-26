@@ -1,0 +1,82 @@
+# Dependabot configuration for open-websandbox.
+#
+# The broker + runtime are Rust now (rust/ workspace); the e2e harness is the only
+# remaining Python (tests/e2e, requirements-test.txt). Dependabot tracks:
+#   - pip ........ repo-root e2e-harness test deps
+#   - cargo ...... rust/ workspace (Cargo.lock)
+#   - github-actions ... .github/workflows/*.yml (actions/* stay current)
+#   - docker ..... base images in rust/{broker,runtime}/Dockerfile
+#
+# Patch-level bumps are auto-merged once CI is green by
+# .github/workflows/dependabot-automerge.yml; minor/major bumps stay open for
+# manual review.
+version: 2
+updates:
+  # --- Python (pip) ---------------------------------------------------------
+  # Repo-root e2e-harness tooling: requirements-test.in -> requirements-test.txt
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      python-test-deps:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "deps"
+
+  # --- Rust (cargo) ---------------------------------------------------------
+  # rust/ workspace: broker + runtime + shared crates.
+  - package-ecosystem: "cargo"
+    directory: "/rust"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      rust-deps:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "deps"
+
+  # --- GitHub Actions -------------------------------------------------------
+  # Keeps actions/* (and other workflow uses:) current across ci/e2e/release.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
+
+  # --- Docker base images ---------------------------------------------------
+  # Tracks the Rust image base images (distroless cc-debian12 / debian:bookworm-slim).
+  # Broker image:
+  - package-ecosystem: "docker"
+    directory: "/rust/broker"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      docker-broker:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "deps"
+  # Runtime image:
+  - package-ecosystem: "docker"
+    directory: "/rust/runtime"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      docker-runtime:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "deps"

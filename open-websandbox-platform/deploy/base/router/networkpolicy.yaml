@@ -1,0 +1,41 @@
+# Router NetworkPolicy — REPLACES the permissive upstream example.
+# Ingress: only agent-sandbox-system (where the broker lives, Phase 3) on the proxy port.
+# Egress: APIserver (router informers: pods get/list/watch, --cache-enabled=true),
+#         DNS, and sandbox runtime pods on 8888.
+# (kubelet liveness/readiness probes on :8081 are exempt from NetworkPolicy.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-router
+  namespace: agent-sandbox-system
+  labels:
+    app.kubernetes.io/name: sandbox-router
+    app.kubernetes.io/component: sandbox-router
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: sandbox-router
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent-sandbox-system
+      ports:
+        - { protocol: TCP, port: 8080 }
+  egress:
+    - to:
+        - ipBlock: { cidr: 10.96.0.1/32 }    # kube-apiserver (informers)
+      ports:
+        - { protocol: TCP, port: 443 }
+    - to:
+        - ipBlock: { cidr: 10.96.0.10/32 }   # kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent-sandbox-runtime
+      ports:
+        - { protocol: TCP, port: 8888 }

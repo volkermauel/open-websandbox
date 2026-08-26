@@ -1,0 +1,83 @@
+# Ephemeral profile: /workspace is an emptyDir (destroyed on sandbox termination).
+# Runs as root (uid 0) with a WRITABLE rootfs so users can `sudo apt-get install`
+# extra packages at runtime. Isolation is enforced by the gVisor runtimeClass,
+# no service-account token, NetworkPolicy, and the sandbox boundary itself (NOT by
+# non-root / read-only-rootfs). The persistent profile (cephfs PVC at /workspace)
+# is a separate template added with the broker.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: code-standard-v1
+  namespace: agent-sandbox-runtime
+spec:
+  # Lets a SandboxClaim bring its own per-user PVC (volumeClaimTemplates). The
+  # controller merges a claim's `workspace` VCT into the pod, replacing the
+  # template's same-named emptyDir — so the SAME template serves ephemeral
+  # (emptyDir, warm pool) and persistent (cephfs PVC, cold) profiles.
+  volumeClaimTemplatesPolicy: Allowed
+  podTemplate:
+    metadata:
+      labels:
+        app: code-standard
+        profile: ephemeral
+    spec:
+      automountServiceAccountToken: false
+      runtimeClassName: gvisor
+      dnsPolicy: None                   # public resolvers — no cluster-DNS IP / namespace leak
+      dnsConfig:
+        nameservers: [8.8.8.8, 1.1.1.1]
+        searches: []                    # no namespace search domain
+        options:
+          - {name: ndots, value: "1"}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+      - name: runtime
+        image: code-standard:v5
+        imagePullPolicy: Never
+        ports: [{ containerPort: 8888 }]
+        env:
+        - { name: MAX_TIMEOUT, value: "600" }
+        # Per-sandbox process cap (RLIMIT_NPROC); gVisor enforces it.
+        - { name: MAX_PROCS, value: "256" }
+        # Suppress kubelet-injected KUBERNETES_* env (leaks service-CIDR / API IP).
+        - { name: KUBERNETES_SERVICE_HOST, value: "" }
+        - { name: KUBERNETES_SERVICE_PORT, value: "" }
+        - { name: KUBERNETES_SERVICE_PORT_HTTPS, value: "" }
+        - { name: KUBERNETES_PORT, value: "" }
+        - { name: KUBERNETES_PORT_443_TCP, value: "" }
+        - { name: KUBERNETES_PORT_443_TCP_ADDR, value: "" }
+        - { name: KUBERNETES_PORT_443_TCP_PORT, value: "" }
+        - { name: KUBERNETES_PORT_443_TCP_PROTO, value: "" }
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities: { drop: ["ALL"] }
+        readinessProbe:
+          httpGet: { path: "/", port: 8888 }
+          periodSeconds: 2
+        livenessProbe:
+          httpGet: { path: "/", port: 8888 }
+          initialDelaySeconds: 3
+          periodSeconds: 10
+        resources:
+          requests: { cpu: 250m, memory: 512Mi, ephemeral-storage: 2Gi }
+          limits:   { cpu: "2",   memory: 4Gi,  ephemeral-storage: 12Gi }
+        volumeMounts:
+        - { name: workspace, mountPath: /workspace }
+        - { name: home,      mountPath: /home/sandbox }
+        - { name: tmp,       mountPath: /tmp }
+        - { name: packages, mountPath: /packages }
+      volumes:
+      - { name: workspace, emptyDir: { sizeLimit: 4Gi } }
+      - { name: home,      emptyDir: { sizeLimit: 2Gi } }
+      - { name: tmp,       emptyDir: { medium: Memory, sizeLimit: 2Gi } }  # tmpfs: hard ENOSPC cap (gVisor doesn't enforce disk sizeLimit)
+      - { name: packages, emptyDir: { sizeLimit: 4Gi } }
+      restartPolicy: OnFailure

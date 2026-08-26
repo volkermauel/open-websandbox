@@ -1,0 +1,25 @@
+apiVersion: v2
+name: open-websandbox
+description: >
+  Open WebSandbox platform for Open WebUI — broker, sandbox-router, SandboxTemplate,
+  SandboxWarmPool and runtime isolation guardrails (NetworkPolicy, ResourceQuota,
+  shared PVC). Also bundles the vendored upstream agent-sandbox controller + the
+  agents.x-k8s.io CRDs (toggleable via upstream.deploy) for one-command install.
+type: application
+version: 0.2.0
+appVersion: "0.1.0"
+keywords:
+  - open-webui
+  - sandbox
+  - agents
+  - kubernetes
+# Optional dependencies (all OFF by default).
+# - opentelemetry-collector: bundled collector subchart for the optional OTel tracing
+#   layer (monitoring.otlp). Enabled via otelCollector.enabled; values pass straight
+#   through to the upstream chart.
+dependencies:
+  - name: opentelemetry-collector
+    version: 0.169.0
+    repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+    condition: otelCollector.enabled
+    alias: otelCollector

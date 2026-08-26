@@ -1,0 +1,2895 @@
+{
+  "components": {
+    "schemas": {
+      "ArchiveRequest": {
+        "description": "`POST /files/archive` request body.",
+        "properties": {
+          "paths": {
+            "description": "Workspace-relative paths to include in the archive.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "paths"
+        ],
+        "type": "object"
+      },
+      "ConfigResponse": {
+        "description": "`GET /api/config` body: feature flags the OWUI terminal UI connection-gates on.",
+        "properties": {
+          "features": {
+            "$ref": "#/components/schemas/Features"
+          }
+        },
+        "required": [
+          "features"
+        ],
+        "type": "object"
+      },
+      "CreateResponse": {
+        "description": "Response body for `POST /api/terminals` (id, created_at, pid).",
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "pid": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "pid"
+        ],
+        "type": "object"
+      },
+      "CreateSandboxRequest": {
+        "description": "`POST /api/sandboxes` body: instantiate a Sandbox from a template.",
+        "properties": {
+          "name": {
+            "description": "Desired `Sandbox` name (DNS-1123 label).",
+            "type": "string"
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Profile",
+                "description": "Persistence profile; defaults to `BROKER_DEFAULT_PROFILE` when omitted."
+              }
+            ]
+          },
+          "sessionId": {
+            "description": "Owning session/chat id (recorded as the `broker-session` annotation).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "templateName": {
+            "description": "Name of the backing `SandboxTemplate` to clone the pod blueprint from.",
+            "type": "string"
+          },
+          "userId": {
+            "description": "Owning user id (recorded as the `broker-user` annotation).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "templateName",
+          "name"
+        ],
+        "type": "object"
+      },
+      "CwdRequest": {
+        "description": "Request body for `POST /files/cwd`: the workspace-relative directory to switch to.",
+        "properties": {
+          "path": {
+            "description": "Workspace-relative directory to make the effective cwd.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "DeleteResponse": {
+        "description": "Response body for `DELETE /api/terminals/{id}`.",
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Entry": {
+        "description": "One entry in a directory listing (name, type, size, modified time).",
+        "properties": {
+          "modified": {
+            "format": "double",
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "size",
+          "modified"
+        ],
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "description": "Error body both control planes return: `{\"detail\": \"...\"}` (the\n`{ \"detail\": <string> }` shape — byte-for-byte parity, D11). Used as the\nerror response `body` across the broker and runtime `OpenAPI` surfaces.",
+        "properties": {
+          "detail": {
+            "description": "Human-readable error detail.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "type": "object"
+      },
+      "ExecuteRequest": {
+        "description": "`POST /execute` request body. `timeout` is clamped into `[1, MAX_TIMEOUT]`,\ndefaulting to `DEFAULT_TIMEOUT` (seconds).",
+        "properties": {
+          "command": {
+            "description": "Shell command line to execute.",
+            "type": "string"
+          },
+          "timeout": {
+            "description": "Optional wall-clock timeout in seconds (clamped into `[1, MAX_TIMEOUT]`).",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      },
+      "ExecuteResponse": {
+        "description": "`POST /execute` response body (HTTP 200 even on non-zero exit).",
+        "properties": {
+          "exit_code": {
+            "description": "Process exit code (HTTP 200 even when non-zero; `124` on timeout).",
+            "format": "int32",
+            "type": "integer"
+          },
+          "stderr": {
+            "description": "Captured standard error.",
+            "type": "string"
+          },
+          "stdout": {
+            "description": "Captured standard output.",
+            "type": "string"
+          },
+          "timed_out": {
+            "description": "Whether the command was killed for exceeding `timeout`.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "stdout",
+          "stderr",
+          "exit_code",
+          "timed_out"
+        ],
+        "type": "object"
+      },
+      "Features": {
+        "description": "Feature-flag set returned inside `ConfigResponse`.",
+        "properties": {
+          "desktop": {
+            "type": "boolean"
+          },
+          "notebooks": {
+            "type": "boolean"
+          },
+          "terminal": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "terminal",
+          "notebooks",
+          "desktop"
+        ],
+        "type": "object"
+      },
+      "FileUpload": {
+        "description": "Typed `multipart/form-data` body for the upload endpoints: a single binary\n`file` part. The runtime consumes the stream directly via\n`axum::extract::Multipart` (this struct exists only to describe the wire\ncontract for OpenAPI/Scalar — it is never deserialized). The on-disk name\nis the basename of the part's `Content-Disposition` `filename`; path\ncomponents are stripped as defense-in-depth (see `upload_basename`).",
+        "properties": {
+          "file": {
+            "description": "Binary file content (one part named `file`).",
+            "format": "binary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "`GET /healthz` and `GET /readyz` body: `{\"status\": \"...\"}`.",
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "ListResponse": {
+        "description": "A directory listing: the resolved directory and its sorted entries.",
+        "properties": {
+          "dir": {
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/Entry"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "dir",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "MoveRequest": {
+        "description": "Request body for `POST /files/move`: rename `source` to `destination`.",
+        "properties": {
+          "destination": {
+            "description": "Workspace-relative destination path (must not already exist).",
+            "type": "string"
+          },
+          "source": {
+            "description": "Workspace-relative path of the entry to move.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "destination"
+        ],
+        "type": "object"
+      },
+      "OperatingMode": {
+        "description": "`spec.operatingMode` — the upstream controller's lifecycle mode.\n\nSerializes as the upstream string literals `Running` / `Suspended` (serde's\ndefault unit-variant representation), matching the values patched in\n`_set_sandbox_operating_mode`.",
+        "enum": [
+          "Running",
+          "Suspended"
+        ],
+        "type": "string"
+      },
+      "PathBody": {
+        "description": "Request body carrying a single workspace-relative path (`mkdir`, etc.).",
+        "properties": {
+          "path": {
+            "description": "Workspace-relative path to operate on.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "Profile": {
+        "description": "Persistence profile — what backing volume a sandbox gets.\n\nSerializes as the lowercase literals `persistent` / `ephemeral` (D12 — the\nvalues honoured by `BROKER_DEFAULT_PROFILE` and the `X-Persistence`\nheader). Defaults to [`Profile::Persistent`], the broker deploy default.",
+        "enum": [
+          "persistent",
+          "ephemeral"
+        ],
+        "type": "string"
+      },
+      "ReplaceRequest": {
+        "description": "Request body for `POST /files/replace`: apply find/replace chunks to one file.",
+        "properties": {
+          "path": {
+            "description": "Workspace-relative file to edit.",
+            "type": "string"
+          },
+          "replacements": {
+            "description": "Ordered find/replace chunks applied to the file.",
+            "items": {
+              "$ref": "#/components/schemas/ReplacementChunk"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "path",
+          "replacements"
+        ],
+        "type": "object"
+      },
+      "ReplacementChunk": {
+        "description": "One find/replace chunk applied to a workspace file.",
+        "properties": {
+          "allow_multiple": {
+            "description": "When `true`, replace every occurrence; otherwise require exactly one match.",
+            "type": "boolean"
+          },
+          "end_line": {
+            "description": "Optional inclusive 1-based end line for a line-scoped replacement.",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "replacement": {
+            "description": "Text substituted in place of `target`.",
+            "type": "string"
+          },
+          "start_line": {
+            "description": "Optional 1-based start line for a line-scoped replacement.",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "target": {
+            "description": "Literal string to search for.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "replacement"
+        ],
+        "type": "object"
+      },
+      "RestoreResponse": {
+        "description": "Response body for `PUT /restore`: whether the workspace was restored and the\ncompressed bytes ingested.",
+        "properties": {
+          "bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "restored": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "restored",
+          "bytes"
+        ],
+        "type": "object"
+      },
+      "SandboxCondition": {
+        "description": "A status condition as surfaced in [`SandboxStatus::conditions`] (mirrors the\nupstream `meta.v1.Condition` subset read for readiness).",
+        "properties": {
+          "last_transition_time": {
+            "description": "Last transition time (RFC 3339), if surfaced.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "Human-readable message, if any.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "description": "Machine-readable reason, if any.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "Condition status (e.g. `True` / `False` / `Unknown`).",
+            "type": "string"
+          },
+          "type": {
+            "description": "Condition type (e.g. `Ready`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "status"
+        ],
+        "type": "object"
+      },
+      "SandboxObject": {
+        "description": "`OpenAPI` schema for a `Sandbox` object on the wire (`apiVersion`/`kind`/`metadata`/\n`spec`/`status`). The CRUD handlers return the kube-generated [`shared::Sandbox`] (an\nidentical shape); this broker-local schema surfaces the typed spec/status in the\ngenerated document (issue #75).",
+        "properties": {
+          "apiVersion": {
+            "description": "`agents.x-k8s.io/v1beta1`.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`Sandbox`.",
+            "type": "string"
+          },
+          "metadata": {
+            "description": "Kubernetes `ObjectMeta` (name, namespace, labels, annotations, …)."
+          },
+          "spec": {
+            "$ref": "#/components/schemas/SandboxSpec",
+            "description": "Sandbox spec (template, profile, operating mode, …)."
+          },
+          "status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SandboxStatus",
+                "description": "Last-observed status (conditions, pod IPs, …); absent until reconciled."
+              }
+            ]
+          }
+        },
+        "required": [
+          "apiVersion",
+          "kind",
+          "metadata",
+          "spec"
+        ],
+        "type": "object"
+      },
+      "SandboxSpec": {
+        "description": "Spec of a [`Sandbox`] — a running tenant sandbox managed by the broker.\n\n`operatingMode` / `shutdownPolicy` are typed because the broker parks a\nsandbox (`Suspended`) and resumes it (`Running`) and relies on\n`shutdownPolicy: Retain` to keep the object across a park. `podTemplate` is\nthe opaque per-instance pod blueprint cloned from the backing\n[`SandboxTemplate`] (see the module docs for why it is untyped).",
+        "properties": {
+          "operatingMode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OperatingMode",
+                "description": "Lifecycle mode the upstream controller honours. `Running` (default) keeps\nthe pod scheduled; `Suspended` parks it (pod deleted, object retained) so\na later resume reuses the same identity + per-session Secret."
+              }
+            ]
+          },
+          "podTemplate": {
+            "description": "Opaque per-instance pod blueprint, cloned from the backing\n[`SandboxTemplate`] and shuffled by the broker (volumes, labels)."
+          },
+          "shutdownPolicy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ShutdownPolicy",
+                "description": "Whether the `Sandbox` object is retained after its pod exits. The broker\nsets `Retain` so a parked sandbox survives to be resumed rather than\nrecreated."
+              }
+            ]
+          },
+          "templateName": {
+            "description": "Name of the [`SandboxTemplate`] backing this sandbox.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SandboxStatus": {
+        "description": "Status of a [`Sandbox`] — the subset of fields the broker reads (readiness +\npod IP) plus the common scalars it forwards. Authored here so readiness can\nbe computed in typed Rust rather than by poking raw JSON.",
+        "properties": {
+          "conditions": {
+            "description": "Status conditions; a `Ready`/`True` entry means the sandbox is serving.",
+            "items": {
+              "$ref": "#/components/schemas/SandboxCondition"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "Human-readable status message, if any.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phase": {
+            "description": "High-level lifecycle phase (`Running`, `Suspended`, ...).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "podIPs": {
+            "description": "Pod IPs assigned to the sandbox; `[0]` is the address the broker proxies to.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "ready": {
+            "description": "Convenience readiness flag, when the controller surfaces it.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ShutdownPolicy": {
+        "description": "`spec.shutdownPolicy` — whether the `Sandbox` object survives its pod exiting.",
+        "enum": [
+          "Retain",
+          "Delete"
+        ],
+        "type": "string"
+      },
+      "StatusResponse": {
+        "description": "`GET /api/status` body: static operator telemetry.",
+        "properties": {
+          "active_pods": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_pods": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pods": {
+            "items": {},
+            "type": "array"
+          }
+        },
+        "required": [
+          "active_pods",
+          "max_pods",
+          "pods"
+        ],
+        "type": "object"
+      },
+      "TermInfo": {
+        "description": "Public info for a terminal session — the `GET /api/terminals` JSON body.",
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "pid": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "pid"
+        ],
+        "type": "object"
+      },
+      "WriteRequest": {
+        "description": "Request body for `POST /files/write`: overwrite a file with the given content.",
+        "properties": {
+          "content": {
+            "description": "Full text content to write to the file.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Workspace-relative file to overwrite (parents created as needed).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "brokerBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "contact": {
+      "name": "the open-websandbox contributors"
+    },
+    "description": "Open WebUI front door + Kubernetes Sandbox lifecycle. The runtime tool surface (/execute, /files/*, /snapshot, /restore, /api/terminals*) is proxied to the resolved sandbox pod and documented here as part of the OWUI-facing contract. The catch-all reverse proxy (/{*path}) and the /api/terminals/{id} WebSocket upgrade are opaque passthroughs omitted from this document (issue #75 Q5).",
+    "license": {
+      "identifier": "AGPL-3.0-only",
+      "name": "AGPL-3.0-only"
+    },
+    "title": "open-websandbox broker",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/config": {
+      "get": {
+        "operationId": "api_config",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigResponse"
+                }
+              }
+            },
+            "description": "Feature discovery flags"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid shared Bearer"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Shared secret not configured (fail-closed)"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /api/config` — feature discovery (terminal UI connection gate).",
+        "tags": [
+          "broker"
+        ]
+      }
+    },
+    "/api/sandboxes": {
+      "get": {
+        "operationId": "list_sandboxes",
+        "parameters": [
+          {
+            "description": "Kubernetes label selector (URL `labelSelector`) to filter listed sandboxes.",
+            "in": "path",
+            "name": "labelSelector",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SandboxObject"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Broker-owned sandboxes"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /api/sandboxes` — list broker-owned sandboxes.",
+        "tags": [
+          "sandboxes"
+        ]
+      },
+      "post": {
+        "operationId": "create_sandbox",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSandboxRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxObject"
+                }
+              }
+            },
+            "description": "Already existed (idempotent create)"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxObject"
+                }
+              }
+            },
+            "description": "Sandbox created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid shared Bearer"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Template not found"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Apiserver rejected the call"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Shared secret not configured"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`POST /api/sandboxes` — create a `Sandbox` from a `SandboxTemplate` (C-1\nfoundation; C-2's resolve-on-request reuses this path). 201 on create, 200\nwith the existing object on a 409 — idempotent (409 → update existing).",
+        "tags": [
+          "sandboxes"
+        ]
+      }
+    },
+    "/api/sandboxes/{name}": {
+      "delete": {
+        "operationId": "delete_sandbox",
+        "parameters": [
+          {
+            "description": "Sandbox name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted (404-tolerant → 204)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`DELETE /api/sandboxes/{name}` — delete a sandbox (404-tolerant → 204).",
+        "tags": [
+          "sandboxes"
+        ]
+      },
+      "get": {
+        "operationId": "get_sandbox",
+        "parameters": [
+          {
+            "description": "Sandbox name (DNS-1123 label)",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxObject"
+                }
+              }
+            },
+            "description": "Sandbox (status included)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sandbox not found"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /api/sandboxes/{name}` — get a single sandbox (status included).",
+        "tags": [
+          "sandboxes"
+        ]
+      }
+    },
+    "/api/status": {
+      "get": {
+        "operationId": "api_status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            },
+            "description": "Operator telemetry (static)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /api/status` — operator telemetry (static until C-2/C-4 make it real).",
+        "tags": [
+          "broker"
+        ]
+      }
+    },
+    "/api/terminals": {
+      "get": {
+        "description": "# Errors\n\nCurrently always returns `Ok`; the `Result` keeps the handler signature\nuniform with the other `/api/terminals` endpoints.",
+        "operationId": "list_terminals",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TermInfo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Live sessions"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /api/terminals` — list live sessions, reaping any dead ones observed.",
+        "tags": [
+          "terminals"
+        ]
+      },
+      "post": {
+        "description": "# Errors\n\nReturns [`ApiError`] (via [`request_base`]) for an invalid workspace\nsubdir, [`ApiError::TooManyRequests`] when the session cap is reached, and\n[`ApiError::ServiceUnavailable`] if the PTY shell fails to spawn.",
+        "operationId": "create_terminal",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateResponse"
+                }
+              }
+            },
+            "description": "PTY session spawned (or recreated) — idempotent, returns 200 on create-or-recreate"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "MAX_TERMINAL_SESSIONS reached"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "PTY spawn failure"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`POST /api/terminals` — spawn a new PTY shell session.",
+        "tags": [
+          "terminals"
+        ]
+      }
+    },
+    "/api/terminals/{id}": {
+      "delete": {
+        "operationId": "kill_terminal",
+        "parameters": [
+          {
+            "description": "Terminal session id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResponse"
+                }
+              }
+            },
+            "description": "Session killed (idempotent: unknown id → 200)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`DELETE /api/terminals/{id}` — kill + reap the session. Idempotent: an unknown id\nstill answers `200 {\"status\":\"deleted\"}`.",
+        "tags": [
+          "terminals"
+        ]
+      },
+      "get": {
+        "operationId": "terminal_get_or_ws",
+        "parameters": [
+          {
+            "description": "Terminal session id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TermInfo"
+                }
+              }
+            },
+            "description": "Session info for non-upgrade requests (the WebSocket upgrade relay is omitted from this document)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unknown/ended session"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /api/terminals/{id}` — either the JSON info endpoint, or (when the request\ncarries the WebSocket upgrade headers) the PTY relay. `Authed` runs first, so a\nmissing/invalid Bearer is rejected with 401 BEFORE the socket is accepted.",
+        "tags": [
+          "terminals"
+        ]
+      }
+    },
+    "/docs": {
+      "get": {
+        "operationId": "docs",
+        "responses": {
+          "200": {
+            "description": "Scalar API reference UI (HTML)"
+          }
+        },
+        "summary": "`GET /docs` — the Scalar API reference UI, served by `utoipa-scalar` and inlining\n`/openapi.json` (issue #75 Q3).",
+        "tags": [
+          "docs"
+        ]
+      }
+    },
+    "/download/{file_path}": {
+      "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace,\n[`ApiError::NotFound`] if it is missing or not a regular file, and\n[`ApiError::Internal`] on a read failure.",
+        "operationId": "tool_download",
+        "parameters": [
+          {
+            "description": "Workspace-relative file path",
+            "in": "path",
+            "name": "file_path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw file bytes (attachment)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "File not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Download a workspace-relative file as a byte attachment.",
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/execute": {
+      "post": {
+        "description": "`Authed` authenticates the per-session key; `HeaderMap` carries the optional\n`X-Workspace-Subdir`; `Json` parses the body (body-consuming extractor last).",
+        "operationId": "execute",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecuteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecuteResponse"
+                }
+              }
+            },
+            "description": "Captured stdout/stderr + exit code (HTTP 200 even on non-zero exit; timeout → exit_code 124)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Failed to reap the command"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "The `/execute` handler.",
+        "tags": [
+          "execute"
+        ]
+      }
+    },
+    "/exists/{file_path}": {
+      "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace.",
+        "operationId": "tool_exists",
+        "parameters": [
+          {
+            "description": "Workspace-relative path",
+            "in": "path",
+            "name": "file_path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Existence probe"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Probe existence / type of a workspace-relative path.",
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/files/archive": {
+      "post": {
+        "description": "# Panics\n\nPanics only if the static `application/zip` / `Content-Disposition` header\nvalues fail to parse, which cannot happen for these constants.",
+        "operationId": "archive",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Zip archive (application/zip, attachment)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A listed path not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`POST /files/archive` — zip the listed paths and stream the archive back.\nDirs recurse (files archived as `<basename>/<rel>`); a single file archives\nas its basename. `application/zip` + `Content-Disposition: attachment`.",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/cwd": {
+      "get": {
+        "description": "# Errors\n\nReturns [`ApiError`] (via `base_of`) if `X-Workspace-Subdir` is invalid.",
+        "operationId": "get_cwd",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Workspace cwd + home"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace subdir"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Return the effective workspace cwd (== home) for the session.",
+        "tags": [
+          "files"
+        ]
+      },
+      "post": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace and\n[`ApiError::NotFound`] if it is missing or not a directory.",
+        "operationId": "set_cwd",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CwdRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Resolved cwd"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Directory not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Set the session cwd to a workspace-relative directory.",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/delete": {
+      "delete": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace or the\nremoval fails, and [`ApiError::NotFound`] if the path is missing.",
+        "operationId": "delete_entry",
+        "parameters": [
+          {
+            "description": "Workspace-relative path to operate on.",
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Deleted entry"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Path not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Delete a workspace file or directory (recursively).",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/glob": {
+      "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace and\n[`ApiError::NotFound`] if the search directory is missing.",
+        "operationId": "glob_search",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pattern",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "max_results",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Glob matches"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Search directory not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Glob-match workspace entries by pattern and optional type.",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/grep": {
+      "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace or the\nregex is invalid, and [`ApiError::NotFound`] if the search path is missing.",
+        "operationId": "grep",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "regex",
+            "required": true,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "case_insensitive",
+            "required": true,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "include",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "max_results",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Search matches"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Search path not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Grep the workspace for a literal or regex query.",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/list": {
+      "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace,\n[`ApiError::NotFound`] if it is missing or not a directory, and\n[`ApiError::Internal`] if the directory cannot be read.",
+        "operationId": "list_dir",
+        "parameters": [
+          {
+            "description": "Optional workspace-relative directory to list (defaults to `.`).",
+            "in": "path",
+            "name": "directory",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            },
+            "description": "Directory listing"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Directory not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "List the entries of a workspace-relative directory.",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/mkdir": {
+      "post": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace or the\ndirectory cannot be created.",
+        "operationId": "mkdir",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PathBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Created path"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Create a workspace directory (and missing parents).",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/move": {
+      "post": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if either path escapes the workspace or\nthe rename fails, [`ApiError::NotFound`] if the source is missing, and\n[`ApiError::Conflict`] if the destination already exists.",
+        "operationId": "move_entry",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Moved source→destination"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Source not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Destination already exists"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Move/rename a workspace entry (source -> destination).",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/read": {
+      "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace,\n[`ApiError::NotFound`] if it is missing or not a regular file, and\n[`ApiError::Internal`] on a read failure.",
+        "operationId": "read_file",
+        "parameters": [
+          {
+            "description": "Workspace-relative path to operate on.",
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File content (JSON) or raw image bytes"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "File not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Read a workspace file as JSON text, or raw bytes for an image.",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/replace": {
+      "post": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace, the\nread/write fails, or a replacement target is missing/ambiguous, and\n[`ApiError::NotFound`] if the file is missing.",
+        "operationId": "replace",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Bytes written"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "File not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Apply one or more find/replace chunks to a workspace file.",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/upload": {
+      "post": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] on a multipart stream error, a disk\ncreate/read/write/sync failure, a path that escapes the workspace, or if no\n`file` part is present.",
+        "operationId": "upload",
+        "parameters": [
+          {
+            "description": "Optional subdirectory under the workspace root to upload into.",
+            "in": "path",
+            "name": "directory",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/FileUpload"
+              }
+            }
+          },
+          "description": "multipart `file` field written to `directory`/<basename>",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Saved path + size"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`POST /files/upload` — multipart `file` field written to `directory/<basename>`\n(default the workspace base). The runtime streams the body straight to disk;\n`X-Workspace-Subdir` selects the base, like every other `/files/*` handler.",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/view": {
+      "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace,\n[`ApiError::NotFound`] if it is missing or not a regular file, and\n[`ApiError::Internal`] on a read failure.",
+        "operationId": "view_file",
+        "parameters": [
+          {
+            "description": "Workspace-relative path to operate on.",
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw file bytes (content-type/disposition)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "File not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Stream a workspace file's raw bytes (content-type + disposition).",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/write": {
+      "post": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace or the\ncreate/open/write fails, and [`ApiError::Internal`] if the blocking write\ntask joins with an error.",
+        "operationId": "write_file",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Bytes written"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Overwrite a workspace file (creating parents as needed).",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Broker process is up"
+          }
+        },
+        "summary": "`GET /healthz` — broker process is up (always 200; never proxied).",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/list": {
+      "get": {
+        "description": "# Errors\n\nReturns [`ApiError::Internal`] if the workspace directory cannot be read.",
+        "operationId": "tool_list_root",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Workspace-root entries"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /list` + `GET /list/` — list the workspace root. The route\n`/list/{file_path:path}` matches the empty path (lists root); axum's\n`/list/{*file_path}` catch-all requires ≥1 segment, so these explicit routes\ncover the empty-path case (parity, D11).",
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/list/{file_path}": {
+      "get": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace and\n[`ApiError::NotFound`] if it is missing or not a directory.",
+        "operationId": "tool_list",
+        "parameters": [
+          {
+            "description": "Workspace-relative directory path",
+            "in": "path",
+            "name": "file_path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Directory entries"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Directory not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "List the entries of a workspace-relative directory.",
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/metrics": {
+      "get": {
+        "operationId": "metrics",
+        "responses": {
+          "200": {
+            "description": "Prometheus exposition (text/plain)"
+          }
+        },
+        "summary": "`GET /metrics` — Prometheus exposition (D9). Renders the broker's full\nmetric catalogue (`open_websandbox_broker_*`: HTTP rate/latency, active\nsandboxes, sandbox create/delete counts, runtime-hop errors) in\n`text/plain; version=0.0.4`.",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "description": "Generated by utoipa (D10) from the broker + runtime handler annotations, merged into\none document. `info.version` is pinned to the crate version (issue #75 Q4) and the\nstructural shape is guarded by a frozen-snapshot test (issue #75 Q2).",
+        "operationId": "openapi_json",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3 document (JSON)"
+          }
+        },
+        "summary": "`GET /openapi.json` — the curated method surface OWUI discovers tools from.",
+        "tags": [
+          "docs"
+        ]
+      }
+    },
+    "/ports": {
+      "get": {
+        "operationId": "list_ports",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Host ports (restricted runtime → always empty)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /ports` — report host ports (always empty under the restricted runtime).",
+        "tags": [
+          "ports"
+        ]
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "readyz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Apiserver reachable"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Apiserver unreachable"
+          }
+        },
+        "summary": "`GET /readyz` — the apiserver (hard dependency for sandbox resolution) is\nreachable. 503 when not, so the Service stops routing to a broker that would\nonly 500.",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/restore": {
+      "put": {
+        "operationId": "restore",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreResponse"
+                }
+              }
+            },
+            "description": "Workspace restored"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Restore stream exceeds MAX_WORKSPACE_BYTES"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Pipeline failure"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`PUT /restore` — unpack a zstd-compressed tar back into the workspace.",
+        "tags": [
+          "snapshot"
+        ]
+      }
+    },
+    "/snapshot": {
+      "get": {
+        "operationId": "snapshot",
+        "responses": {
+          "200": {
+            "description": "Workspace as a zstd-compressed tar stream (application/zstd)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing/invalid per-session Bearer"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Workspace exceeds MAX_WORKSPACE_BYTES"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Pipeline failure"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /snapshot` — stream the workspace as a zstd-compressed tar.",
+        "tags": [
+          "snapshot"
+        ]
+      }
+    },
+    "/upload": {
+      "post": {
+        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] on a multipart stream error, a disk\ncreate/read/write/sync failure, a path that escapes the workspace, or if no\n`file` part is present.",
+        "operationId": "tool_upload",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/FileUpload"
+              }
+            }
+          },
+          "description": "multipart `file` field written to the workspace base",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Saved path + bytes"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`POST /upload` — the LLM-tool upload alias (multipart `file` to the workspace\nbase). Returns `{\"saved\": path, \"bytes\": n}`, the shape the broker's curated\n`upload_file` tool resolves against.",
+        "tags": [
+          "tools"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "description": "Liveness / readiness / metrics probes",
+      "name": "health"
+    },
+    {
+      "description": "OpenAPI document + Scalar UI",
+      "name": "docs"
+    },
+    {
+      "description": "Broker-served gated surface (/api/config, /api/status)",
+      "name": "broker"
+    },
+    {
+      "description": "Sandbox lifecycle CRUD",
+      "name": "sandboxes"
+    },
+    {
+      "description": "Hardened command execution (runtime, proxied)",
+      "name": "execute"
+    },
+    {
+      "description": "Workspace filesystem surface (runtime, proxied)",
+      "name": "files"
+    },
+    {
+      "description": "Host-port introspection (runtime, proxied; restricted)",
+      "name": "ports"
+    },
+    {
+      "description": "S3-tiered workspace offload/restore (runtime, proxied)",
+      "name": "snapshot"
+    },
+    {
+      "description": "Interactive PTY terminals HTTP CRUD (runtime, proxied)",
+      "name": "terminals"
+    },
+    {
+      "description": "LLM-tool download/list/exists/upload (runtime, proxied)",
+      "name": "tools"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+# Minimal KIND node image that raises the soft nofile limit on PID 1 before handing off
+# to the stock kindest/node entrypoint. Used ONLY locally (scripts/setup-kind-gvisor.sh)
+# on hosts whose docker daemon caps container soft nofile at 1024 — there kube-proxy and
+# kindnet crash with "too many open files" unless the limit is raised on PID 1.
+#
+# CI (e2e.yml) uses plain kindest/node directly: GHA runners don't impose that cap.
+#
+# Contains NO gVisor — runsc is host-installed (infra/kind/install-runsc.sh) and
+# bind-mounted via kind-config-gvisor.yaml, so this image is trivial + never breaks on a
+# gVisor release layout change.
+#
+# Build context must be this directory (infra/kind/) so kind-entrypoint.sh is COPYable:
+#   docker build -t kindest-node-nofile:v1.31.0 infra/kind/
+ARG KIND_NODE_IMAGE=kindest/node:v1.31.0
+FROM ${KIND_NODE_IMAGE}
+COPY kind-entrypoint.sh /usr/local/bin/kind-entrypoint.sh
+# Propagate a raised soft nofile to systemd-managed services (kubelet, containerd) too.
+RUN mkdir -p /etc/systemd/system.conf.d \
+    && printf '[Manager]\nDefaultLimitNOFILE=1048576\n' > /etc/systemd/system.conf.d/10-nofile.conf
+ENTRYPOINT ["/usr/local/bin/kind-entrypoint.sh", "/sbin/init"]

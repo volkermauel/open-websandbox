@@ -1,0 +1,286 @@
+# Open WebUI broker: auth + session->sandbox + reverse-proxy to the router.
+# Lives in agent-sandbox-system; needs RBAC in agent-sandbox-runtime to manage the
+{{- $sysNs := include "open-websandbox.systemNamespace" . -}}
+{{- $runNs := include "open-websandbox.runtimeNamespace" . -}}
+{{- $shared := include "open-websandbox.brokerSharedSecret" . -}}
+{{/* No shared RUNTIME_API_KEY anymore (issue #4): the broker now mints a PER-SESSION
+     key per sandbox, persisted to a per-session Secret owui-runtime-key-<sandbox> in the
+     runtime namespace, and injected into each pod as a projected volume. The broker
+     owns those Secrets (see the Role below: secrets create/get/patch/delete) and reads
+     one per hop (stateless). Only the inbound broker shared-secret is resolved here. */}}
+{{/* OTLP endpoint for broker + runtime traces. Explicit monitoring.otlp.endpoint wins;
+     else the bundled collector (otelCollector.enabled) -> its OTLP/HTTP receiver.
+     Empty => tracing disabled (the soft OTel init is a no-op). */}}
+{{- $otlp := .Values.monitoring.otlp.endpoint -}}
+{{- if and (not $otlp) .Values.otelCollector.enabled -}}
+{{- $otlp = printf "http://%s-otelCollector.%s.svc.cluster.local:4318" .Release.Name .Release.Namespace -}}
+{{- end -}}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: owui-broker-secret
+  namespace: {{ $sysNs }}
+  labels:
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  # Resolved via the open-websandbox.brokerSharedSecret helper: explicit value, else the
+  # existing Secret is preserved across upgrades (lookup), else a random 48-char secret
+  # is generated on first install. Never the dev placeholder.
+  shared-secret: {{ $shared | quote }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: owui-broker
+  namespace: {{ $sysNs }}
+  labels:
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: owui-broker
+  namespace: {{ $runNs }}
+  labels:
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+rules:
+# claims (per-user-pvc) + templates (read base for shared-subpath)
+- apiGroups: ["extensions.agents.x-k8s.io"]
+  resources: ["sandboxclaims", "sandboxtemplates"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Sandboxes live in the `agents.x-k8s.io` group (not extensions). The broker reads
+# operatingMode and patches Suspended/Running to park/resume persistent sandboxes,
+# and (persistent mode) creates + deletes per-chat Sandbox objects directly.
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# per-user-pvc mode: the broker creates/reads per-user PVCs directly (CoreV1).
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Per-session runtime API keys (issue #4): the broker mints one per sandbox, persists
+# it to Secret owui-runtime-key-<sandbox> in the runtime namespace, reads it per hop
+# (stateless), rotates it (patch) on resume, deletes it on reap, and — issue #51 —
+# sweeps orphan keys (list).
+#
+# NOTE on resourceNames (defense-in-depth limitation): k8s RBAC `resourceNames` is an
+# EXACT-match list with no prefix/wildcard support, AND a Role that carries it cannot
+# be used to create Secrets of an arbitrary name. Per-session keys are minted DYNAMICALLY
+# at runtime (name = owui-runtime-key-<sandbox>), so their names cannot be enumerated in
+# `resourceNames` at install time. The pragmatic defense here is therefore scope, not
+# name-restriction: this Role is (a) namespaced to agent-sandbox-runtime, (b) limited to
+# the single `secrets` resource, and (c) pruned to the minimal verb set actually used
+# by the broker — get/list (read per hop + orphan sweep), create/patch (mint +
+# rotate-on-resume), delete (reap + orphan sweep). `update` (full replace) is
+# intentionally absent: rotation is patch-only, never a full replace. Enforcing a
+# name PREFIX at admission time would require a ValidatingAdmissionPolicy / OPA gate
+# (out of scope here; tracked as a follow-up).
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "create", "patch", "delete"]
+# Leader election (HA): the broker holds a coordination.k8s.io/Lease so only the elected
+# replica runs the reaper. At replicas=1 (default) the sole broker always wins — a no-op.
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: owui-broker
+  namespace: {{ $runNs }}
+  labels:
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+subjects:
+- kind: ServiceAccount
+  name: owui-broker
+  namespace: {{ $sysNs }}
+roleRef:
+  kind: Role
+  name: owui-broker
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: owui-broker
+  namespace: {{ $sysNs }}
+  labels:
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.broker.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: owui-broker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: owui-broker
+        # This chart does not template a Namespace resource (both namespaces are
+        # pre-created — see NOTES.txt), so the Pod Security Standard labels are declared
+        # on the Pod as an intent marker. For real admission enforcement, set these
+        # three labels on the namespaces (agent-sandbox-system / agent-sandbox-runtime).
+        # The pod + container securityContext below makes the broker actually compliant
+        # with the `restricted` profile.
+        pod-security.kubernetes.io/enforce: restricted
+        pod-security.kubernetes.io/audit: restricted
+        pod-security.kubernetes.io/warn: restricted
+      {{- if .Values.broker.metrics.enabled }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.broker.metrics.port | quote }}
+        prometheus.io/path: {{ .Values.broker.metrics.path | quote }}
+      {{- end }}
+    spec:
+      # NOTE: token stays mounted — the broker talks to the kube API (SandboxClaims,
+      # Sandboxes, PVCs) as its own ServiceAccount. Do not set automountServiceAccountToken: false here.
+      serviceAccountName: owui-broker
+{{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{- toYaml . | nindent 8 }}
+{{- end }}
+      # Restricted-PSS lockdown mirroring the router + runtime pods. The broker is a distroless
+      # Rust binary (no shell/interpreter) with no expected writes to its root filesystem, so
+      # readOnlyRootFilesystem is a safe, strict default. A writable emptyDir /tmp is still
+      # mounted for any runtime temp (TLS/kube CA scratch) the binary may need.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: broker
+        image: {{ include "open-websandbox.image" (dict "Values" .Values "repo" "open-websandbox-broker") }}
+        imagePullPolicy: {{ .Values.imagePullPolicy }}
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: BROKER_SHARED_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: owui-broker-secret
+              key: shared-secret
+        - name: BROKER_RUNTIME_NS
+          value: {{ .Values.broker.runtimeNs | quote }}
+        - name: BROKER_ROUTER_URL
+          value: {{ .Values.broker.routerUrl | quote }}
+        - name: BROKER_IDLE_TTL_SECONDS
+          value: {{ .Values.broker.idleTtlSeconds | quote }}
+        - name: BROKER_DEFAULT_PROFILE
+          value: {{ .Values.broker.defaultProfile | quote }}
+        - name: BROKER_PERSISTENT_STORAGE
+          value: {{ .Values.broker.persistentStorage | quote }}
+        - name: BROKER_PERSISTENT_MODE
+          value: {{ .Values.broker.persistentMode | quote }}
+        - name: BROKER_PARK_IDLE_SECONDS
+          value: {{ .Values.broker.parkIdleSeconds | quote }}
+        {{- if .Values.broker.s3.enabled }}
+        # S3-tiered cold tier (issue #52): the broker is the sole S3 client. Credentials are
+        # read from a projected Secret volume at /etc/s3-creds (no secret in env, #48).
+        # The chart references the Secret by name; operators create it (bring-your-own).
+        - name: BROKER_S3_ENABLED
+          value: "true"
+        - name: BROKER_S3_ENDPOINT
+          value: {{ .Values.broker.s3.endpoint | quote }}
+        - name: BROKER_S3_BUCKET
+          value: {{ .Values.broker.s3.bucket | quote }}
+        - name: BROKER_S3_PREFIX
+          value: {{ .Values.broker.s3.prefix | quote }}
+        - name: BROKER_S3_REGION
+          value: {{ .Values.broker.s3.region | default "us-east-1" | quote }}
+        - name: BROKER_S3_RETENTION_DAYS
+          value: {{ .Values.broker.s3.retentionDays | quote }}
+        - name: BROKER_S3_SSE
+          value: {{ .Values.broker.s3.sse | quote }}
+        - name: BROKER_S3_PERIODIC_SYNC_SECONDS
+          value: {{ .Values.broker.s3.periodicSyncInterval | quote }}
+        - name: BROKER_S3_SIZE_LIMIT
+          value: {{ .Values.broker.s3.sizeLimit | quote }}
+        - name: BROKER_S3_TMPFS
+          value: {{ .Values.broker.s3.tmpfs | quote }}
+        - name: BROKER_REAPER_POLL_SECONDS
+          value: {{ .Values.broker.s3.reaperPollSeconds | quote }}
+        {{- end }}
+        # #98 A3: per-user rate limiting on the gated surface.
+        - name: BROKER_RATE_LIMIT_ENABLED
+          value: {{ .Values.broker.rateLimit.enabled | quote }}
+        - name: BROKER_RATE_LIMIT_PER_SECOND
+          value: {{ .Values.broker.rateLimit.perSecond | quote }}
+        - name: BROKER_RATE_LIMIT_BURST
+          value: {{ .Values.broker.rateLimit.burst | quote }}
+        {{- if $otlp }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: {{ $otlp | quote }}
+        {{- end }}
+        startupProbe:
+          httpGet:
+            path: {{ .Values.broker.probes.startup.path }}
+            port: http
+          periodSeconds: {{ .Values.broker.probes.startup.periodSeconds }}
+          failureThreshold: {{ .Values.broker.probes.startup.failureThreshold }}
+        livenessProbe:
+          httpGet:
+            path: {{ .Values.broker.probes.liveness.path }}
+            port: http
+          periodSeconds: {{ .Values.broker.probes.liveness.periodSeconds }}
+          failureThreshold: {{ .Values.broker.probes.liveness.failureThreshold }}
+        readinessProbe:
+          httpGet:
+            path: {{ .Values.broker.probes.readiness.path }}
+            port: http
+          periodSeconds: {{ .Values.broker.probes.readiness.periodSeconds }}
+          failureThreshold: {{ .Values.broker.probes.readiness.failureThreshold }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: "1"
+            memory: 512Mi
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        {{- if .Values.broker.s3.enabled }}
+        - name: s3-creds
+          mountPath: /etc/s3-creds
+          readOnly: true
+        {{- end }}
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      {{- if .Values.broker.s3.enabled }}
+      - name: s3-creds
+        secret:
+          secretName: {{ .Values.broker.s3.credentialsSecret | quote }}
+          defaultMode: 0o400
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: owui-broker
+  namespace: {{ $sysNs }}
+  labels:
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: owui-broker
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http

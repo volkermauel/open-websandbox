@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip "ruff==0.16.2"
+          pip install -r requirements-test.txt
+      - name: Lint (ruff)
+        run: ruff check tests/e2e
+      - name: e2e harness import smoke (the broker/runtime are Rust now — cargo test in rust.yml; live e2e in e2e.yml)
+        run: pytest tests/e2e --collect-only -q

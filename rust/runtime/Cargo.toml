@@ -1,0 +1,75 @@
+[package]
+name = "runtime"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Sandbox runtime (axum + tokio): hardened /execute + /files/* surface for the open-websandbox Rust control plane."
+
+[lib]
+path = "src/lib.rs"
+
+# OTLP exporter feature gate (issue #83). Forwarded to `shared` so the slim
+# opt-out build `cargo build -p runtime --no-default-features` drops
+# tonic/prost (OTel gRPC + protobuf; + OTLP HTTP client) from the runtime binary. `metrics` facade +
+# Prometheus `/metrics` + tracing SDK stay always-on regardless.
+[features]
+default = ["telemetry-otlp"]
+telemetry-otlp = ["shared/telemetry-otlp"]
+
+[[bin]]
+name = "runtime"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+# Native tar+zstd pipeline for `/snapshot`+`/restore` (#94): `async-compression`
+# is the fully-async `zstd` stage (tokio `ZstdEncoder`/`ZstdDecoder`, Q1-b); `tar`
+# creates/parses archives inside a `spawn_blocking` task; `walkdir` enumerates the
+# workspace (`find . -mindepth 1` semantics, no leading `.` entry). Replaces the
+# former `find`/`tar`/`zstd` CLI child processes — no external binaries required.
+async-compression.workspace = true
+axum = { version = "0.8", features = ["ws", "multipart"] }
+# `http-body-util` is already a transitive dep of axum; the `channel` feature adds
+# only `tokio` (also present), so this introduces NO new crates into the audited
+# tree. Used for restore (`BodyExt::frame` on the inbound request body) and
+# snapshot (`channel::Channel` to stream the zstd stdout into the response body
+# from a producer task).
+http-body-util = { version = "0.1", features = ["channel"] }
+mime_guess = "2"
+metrics.workspace = true
+regex = "1"
+nix = { version = "0.31", features = ["resource", "signal", "process"] }
+percent-encoding = "2"
+portable-pty = "0.9"
+serde.workspace = true
+serde_json.workspace = true
+tar.workspace = true
+utoipa.workspace = true
+shared = { version = "0.1.0", path = "../shared", default-features = false }
+thiserror.workspace = true
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = "0.7"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# `zip` builds the in-memory ZIP returned by `POST /files/archive` (the Python
+# runtime used stdlib `zipfile`). `default-features = false` + `deflate` keeps
+# the audited tree lean (no bzip2/zstd/time deps).
+zip = { version = "8", default-features = false, features = ["deflate"] }
+walkdir.workspace = true
+
+[dev-dependencies]
+futures-util = "0.3"
+http = "1"
+tempfile = "3"
+# `zip` is already a runtime dependency; re-declared here so the
+# upload/archive contract tests can read archives back + assert their entries.
+zip = { version = "8", default-features = false, features = ["deflate"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
+
+# Issue #100 / B5: opt into the workspace-wide lint config (clippy::pedantic
+# at `warn`, neg. priority). See `[workspace.lints]` in the root manifest.
+[lints]
+workspace = true

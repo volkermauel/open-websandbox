@@ -1,0 +1,124 @@
+# Open WebUI broker: auth + session->sandbox + reverse-proxy to the router.
+# Lives in agent-sandbox-system; needs RBAC in agent-sandbox-runtime to manage
+# SandboxClaims and read Sandboxes. Static counterpart of the Helm broker template
+# (templates/broker.yaml) — keep the two in sync.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: owui-broker
+  namespace: agent-sandbox-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: owui-broker
+  namespace: agent-sandbox-runtime
+rules:
+- apiGroups: ["extensions.agents.x-k8s.io"]
+  resources: ["sandboxclaims", "sandboxtemplates"]   # claims (per-user-pvc) + templates (read base for shared-subpath)
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Sandboxes live in the `agents.x-k8s.io` group (not extensions). The broker reads
+# operatingMode and patches Suspended/Running to park/resume persistent sandboxes,
+# and (persistent mode) creates + deletes per-chat Sandbox objects directly.
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# per-user-pvc mode: the broker creates/reads per-user PVCs directly (CoreV1).
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Leader election (HA): the broker holds a coordination.k8s.io/Lease so only the elected
+# replica runs the reaper. At replicas=1 (default) the sole broker always wins — a no-op.
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: owui-broker
+  namespace: agent-sandbox-runtime
+subjects:
+- kind: ServiceAccount
+  name: owui-broker
+  namespace: agent-sandbox-system
+roleRef:
+  kind: Role
+  name: owui-broker
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: owui-broker
+  namespace: agent-sandbox-system
+  labels: {app.kubernetes.io/name: owui-broker}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: owui-broker}}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: owui-broker
+        # Pod Security Standard "restricted" markers. For real admission enforcement set
+        # these labels on the agent-sandbox-system Namespace; the securityContext below
+        # makes the broker actually compliant with the restricted profile.
+        pod-security.kubernetes.io/enforce: restricted
+        pod-security.kubernetes.io/audit: restricted
+        pod-security.kubernetes.io/warn: restricted
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      # NOTE: token stays mounted — the broker talks to the kube API (SandboxClaims,
+      # Sandboxes, PVCs) as its own ServiceAccount. Do NOT set automountServiceAccountToken: false.
+      serviceAccountName: owui-broker
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: broker
+        image: owui-broker:v2
+        imagePullPolicy: Never
+        ports: [{name: http, containerPort: 8080}]
+        env:
+        - {name: BROKER_SHARED_SECRET, valueFrom: {secretKeyRef: {name: owui-broker-secret, key: shared-secret}}}
+        - {name: BROKER_RUNTIME_NS, value: "agent-sandbox-runtime"}
+        - {name: BROKER_ROUTER_URL, value: "http://sandbox-router-svc.agent-sandbox-system:8080"}
+        - {name: BROKER_IDLE_TTL_SECONDS, value: "120"}          # ephemeral reap (return to warm pool)
+        - {name: BROKER_DEFAULT_PROFILE, value: "persistent"}    # OWUI can't send X-Persistence; fixed at deploy
+        - {name: BROKER_PERSISTENT_STORAGE, value: "10Gi"}       # per-user PVC size (per-user-pvc mode)
+        - {name: BROKER_PERSISTENT_MODE, value: "per-user-pvc"}  # per-user-pvc | shared-subpath
+        - {name: BROKER_PARK_IDLE_SECONDS, value: "120"}         # persistent suspend (cold-start 1-6s); pairs with IDLE_TTL
+        startupProbe:   {httpGet: {path: /healthz, port: http}, periodSeconds: 5, failureThreshold: 30}
+        livenessProbe:  {httpGet: {path: /healthz, port: http}, periodSeconds: 10, failureThreshold: 3}
+        readinessProbe: {httpGet: {path: /readyz,  port: http}, periodSeconds: 5, failureThreshold: 3}
+        # Restricted-PSS lockdown mirroring the router + runtime pods. The broker is a distroless
+        # Rust binary (no shell/interpreter) with no expected writes to its root filesystem, so
+        # readOnlyRootFilesystem is a safe, strict default; a writable emptyDir /tmp is mounted
+        # for any runtime temp the binary may need.
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities: {drop: ["ALL"]}
+          seccompProfile: {type: RuntimeDefault}
+        resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: "1", memory: 512Mi}}
+        volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes:
+      - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: owui-broker
+  namespace: agent-sandbox-system
+spec:
+  selector: {app.kubernetes.io/name: owui-broker}
+  ports: [{name: http, port: 8080, targetPort: http}]

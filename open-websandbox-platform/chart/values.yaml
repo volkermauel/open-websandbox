@@ -1,0 +1,274 @@
+# open-websandbox chart values.
+# Defaults reproduce the live manifests under deploy/base/. Set imageRegistry /
+# imageOwner / imagePullPolicy for prod (CI sets imageOwner from github.repository_owner).
+
+imageRegistry: ""        # prod: ghcr.io
+imageOwner: volkermauel  # canonical registry owner (override for your fork; CI uses github.repository_owner)
+imagePullPolicy: Never   # prod: IfNotPresent
+# imageTag is LANGUAGE-AGNOSTIC on purpose — it is just a Docker tag. The language each
+# platform image is built from is fixed by its Dockerfile, NOT by this tag:
+#   open-websandbox-broker   -> rust/broker/Dockerfile   (distroless Rust binary: axum + kube-rs)
+#   open-websandbox-runtime  -> rust/runtime/Dockerfile  (debian-slim Rust binary; shells out to tar/zstd/grep)
+#   open-websandbox-router   -> Go, self-built from the vendored upstream agent-sandbox@v0.5.3
+# .github/workflows/e2e.yml builds + `kind load`s all three at THIS tag and then runs the live
+# pytest tests/e2e suite against the broker (runc + gvisor matrix, plus a separate s3-tiered
+# job) — i.e. the Rust broker/runtime HAVE end-to-end coverage. release.yml publishes the
+# same images to ghcr.io/<owner>/open-websandbox-{broker,runtime,router}. There is no Python
+# image: the Rust images were a drop-in replacement at the same name/tag (see Dockerfile headers).
+imageTag: v0.1.0
+# Optional Kubernetes imagePullSecrets — a LocalObjectReference list, e.g.
+#   imagePullSecrets: [{name: ghcr-pull}]
+# Applied to the broker, router, AND runtime (SandboxTemplate) pod specs when
+# non-empty (needed for private registries such as ghcr.io in prod). Omitted
+# entirely when empty.
+imagePullSecrets: []
+# ---------------------------------------------------------------------------
+# Vendored upstream agent-sandbox controller (apiGroup agents.x-k8s.io, v0.5.3).
+# deploy: true (default) => the chart installs the upstream controller Deployment and its
+# RBAC + Services (rendered from the verbatim, SHA-pinned manifest under
+# open-websandbox-platform/upstream/), so a single `helm install` brings up the whole
+# platform. The four agents.x-k8s.io CRDs live in chart/crds/ and are ALWAYS applied by
+# `helm install` (they are NOT gated by this flag), so they exist before the chart's own
+# SandboxTemplate / SandboxWarmPool instances are validated. Set deploy=false when the
+# controller is already installed cluster-wide; then also pass `helm install --skip-crds`
+# if the CRDs are already present.
+# See templates/upstream/upstream.yaml + crds/ + files/upstream-agent-sandbox-v0.5.3.yaml.
+upstream:
+  deploy: true
+
+namespaces:
+  system: agent-sandbox-system    # broker + router (control plane)
+  runtime: agent-sandbox-runtime  # sandbox pods + SandboxTemplate/WarmPool
+
+broker:
+  # Shared secret authenticating broker callers (materialized into Secret
+  # owui-broker-secret, key "shared-secret"). Leave EMPTY ("") to auto-generate a
+  # random 48-char secret on first install; the value is then stable across upgrades
+  # (Helm `lookup` reads the existing Secret back and preserves it). Set it explicitly
+  # for reproducible deploys / CI, e.g.  sharedSecret: "my-secret".
+  # NOTE: never commit the placeholder "dev-shared-secret-change-me" — values.schema.json
+  # rejects it and the broker refuses to start on a placeholder/empty value.
+  # Broker Deployment replicas. 1 (default) = single broker; leader election is a no-op
+  # (the sole broker always runs the reaper). Set >1 for HA: only the lease-holding
+  # replica reaps, so two brokers never double-reap a sandbox.
+  replicas: 1
+  sharedSecret: ""
+  warmPool: code-standard-warmpool
+  runtimeNs: agent-sandbox-runtime
+  routerUrl: http://sandbox-router-svc.agent-sandbox-system:8080
+  idleTtlSeconds: 120
+  parkIdleSeconds: 120
+  defaultProfile: persistent
+  persistentMode: per-user-pvc     # per-user-pvc | shared-subpath
+  persistentStorage: 10Gi
+  # HTTP probes. /readyz (readiness) and /metrics are NEW broker endpoints added
+  # alongside the existing /healthz (liveness). All served on the single :8080 port.
+  # startupProbe waits up to periodSeconds*failureThreshold for the broker to come up
+  # (secret check, warm-pool reconcile) before liveness/readiness take over.
+  probes:
+    liveness:
+      path: /healthz
+      periodSeconds: 10
+      failureThreshold: 3
+    readiness:
+      path: /readyz
+      periodSeconds: 5
+      failureThreshold: 3
+    startup:
+      path: /healthz
+      periodSeconds: 5
+      failureThreshold: 30        # 30 * 5s = 150s init headroom
+  # Prometheus scraping of the broker /metrics endpoint (same :8080 port).
+  metrics:
+    enabled: true
+    port: 8080
+    path: /metrics
+  # S3-tiered cold tier (issue #52). A third persistent backing mode
+  # (broker.persistentMode: s3-tiered): the hot tier is a size-limited emptyDir
+  # /workspace; the cold tier is a bring-your-own S3-compatible bucket. The broker is
+  # the SOLE S3 client (the runtime pod stays network-isolated). Off by default so the
+  # default install + e2e are unchanged. See docs/s3-tiered-storage.md.
+  s3:
+    enabled: false              # MUST be true to use persistentMode: s3-tiered
+    endpoint: ""                # bring-your-own S3-compatible URL (https://s3.example.com)
+    bucket: ""                  # bucket name (must already exist)
+    prefix: "users"             # object-key prefix (users/<uid>/chats/<sid>/workspace-<ts>.tar.zst)
+    region: "us-east-1"          # S3 region (some MinIO/R2 setups ignore it)
+    credentialsSecret: ""      # a Secret (in the system ns) w/ access-key-id + secret-access-key
+    retentionDays: 30           # per-session lifetime (R2): object Expires = now + retentionDays
+    compression: zstd           # zstd only (D9)
+    sse: "AES256"              # SSE-S3 at rest (D9); set "" for stores without a KMS/SSE backend (dev MinIO)
+    periodicSyncInterval: 300   # R1: snapshot running sessions every N seconds
+    sizeLimit: "2Gi"            # hot-tier emptyDir sizeLimit + runtime MAX_WORKSPACE_BYTES (D2/D9)
+    tmpfs: false                # true => /workspace is tmpfs (Memory) instead of disk-backed emptyDir
+    reaperPollSeconds: 60       # reaper loop interval (lower = faster offload-on-reap; default 60)
+  # Ingress NetworkPolicy for the broker (#98 A2). Default-deny ingress so only
+  # the Open Web UI namespace(s) + (optional) Prometheus can reach the front door
+  # that validates BROKER_SHARED_SECRET (closes the in-cluster bearer-oracle surface).
+  # Egress is intentionally left unrestricted — the broker's egress surface
+  # (kube-apiserver, DNS, sandbox-router-svc, optional S3, optional OTLP) is
+  # cluster-specific and tracked as a follow-up. Port-forward-based KIND e2e sets
+  # enabled: false (see values-kind.yaml); set false to opt out in any environment.
+  networkPolicy:
+    enabled: true
+    ingress:
+      # Namespaces allowed to call the broker on :8080. Default: the conventional
+      # Open Web UI namespace. Add yours, e.g.  fromNamespaces: ["open-webui", "default"]
+      fromNamespaces: ["open-webui"]
+  # Per-user rate limiting (#98 A3). A token-bucket per X-User-Id caps the
+  # gated surface (sandbox create, /execute, /files/*, terminals) at perSecond/burst
+  # requests; over-budget requests get 429 + Retry-After. Open probes (/healthz,
+  # /readyz, /metrics) are unlimited. Set enabled: false to disable entirely.
+  rateLimit:
+    enabled: true
+    perSecond: 20            # token-bucket refill rate (req/s) per user
+    burst: 40                # token-bucket capacity (max burst) per user
+
+
+sandboxTemplate:
+  name: code-standard-v1
+  runtimeClassName: gvisor         # "" => omit field (runc, for KIND e2e)
+  runtimeRepository: open-websandbox-runtime
+  maxProcs: 256
+  # Terminal scrollback ring per session, bytes (issue #129): replayed to a
+  # reattached WS client and flushed to the workspace on SIGTERM (node drain).
+  # 0 disables capture, replay and flush.
+  terminalScrollbackBytes: 131072
+  # Seconds a DETACHED terminal (WS gone, shell alive) survives awaiting a
+  # resume before the runtime's idle sweep reaps it.
+  terminalDetachTtlSecs: 900
+  uid: 1000
+  # Dedicated sandbox node pools (issue #126): rendered onto the runtime podTemplate.
+  # Pair with a labeled (+ optionally tainted) node pool, e.g. label
+  # sandbox.open-websandbox.dev/type=sandbox and taint
+  # sandbox.open-websandbox.dev/dedicated=true:NoSchedule — see docs/deploy.md
+  # §Dedicated sandbox node pools.
+  nodeSelector: {}   # e.g. {sandbox.open-websandbox.dev/type: sandbox}
+  tolerations: []    # e.g. [{key: sandbox.open-websandbox.dev/dedicated, operator: Equal, value: "true", effect: NoSchedule}]
+  affinity: {}       # full pod-affinity block when needed
+  # No shared runtimeApiKey anymore (issue #4): each sandbox pod receives its OWN
+  # per-session key, minted by the broker and delivered as a projected Secret volume
+  # (owui-runtime-key-<sandbox>). The chart no longer injects a shared runtime key.
+  dns:
+    policy: None
+    # IPv4 public resolvers by default. IPv6 DNS *egress* IS allowed
+    # (networkPolicy.egress.dnsNameserversV6), but IPv6 nameservers are intentionally
+    # omitted from the default — adding them breaks single-stack (IPv4-only) nodes like
+    # KIND. Dual-stack clusters: append IPv6 resolvers here (e.g. 2001:4860:4860::8888).
+    nameservers: [8.8.8.8, 1.1.1.1]
+    ndots: 1
+  storage:
+    workspace: 4Gi
+    home: 2Gi
+    tmp: { medium: Memory, sizeLimit: 2Gi }
+    packages: 4Gi
+
+warmPool:
+  # 0 under per-session key enforcement (issue #4): the upstream controller's warm-pool
+  # REUSE model cannot project a per-session Secret into a pod created before its
+  # session exists (a SandboxClaim's env is static-only; no per-pod volume), so ephemeral
+  # now cold-starts a direct per-session Sandbox like persistent. Re-enable only if
+  # upstream gains per-CR secret projection.
+  replicas: 0
+  templateName: code-standard-v1
+
+sharedPvc:
+  name: workspace-shared
+  size: 50Gi
+  storageClass: cephfs
+
+quota:
+  persistentVolumeClaims: "50"
+  storage: 200Gi
+  pods: "20"
+
+networkPolicy:
+  egress:
+    dnsNameservers: [8.8.8.8, 1.1.1.1]
+    dnsNameserversV6: [2001:4860:4860::8888, 2606:4700:4700::1111]   # public resolvers (IPv6) — paired with dnsNameservers; keep aligned with sandboxTemplate.dns.nameservers
+    httpsPorts: [443, 80]
+    exceptCIDRs:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - 169.254.0.0/16
+
+router:
+  repository: open-websandbox-router
+  replicas: 1
+  # Cluster IPs the router must reach (egress). Defaults follow kubeadm service-CIDR values;
+  # override for your cluster. These are the ClusterIPs of the `kubernetes` Service
+  # (informers + tokenreview) and kube-dns (coredns):
+  #   kubeadm 10.96.0.1/10.96.0.10   k3s 10.43.0.1/10.43.0.10   MicroK8s 10.152.183.1/10.152.183.10
+  kubeApiServerCidr: "10.96.0.1/32"
+  kubeDnsCidr: "10.96.0.10/32"
+  # IPv6 kube-dns (coredns) Service ClusterIP — scoped egress for dual-stack clusters.
+  # Set to YOUR cluster's kube-dns IPv6 ClusterIP (/128). Default mirrors kubeadm's dual-stack
+  # service CIDR (kube-dns = fd00:1::a). NEVER widen to ::/0 (egresses the whole IPv6 internet
+  # on :53); single-stack-IPv4 clusters can leave the default — the IPv4 rule still covers DNS.
+  kubeDnsCidrIPv6: "fd00:1::a/128"
+
+# ---------------------------------------------------------------------------
+# Observability — Prometheus scrape (ServiceMonitor/PodMonitor) + OpenTelemetry
+# traces (bring-your-own collector) + an OPTIONAL bundled otel-collector subchart.
+# Everything OFF by default so the chart installs cleanly on clusters without the
+# prometheus-operator CRDs or a collector.
+monitoring:
+  # Prometheus scrape via monitoring.coreos.com ServiceMonitor + PodMonitor. Requires
+  # the prometheus-operator (kube-prometheus-stack) CRDs; OFF by default so clusters
+  # without it install cleanly. When enabled: a ServiceMonitor scrapes the broker
+  # (owui-broker Service, :8080/metrics) and a PodMonitor scrapes the runtime pods
+  # (app: code-standard, :8888/metrics). The runtime namespace is default-deny
+  # (NetworkPolicy); enabling this ALSO renders an allow-rule to :8888 from your
+  # Prometheus namespace (see scrapeNamespace / scrapePodLabels below).
+  prometheus:
+    enabled: false
+    interval: 60s          # per-minute is sufficient (owner decision)
+    # NetworkPolicy ingress source for the Prometheus scraper. The runtime namespace is
+    # default-deny; when monitoring is enabled this renders an allow-rule to :8888 from the
+    # given namespace (translated to kubernetes.io/metadata.name=<ns>, auto-set by kube >=1.21).
+    # Defaults to the kube-prometheus-stack convention. Set scrapePodLabels to restrict to
+    # specific Prometheus pods (e.g. {app.kubernetes.io/name: prometheus}); empty = all pods
+    # in the namespace.
+    scrapeNamespace: monitoring
+    scrapePodLabels: {}
+  # OpenTelemetry traces. Broker + runtime export via OTLP when `otlp.endpoint` is set
+  # (OTEL_EXPORTER_OTLP_ENDPOINT on both pods). Empty => tracing disabled (soft no-op;
+  # both services boot + serve regardless). Bring-your-own: point this at YOUR collector.
+  # When otelCollector.enabled is true (below) this defaults to the bundled collector.
+  otlp:
+    endpoint: ""
+# Optional bundled opentelemetry-collector subchart (OFF by default). When enabled,
+# the chart deploys a collector (deployment mode, release namespace) and
+# monitoring.otlp.endpoint defaults to its OTLP/HTTP receiver. Values below pass
+# straight through to the upstream chart:
+#   https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-collector
+otelCollector:
+  enabled: false
+  mode: deployment
+  image:
+    # otel-collector-contrib (the chart requires image.repository; contrib carries the
+    # OTLP receiver + common exporters). Pin to the chart's appVersion (0.169.0 -> 0.158.0).
+    repository: otel/opentelemetry-collector-contrib
+    tag: "0.158.0"
+  config:
+    # Receive OTLP from broker + runtime (grpc 4317 / http 4318). The chart derives the
+    # Service ports from these receivers, so 4318 is reachable at
+    # <release>-opentelemetry-collector.<ns>.svc:4318 (the default monitoring.otlp.endpoint).
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    exporters:
+      # Default: log traces to the collector's stdout. Point this at YOUR backend
+      # (otlp -> Tempo/Jaeger, etc.) via `otelCollector.config.exporters`.
+      debug:
+        verbosity: basic
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          exporters: [debug]

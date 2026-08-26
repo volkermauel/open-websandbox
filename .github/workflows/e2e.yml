@@ -1,0 +1,345 @@
+name: e2e
+
+# Full end-to-end: deploy the platform via the Helm chart into a KIND cluster and run
+# tests/e2e against the live broker. Matrix covers both runtime backends:
+#   - runc:   plain KIND node. Weaker isolation (no syscall filter) but it fully exercises
+#             the broker→router→runtime path, the Helm chart, and the agent-sandbox
+#             controller — the bulk of the integration surface.
+#   - gvisor: runsc installed on the runner host and bind-mounted into the KIND node.
+#             systrap needs no KVM, so this also runs locally (scripts/setup-kind-gvisor.sh).
+#             The closest analog to production gVisor isolation.
+#
+# The router is self-built from upstream agent-sandbox@v0.5.3 (its Dockerfile COPYs
+# internal/ api/ extensions/api/, so the build context is the upstream checkout).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [runc, gvisor]
+    env:
+      KIND_CLUSTER: open-websandbox-e2e
+      SYS_NS: agent-sandbox-system
+      RUNTIME_NS: agent-sandbox-runtime
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      # gVisor leg only: install runsc + shim + gvisor-bin sidecar dir on the host so the
+      # KIND node can bind-mount them. systrap needs no KVM, so this runs on any runner.
+      - name: Install gVisor runsc on host
+        if: matrix.runtime == 'gvisor'
+        run: bash infra/kind/install-runsc.sh
+
+      # Cache the kindest/node image tarball so it isn't re-pulled every run.
+      # helm/kind-action has no built-in node-image cache, so we save/load the
+      # Docker image ourselves; when present, `kind create cluster` reuses it.
+      # NOTE: if node_image below is bumped, bump the cache key to match.
+      - name: Cache KIND node image
+        id: kind-image-cache
+        uses: actions/cache@v6
+        with:
+          path: /tmp/kindest-node.tar
+          key: kindest-node-v1.31.0
+      - name: Load KIND node image from cache
+        if: steps.kind-image-cache.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/kindest-node.tar
+      - name: Pull & save KIND node image (cache miss)
+        if: steps.kind-image-cache.outputs.cache-hit != 'true'
+        run: |
+          docker pull kindest/node:v1.31.0
+          docker save kindest/node:v1.31.0 -o /tmp/kindest-node.tar
+
+      # helm/kind-action installs kind + creates the cluster. For gVisor it uses a config
+      # that mounts the host runsc into the node + registers it with containerd.
+      - name: Create KIND cluster (${{ matrix.runtime }})
+        uses: helm/kind-action@v1
+        with:
+          version: v0.27.0
+          cluster_name: ${{ env.KIND_CLUSTER }}
+          node_image: kindest/node:v1.31.0
+          config: ${{ matrix.runtime == 'gvisor' && 'infra/kind/kind-config-gvisor.yaml' || '' }}
+          wait: 60s
+
+      - uses: azure/setup-kubectl@v5
+      - uses: azure/setup-helm@v5
+
+      - name: Register gVisor RuntimeClass
+        if: matrix.runtime == 'gvisor'
+        run: |
+          kubectl apply -f infra/kind/runtimeclass-gvisor.yaml
+          docker exec "$KIND_CLUSTER-control-plane" /usr/local/bin/runsc --version
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # Build via buildx with a GitHub Actions (type=gha) layer cache, shared
+      # across matrix legs and with the release.yml builds by scope name.
+      # provenance:false keeps a plain single-platform image that `kind load` accepts.
+      - name: Build platform image (broker)
+        uses: docker/build-push-action@v7
+        with:
+          context: rust
+          file: rust/broker/Dockerfile
+          load: true
+          provenance: false
+          tags: open-websandbox-broker:v0.1.0
+          cache-from: type=gha,scope=open-websandbox-broker
+          cache-to: type=gha,mode=max,scope=open-websandbox-broker
+
+      - name: Build platform image (runtime)
+        uses: docker/build-push-action@v7
+        with:
+          context: rust
+          file: rust/runtime/Dockerfile
+          load: true
+          provenance: false
+          tags: open-websandbox-runtime:v0.1.0
+          cache-from: type=gha,scope=open-websandbox-runtime
+          cache-to: type=gha,mode=max,scope=open-websandbox-runtime
+
+      # Shallow-fetch upstream at the pinned tag into ./agent-sandbox so the router can be
+      # self-built (no prebuilt image is published). Context = agent-sandbox/ because
+      # sandbox-router/Dockerfile COPYs internal/ api/ extensions/api/.
+      - name: Checkout upstream agent-sandbox@v0.5.3 (router self-build)
+        uses: actions/checkout@v7
+        with:
+          repository: kubernetes-sigs/agent-sandbox
+          ref: v0.5.3
+          path: agent-sandbox
+
+      - name: Self-build sandbox-router
+        uses: docker/build-push-action@v7
+        with:
+          context: agent-sandbox
+          file: agent-sandbox/sandbox-router/Dockerfile
+          load: true
+          provenance: false
+          tags: open-websandbox-router:v0.1.0
+          cache-from: type=gha,scope=open-websandbox-router
+          cache-to: type=gha,mode=max,scope=open-websandbox-router
+
+      - name: Load images into KIND
+        run: |
+          for img in open-websandbox-broker:v0.1.0 open-websandbox-runtime:v0.1.0 open-websandbox-router:v0.1.0; do
+            kind load docker-image "$img" --name "$KIND_CLUSTER"
+          done
+
+      # The agent-sandbox controller + CRDs (agents.x-k8s.io) are now installed by the
+      # chart itself (chart/templates/upstream/, values.upstream.deploy=true default),
+      # so the separate `kubectl apply -f .../upstream/*.yaml` step is no longer needed.
+      - name: Helm install (${{ matrix.runtime }} profile)
+        run: |
+          kubectl create namespace "$SYS_NS" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace "$RUNTIME_NS" --dry-run=client -o yaml | kubectl apply -f -
+          # Pre-apply the vendored CRDs and wait for establishment so helm can build the
+          # SandboxTemplate instance in one pass (helm applies crds/ but does not wait for
+          # the API server to establish them -> intermittent 'no matches for kind' failures).
+          kubectl apply -f open-websandbox-platform/chart/crds/
+          kubectl wait --for=condition=Established --all crd --timeout=120s || true
+          helm install open-websandbox open-websandbox-platform/chart/ \
+            -f "$VALUES_FILE" -n "$SYS_NS"
+          kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
+          # Wait for the warm pool: >=1 Sandbox in RUNTIME_NS reaches Ready=True.
+          # (WarmPool has only ReadyReplicas, no Ready *condition*, so wait on Sandboxes.)
+          echo "Waiting for warm pool (Ready Sandbox)…"
+          for i in $(seq 1 60); do
+            if kubectl -n "$RUNTIME_NS" get sandbox -o \
+                'go-template={{range .items}}{{range .status.conditions}}{{if eq .type "Ready"}}{{.status}}{{"\n"}}{{end}}{{end}}{{end}}' \
+                2>/dev/null | grep -q True; then break; fi
+            sleep 5
+          done
+        env:
+          # runc → values-kind.yaml; gvisor → values-kind-gvisor.yaml
+          VALUES_FILE: open-websandbox-platform/chart/values-kind${{ matrix.runtime == 'gvisor' && '-gvisor' || '' }}.yaml
+
+
+      - name: Diagnostics (on failure)
+        if: failure()
+        run: |
+          echo "=== broker/router pods ==="
+          kubectl -n "$SYS_NS" get pods -o wide || true
+          echo "=== broker describe + logs ==="
+          kubectl -n "$SYS_NS" describe deploy/owui-broker --timeout=10s || true
+          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=100 || true
+          echo "=== /readyz + /healthz (probed via port-forward) ==="
+          kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 &
+          PF=$!; sleep 3
+          curl -sS http://localhost:8889/readyz; echo
+          curl -sS http://localhost:8889/healthz; echo
+          kill "$PF" 2>/dev/null || true
+          echo "=== runtime sandboxes + recent events ==="
+          kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
+          kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
+      - name: Install test deps
+        run: pip install -r requirements-test.txt
+
+      - name: Run e2e suite
+        run: |
+          set -euo pipefail
+          kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 &
+          PF=$!
+          # Wait for the port-forward to accept connections.
+          for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
+          # Read the REAL broker shared secret (the chart auto-generates one via lookup;
+          # the old hardcoded placeholder was rejected by the broker's fail-closed check).
+          SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
+            -o jsonpath='{.data.shared-secret}' | base64 -d)"
+          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" pytest tests/e2e -v
+          kill "$PF"
+
+  # S3-tiered e2e (issue #52): a SEPARATE job (runc only) that deploys an in-cluster
+  # MinIO, installs the chart with broker.s3.enabled=true + persistentMode=s3-tiered,
+  # and runs the three mandatory S3 scenarios (offload-on-reap, restore-on-resume,
+  # cross-session isolation). It is opt-in and independent of the default runc/gvisor
+  # matrix, so default e2e behavior is unchanged (broker.s3.enabled defaults OFF).
+  e2e-s3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      KIND_CLUSTER: open-websandbox-e2e-s3
+      SYS_NS: agent-sandbox-system
+      RUNTIME_NS: agent-sandbox-runtime
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Cache KIND node image
+        id: kind-image-cache
+        uses: actions/cache@v6
+        with:
+          path: /tmp/kindest-node.tar
+          key: kindest-node-v1.31.0
+      - name: Load KIND node image from cache
+        if: steps.kind-image-cache.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/kindest-node.tar
+      - name: Pull & save KIND node image (cache miss)
+        if: steps.kind-image-cache.outputs.cache-hit != 'true'
+        run: |
+          docker pull kindest/node:v1.31.0
+          docker save kindest/node:v1.31.0 -o /tmp/kindest-node.tar
+
+      - name: Create KIND cluster (runc)
+        uses: helm/kind-action@v1
+        with:
+          version: v0.27.0
+          cluster_name: ${{ env.KIND_CLUSTER }}
+          node_image: kindest/node:v1.31.0
+          wait: 60s
+
+      - uses: azure/setup-kubectl@v5
+      - uses: azure/setup-helm@v5
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build platform image (broker)
+        uses: docker/build-push-action@v7
+        with:
+          context: rust
+          file: rust/broker/Dockerfile
+          load: true
+          provenance: false
+          tags: open-websandbox-broker:v0.1.0
+          cache-from: type=gha,scope=open-websandbox-broker
+          cache-to: type=gha,mode=max,scope=open-websandbox-broker
+      - name: Build platform image (runtime)
+        uses: docker/build-push-action@v7
+        with:
+          context: rust
+          file: rust/runtime/Dockerfile
+          load: true
+          provenance: false
+          tags: open-websandbox-runtime:v0.1.0
+          cache-from: type=gha,scope=open-websandbox-runtime
+          cache-to: type=gha,mode=max,scope=open-websandbox-runtime
+
+      - name: Checkout upstream agent-sandbox@v0.5.3 (router self-build)
+        uses: actions/checkout@v7
+        with:
+          repository: kubernetes-sigs/agent-sandbox
+          ref: v0.5.3
+          path: agent-sandbox
+      - name: Self-build sandbox-router
+        uses: docker/build-push-action@v7
+        with:
+          context: agent-sandbox
+          file: agent-sandbox/sandbox-router/Dockerfile
+          load: true
+          provenance: false
+          tags: open-websandbox-router:v0.1.0
+          cache-from: type=gha,scope=open-websandbox-router
+          cache-to: type=gha,mode=max,scope=open-websandbox-router
+
+      - name: Load images into KIND
+        run: |
+          for img in open-websandbox-broker:v0.1.0 open-websandbox-runtime:v0.1.0 open-websandbox-router:v0.1.0; do
+            kind load docker-image "$img" --name "$KIND_CLUSTER"
+          done
+
+      - name: Deploy MinIO fixture + namespaces
+        run: |
+          kubectl create namespace "$SYS_NS" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace "$RUNTIME_NS" --dry-run=client -o yaml | kubectl apply -f -
+          # Pre-apply the vendored CRDs and wait for establishment before helm install
+          # (see the matrix profile step for rationale).
+          kubectl apply -f open-websandbox-platform/chart/crds/
+          kubectl wait --for=condition=Established --all crd --timeout=120s || true
+          kubectl -n "$SYS_NS" apply -f tests/e2e/fixtures/minio.yaml
+          kubectl -n "$SYS_NS" rollout status deploy/minio --timeout=180s
+
+      - name: Helm install (s3-tiered profile)
+        run: |
+          helm install open-websandbox open-websandbox-platform/chart/ \
+            -f open-websandbox-platform/chart/values-kind-s3.yaml -n "$SYS_NS"
+          kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
+
+      - name: Diagnostics (on failure)
+        if: failure()
+        run: |
+          echo "=== broker/minio pods ==="
+          kubectl -n "$SYS_NS" get pods -o wide || true
+          echo "=== broker logs ==="
+          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=200 || true
+          echo "=== runtime sandboxes ==="
+          kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
+          echo "=== runtime pod logs (last 6 by age) ==="
+          for p in $(kubectl -n "$RUNTIME_NS" get pods --sort-by=.metadata.creationTimestamp -o name | tail -6); do
+            echo "--- $p ---"
+            kubectl -n "$RUNTIME_NS" logs "$p" --tail=80 || true
+          done
+          kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
+
+      - name: Install test deps
+        run: pip install -r requirements-test.txt
+
+      - name: Run S3 e2e suite
+        run: |
+          set -euo pipefail
+          kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 &
+          PF=$!
+          for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
+          SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
+            -o jsonpath='{.data.shared-secret}' | base64 -d)"
+          # E2E_S3=1 enables the MinIO-backed scenarios; the default e2e tests skip fast
+          # (require_broker still passes, ready_session claims a persistent s3-tiered pod).
+          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" E2E_S3=1 \
+            pytest tests/e2e/test_s3_tiered.py -v
+          kill "$PF"

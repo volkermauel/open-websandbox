@@ -1,0 +1,70 @@
+[package]
+name = "broker"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Sandbox broker (axum + tokio + kube-rs): Open WebUI front door + Kubernetes Sandbox lifecycle for the open-websandbox Rust control plane."
+
+[lib]
+path = "src/lib.rs"
+
+# OTLP exporter feature gate (issue #83). Forwarded to `shared`/`runtime` so the
+# slim opt-out build `cargo build -p broker --no-default-features` drops
+# tonic/prost (OTel gRPC + protobuf; + OTLP HTTP client) from the broker binary. `metrics` facade +
+# Prometheus `/metrics` + tracing SDK stay always-on regardless.
+[features]
+default = ["telemetry-otlp"]
+telemetry-otlp = ["shared/telemetry-otlp", "runtime/telemetry-otlp"]
+
+[[bin]]
+name = "broker"
+path = "src/main.rs"
+
+[dependencies]
+# Drop the SDK's default `rustls` feature (= aws-smithy-runtime/tls-rustls), which
+# drags in the LEGACY hyper-0.14 / rustls-0.21 / rustls-webpki-0.101 line hit by
+# RUSTSEC-2026-0098/0099/0104 (issue #80). The modern rustls-0.23 / aws-lc-rs /
+# hyper-1 HTTPS client is provided by `default-https-client`
+# (aws-smithy-http-client/rustls-aws-lc -> default-client) and is what the
+# `BehaviorVersion::latest()` client in src/s3.rs uses, so the legacy connector
+# is pure cruft. `default-features = false` + these four == the upstream
+# `default` set minus the legacy `rustls` feature (sigv4a / http-1x kept for parity).
+aws-sdk-s3 = { version = "1", default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
+# rustls 0.23 needs an explicit process-level CryptoProvider when multiple TLS
+# crates (kube-rs, reqwest rustls-tls, aws-sdk-s3) pull it in transitively;
+# declared here so broker/src/main.rs can install_default() at boot.
+metrics.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "logging", "std", "tls12"] }
+async-trait.workspace = true
+axum = { version = "0.8", features = ["ws"] }
+futures-util = "0.3"
+k8s-openapi.workspace = true
+kube.workspace = true
+rand = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+serde.workspace = true
+serde_json.workspace = true
+bytes = "1"
+shared = { version = "0.1.0", path = "../shared", default-features = false }
+runtime = { version = "0.1.0", path = "../runtime", default-features = false }
+sha2 = "0.11"
+thiserror.workspace = true
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.29"
+tower = { version = "0.5", features = ["util"] }
+tower_governor = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+utoipa.workspace = true
+utoipa-scalar = { version = "0.3", features = ["axum"] }
+http = "1"
+
+[dev-dependencies]
+wiremock = "0.6"
+
+# Issue #100 / B5: opt into the workspace-wide lint config (clippy::pedantic
+# at `warn`, neg. priority). See `[workspace.lints]` in the root manifest.
+[lints]
+workspace = true

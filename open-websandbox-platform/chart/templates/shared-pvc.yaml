@@ -1,0 +1,20 @@
+# Shared RWX PVC backing /workspace for the shared-subPath persistent profile
+# (BROKER_PERSISTENT_MODE=shared-subpath). One volume shared by all users; each
+# user's sandbox mounts only users/<user-id>/ of it at /workspace (hard isolation).
+# NOT used by the per-user-pvc profile, which gives every user their own PVC via
+# SandboxClaim volumeClaimTemplates.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.sharedPvc.name }}
+  namespace: {{ include "open-websandbox.runtimeNamespace" . }}
+  labels:
+    app.kubernetes.io/managed-by: owui-broker
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: {{ .Values.sharedPvc.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.sharedPvc.size }}

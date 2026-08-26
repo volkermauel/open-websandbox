@@ -1,0 +1,311 @@
+name: release
+
+# Builds + publishes the three images on a version tag (v*.*.*).
+#   broker / runtime  -> built from this repo's Dockerfiles
+#   router            -> SELF-BUILT from upstream kubernetes-sigs/agent-sandbox@v0.5.3
+#                        (decision D3 — reproducible, version-locked; no ad-hoc :latest)
+# Images: ghcr.io/${{ repository_owner }}/open-websandbox-{broker,runtime,router}:<tag>
+# CI uses the built-in GITHUB_TOKEN; no owner secret required.
+
+on:
+  # Issue #100 (B2): trivy image scans also run on PRs (report-only) so CVEs
+  # surface before a tag. The heavy build/publish/release jobs stay tag-only
+  # via per-job `if:` guards below.
+  pull_request:
+    branches: [main]
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write   # create the GitHub Release + upload SBOM assets
+  packages: write   # push images + OCI signature ref-tags to ghcr.io
+  id-token: write   # keyless cosign signing via GitHub OIDC (sigstore)
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-broker:
+    # Tag-only: image build/publish/sign belongs to releases, not PRs.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v3   # multi-arch builds (amd64 + arm64)
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-broker
+          tags: |
+            type=ref,event=tag
+            type=sha,format=short
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: rust
+          file: rust/broker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=open-websandbox-broker
+          cache-to: type=gha,mode=max,scope=open-websandbox-broker
+      # Supply-chain (issue #25): keyless cosign sign + per-image syft SBOM.
+      # cosign signs the immutable digest and pushes the signature as an OCI
+      # ref-tag (<repo>:sha256-<digest>.sig). The SBOM (SPDX-JSON) is uploaded
+      # as a workflow artifact and attached to the GitHub Release by chart-release.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign image (keyless, sigstore / GitHub OIDC)
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-broker
+        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+      - name: Generate image SBOM (syft)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-broker@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: open-websandbox-broker-${{ github.ref_name }}.spdx.json
+          artifact-name: open-websandbox-broker-sbom
+          upload-artifact: true
+
+  build-runtime:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v3   # multi-arch builds (amd64 + arm64)
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-runtime
+          tags: |
+            type=ref,event=tag
+            type=sha,format=short
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: rust
+          file: rust/runtime/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=open-websandbox-runtime
+          cache-to: type=gha,mode=max,scope=open-websandbox-runtime
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign image (keyless, sigstore / GitHub OIDC)
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-runtime
+        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+      - name: Generate image SBOM (syft)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-runtime@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: open-websandbox-runtime-${{ github.ref_name }}.spdx.json
+          artifact-name: open-websandbox-runtime-sbom
+          upload-artifact: true
+
+  build-router:
+    # Self-build from upstream agent-sandbox (pinned tag).
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout upstream agent-sandbox@v0.5.3
+        uses: actions/checkout@v7
+        with:
+          repository: kubernetes-sigs/agent-sandbox
+          ref: v0.5.3
+          path: agent-sandbox
+      - uses: docker/setup-qemu-action@v3   # multi-arch builds (amd64 + arm64)
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-router
+          tags: |
+            type=ref,event=tag
+            type=sha,format=short
+            type=raw,value=agent-sandbox-v0.5.3
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: agent-sandbox
+          file: agent-sandbox/sandbox-router/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=open-websandbox-router
+          cache-to: type=gha,mode=max,scope=open-websandbox-router
+          build-args: |
+            VERSION=v0.5.3
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign image (keyless, sigstore / GitHub OIDC)
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-router
+        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+      - name: Generate image SBOM (syft)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-router@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: open-websandbox-router-${{ github.ref_name }}.spdx.json
+          artifact-name: open-websandbox-router-sbom
+          upload-artifact: true
+
+  trivy-release:
+    # Issue #100 (B2): scan the just-published tag images for HIGH/CRITICAL
+    # CVEs. REPORT-ONLY (continue-on-error + exit-code 0) per maintainer decision:
+    # surfacing only, does not gate a release. Scans the images built above.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-broker, build-runtime, build-router]
+    name: trivy image (release, report-only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [open-websandbox-broker, open-websandbox-runtime, open-websandbox-router]
+    steps:
+      - uses: actions/checkout@v7
+      - name: trivy image (HIGH,CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        env:
+          # Private ghcr.io read auth for the published images.
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.ref_name }}
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+          format: table
+
+  trivy-pr:
+    # Issue #100 (B2): on PRs, build each image locally (load, no push) and scan
+    # it for HIGH/CRITICAL CVEs. REPORT-ONLY: never blocks a PR. This catches
+    # vulnerable base images / deps before a tag, without publishing anything.
+    if: github.event_name == 'pull_request'
+    name: trivy image (PR, report-only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: open-websandbox-broker
+            context: rust
+            dockerfile: rust/broker/Dockerfile
+          - image: open-websandbox-runtime
+            context: rust
+            dockerfile: rust/runtime/Dockerfile
+          - image: open-websandbox-router
+            context: agent-sandbox
+            dockerfile: agent-sandbox/sandbox-router/Dockerfile
+            upstream: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: Checkout upstream agent-sandbox@v0.5.3
+        if: matrix.upstream
+        uses: actions/checkout@v7
+        with:
+          repository: kubernetes-sigs/agent-sandbox
+          ref: v0.5.3
+          path: agent-sandbox
+      - uses: docker/setup-buildx-action@v4
+      - name: Build image (load, no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:pr-scan
+          cache-from: type=gha,scope=${{ matrix.image }}
+      - name: trivy image (HIGH,CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:pr-scan
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+          format: table
+
+  chart-release:
+    # Publish the Helm chart to OCI and cut a GitHub Release; tags only.
+    needs: [build-broker, build-runtime, build-router]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Version flow: the git tag is the single source of truth and drives BOTH
+      # chart fields via `helm package` flags (Chart.yaml is not edited at release):
+      #   chart `version`    = tag without the leading 'v'  (SemVer forbids the 'v')
+      #   chart `appVersion` = full tag incl. 'v'
+      # Both derive from the same tag, so appVersion and version stay in lockstep.
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Package chart
+        run: |
+          helm package open-websandbox-platform/chart \
+            --app-version "${{ steps.tag.outputs.tag }}" \
+            --version "${{ steps.tag.outputs.version }}"
+      # Generate an SBOM (SPDX JSON) of the packaged chart and attach it to the
+      # GitHub Release alongside the .tgz. Scans the chart source that was just
+      # packaged (identical to the .tgz contents; syft dir: mode is deterministic).
+      - name: Generate chart SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: open-websandbox-platform/chart
+          format: spdx-json
+          output-file: open-websandbox-chart-${{ steps.tag.outputs.version }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Push chart to OCI registry
+        run: |
+          helm push open-websandbox-*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+      - name: Download image SBOMs
+        uses: actions/download-artifact@v8
+        with:
+          path: image-sboms
+          pattern: open-websandbox-*-sbom
+          merge-multiple: true
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: |
+            open-websandbox-*.tgz
+            open-websandbox-chart-*.spdx.json
+            image-sboms/*.spdx.json

@@ -1,0 +1,65 @@
+# cargo-deny policy for the open-websandbox Rust control plane (D8 — vetted deps).
+#
+# CI runs `cargo deny check` from this directory (see .github/workflows/rust.yml).
+# The job is `continue-on-error`: it surfaces advisories / license / ban hits
+# visibly without failing the fmt+clippy+test gate.
+#
+# The license allow-list is intentionally tight: it lists only the licenses
+# actually present in the PR-A dependency tree. When a future PR (broker in
+# PR-C, runtime in PR-B) introduces a dependency under a new license,
+# cargo-deny fails this check until the license is consciously added here —
+# that explicit review step is the D8 supply-chain guarantee.
+
+[graph]
+# Evaluate every feature so feature-gated deps (e.g. aws-sdk-s3 in PR-C) are
+# covered even before the consuming crate exists.
+all-features = true
+
+[advisories]
+# A yanked crate in the graph is a hard failure.
+yanked = "deny"
+# Unmaintained crates are surfaced for triage, not hard-failed: the k8s/tokio/
+# hyper tree is large and inherited, and "unmaintained" is noisy on a scaffold.
+unmaintained = "workspace"
+# Issue #80 follow-up: the three rustls-webpki RUSTSEC-2026-0098/0099/0104
+# advisories (webpki 0.101.7) were CLEARED by dropping aws-sdk-s3's default
+# `rustls` feature in broker/Cargo.toml (default-features = false + the
+# rustls-0.23-native `default-https-client`). That feature was the sole source
+# of the legacy hyper-0.14 / rustls-0.21 / webpki-0.101 / h2-0.3 line; the graph
+# now resolves to rustls-webpki 0.103.13 (rustls 0.23.43) only, so the previously
+# time-boxed ignores were removed. No advisories are currently ignored: every
+# hit must be triaged explicitly.
+ignore = []
+
+[licenses]
+# Permissive licenses + our own copyleft (AGPL-3.0-only). No GPL/LGPL/SSPL
+# dependencies are permitted in the control-plane tree.
+# CDLA-Permissive-2.0 covers the root-CA bundle data pulled in (transitively via
+# rustls) by webpki-root-certs; it is a permissive data license.
+# Zlib covers foldhash (D9 metrics subtree: hashbrown -> metrics-util ->
+# metrics-exporter-prometheus) and zlib-rs (runtime zip/flate2); it is OSI-approved
+# and FSF-Free, consistent with the permissive-only policy above.
+allow = [
+    "AGPL-3.0-only",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+[bans]
+# A few duplicated versions are unavoidable in the k8s ecosystem (e.g. getrandom
+# 0.2 via ring vs 0.3 via ahash); warn so they're visible without blocking.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

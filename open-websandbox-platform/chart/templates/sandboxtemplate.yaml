@@ -1,0 +1,169 @@
+# SandboxTemplate CRD — the runtime pod template.
+# Lets a SandboxClaim bring its own per-user PVC (volumeClaimTemplates); the
+# controller merges a claim's `workspace` VCT into the pod, replacing the
+# template's same-named emptyDir — so the SAME template serves ephemeral
+# (emptyDir, warm pool) and persistent (cephfs PVC, cold) profiles.
+{{/* OTLP endpoint for the runtime (broker+runtime traces share the same endpoint;
+     see broker.yaml). Explicit monitoring.otlp.endpoint wins; else the bundled
+     collector. Empty => runtime tracing disabled. */}}
+{{- $otlp := .Values.monitoring.otlp.endpoint -}}
+{{- if and (not $otlp) .Values.otelCollector.enabled -}}
+{{- $otlp = printf "http://%s-otelCollector.%s.svc.cluster.local:4318" .Release.Name .Release.Namespace -}}
+{{- end -}}
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: {{ .Values.sandboxTemplate.name }}
+  namespace: {{ include "open-websandbox.runtimeNamespace" . }}
+  labels:
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+spec:
+  volumeClaimTemplatesPolicy: Allowed
+  podTemplate:
+    metadata:
+      labels:
+        app: code-standard
+        profile: ephemeral
+    spec:
+      automountServiceAccountToken: false
+      # Suppress kubelet-injected <SERVICE>_SERVICE_HOST/_PORT env for every Service in
+      # the namespace (enableServiceLinks=false). Those vars would leak cluster topology
+      # (service CIDR, peer services) to the untrusted code running in the sandbox. The
+      # KUBERNETES_SERVICE_HOST/_PORT kubelet vars are NOT controlled by this flag and are
+      # scrubbed explicitly below. (issue #48)
+      enableServiceLinks: false
+{{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{- toYaml . | nindent 8 }}
+{{- end }}
+      {{- with .Values.sandboxTemplate.runtimeClassName }}
+      runtimeClassName: {{ . }}
+      {{- end }}
+{{- with .Values.sandboxTemplate.nodeSelector }}
+      nodeSelector:
+{{- toYaml . | nindent 8 }}
+{{- end }}
+{{- with .Values.sandboxTemplate.tolerations }}
+      tolerations:
+{{- toYaml . | nindent 8 }}
+{{- end }}
+{{- with .Values.sandboxTemplate.affinity }}
+      affinity:
+{{- toYaml . | nindent 8 }}
+{{- end }}
+      dnsPolicy: {{ .Values.sandboxTemplate.dns.policy }}
+      dnsConfig:
+        nameservers:
+        {{- range .Values.sandboxTemplate.dns.nameservers }}
+        - {{ . }}
+        {{- end }}
+        searches: []                    # no namespace search domain
+        options:
+        - name: ndots
+          value: {{ .Values.sandboxTemplate.dns.ndots | quote }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.sandboxTemplate.uid }}
+        runAsGroup: {{ .Values.sandboxTemplate.uid }}
+        fsGroup: {{ .Values.sandboxTemplate.uid }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: runtime
+        image: {{ include "open-websandbox.image" (dict "Values" .Values "repo" .Values.sandboxTemplate.runtimeRepository) }}
+        imagePullPolicy: {{ .Values.imagePullPolicy }}
+        ports:
+        - containerPort: 8888
+        env:
+        - name: MAX_TIMEOUT
+          value: "600"
+        # Per-sandbox process cap (RLIMIT_NPROC); gVisor enforces it.
+        - name: MAX_PROCS
+          value: {{ .Values.sandboxTemplate.maxProcs | quote }}
+        # Terminal scrollback ring (issue #129): replayed on WS reattach and
+        # flushed to the workspace on SIGTERM (pod eviction / node drain).
+        - name: TERMINAL_SCROLLBACK_BYTES
+          value: {{ .Values.sandboxTemplate.terminalScrollbackBytes | quote }}
+        # How long a detached terminal survives awaiting a WS resume (seconds).
+        - name: TERMINAL_DETACH_TTL_SECS
+          value: {{ .Values.sandboxTemplate.terminalDetachTtlSecs | quote }}
+        # Suppress kubelet-injected KUBERNETES_* env (leaks service-CIDR / API IP).
+        - name: KUBERNETES_SERVICE_HOST
+          value: ""
+        - name: KUBERNETES_SERVICE_PORT
+          value: ""
+        - name: KUBERNETES_SERVICE_PORT_HTTPS
+          value: ""
+        - name: KUBERNETES_PORT
+          value: ""
+        - name: KUBERNETES_PORT_443_TCP
+          value: ""
+        - name: KUBERNETES_PORT_443_TCP_ADDR
+          value: ""
+        - name: KUBERNETES_PORT_443_TCP_PORT
+          value: ""
+        - name: KUBERNETES_PORT_443_TCP_PROTO
+          value: ""
+        {{- if eq .Values.broker.persistentMode "s3-tiered" }}
+        # S3-tiered (issue #52): cap snapshot/restore at the hot-tier sizeLimit (D9).
+        - name: MAX_WORKSPACE_BYTES
+          value: {{ include "open-websandbox.sizeBytes" .Values.broker.s3.sizeLimit | quote }}
+        {{- end }}
+        {{- if $otlp }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: {{ $otlp | quote }}
+        {{- end }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: {{ .Values.sandboxTemplate.uid }}
+          runAsGroup: {{ .Values.sandboxTemplate.uid }}
+          capabilities:
+            drop: ["ALL"]
+        readinessProbe:
+          httpGet:
+            path: "/"
+            port: 8888
+          periodSeconds: 2
+        livenessProbe:
+          httpGet:
+            path: "/"
+            port: 8888
+          initialDelaySeconds: 3
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+            ephemeral-storage: 2Gi
+          limits:
+            cpu: "2"
+            memory: 4Gi
+            ephemeral-storage: 12Gi
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: home
+          mountPath: /home/sandbox
+        - name: tmp
+          mountPath: /tmp
+        - name: packages
+          mountPath: /packages
+      volumes:
+      - name: workspace
+        emptyDir:
+          sizeLimit: {{ .Values.sandboxTemplate.storage.workspace }}
+      - name: home
+        emptyDir:
+          sizeLimit: {{ .Values.sandboxTemplate.storage.home }}
+      - name: tmp
+        emptyDir:
+          {{- with .Values.sandboxTemplate.storage.tmp }}
+          medium: {{ .medium }}
+          sizeLimit: {{ .sizeLimit }}
+          {{- end }}
+      - name: packages
+        emptyDir:
+          sizeLimit: {{ .Values.sandboxTemplate.storage.packages }}
+      restartPolicy: OnFailure

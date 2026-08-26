@@ -1,0 +1,11 @@
+# GitHub issue-template configuration.
+# Blank issues stay enabled for general questions / feedback.
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/volkermauel/open-websandbox/security/advisories/new
+    about: |
+      Suspect a security issue in open-websandbox itself (broker, runtime,
+      router, Helm chart, deployment config)? Report it PRIVATELY via GitHub's
+      Security advisory — please do NOT open a public issue. See SECURITY.md
+      for scope and the threat model.

@@ -1,0 +1,95 @@
+name: rust
+
+# Runs only when the Rust control plane changes. Touching Python / chart /
+# vendored files does not trigger this workflow, so the existing `ci.yml` and
+# `e2e.yml` pipelines stay unaffected. See `openspec/changes/rust-rewrite/`.
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "rust/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/rust.yml"
+  pull_request:
+    paths:
+      - "rust/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/rust.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  fmt-clippy-test:
+    name: fmt + clippy + test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+      - name: cargo clippy (-D warnings)
+        # Issue #100 (B5): clippy gate, MUST stay clean. Full `pedantic` was trialed
+        # but emits ~107 warnings here (~60 are doc-completeness lints in the same
+        # category as the deferred `missing_docs`); cleanup is tracked in a follow-up.
+        # The `cargo doc` step below makes broken intra-doc links visible.
+        run: cargo clippy --all-targets -- -D warnings
+      - name: cargo doc (--no-deps, broken intra-doc links fail)
+        # Issue #100 (B5): rustdoc fails the build on broken intra-doc links.
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-deps --workspace
+      - name: cargo test
+        run: cargo test --all
+
+  deny:
+    name: cargo deny (advisories+bans blocking, licenses warn)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny
+      # Issue #100 (B1): advisories + bans HARD-FAIL the gate. A new RUSTSEC
+      # advisory, a yanked crate, or a disallowed dependency/source blocks merge
+      # until consciously triaged (ignore in deny.toml with a rationale, or fix).
+      - name: cargo deny check (advisories + bans) — blocking
+        run: cargo deny check advisories bans
+      # Licenses are warn-only: the curated allow-list in deny.toml is the D8
+      # review gate, but an unlisted-but-permissive license should surface for
+      # review without blocking (e.g. a new SPDX id spelling).
+      - name: cargo deny check (licenses) — warn-only
+        continue-on-error: true
+        run: cargo deny check licenses
+
+  audit:
+    # Issue #100 (B1): cargo-audit as a REPORT-ONLY second opinion against the
+    # RustSec advisory DB. Non-blocking: it cross-checks cargo-deny advisories
+    # using a separately-synced DB, so a DB-outage on one tool does not gate us
+    # and any divergence surfaces for triage without failing the build.
+    name: cargo audit (report-only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install cargo-audit
+        run: cargo install --locked cargo-audit
+      - name: cargo audit
+        run: cargo audit

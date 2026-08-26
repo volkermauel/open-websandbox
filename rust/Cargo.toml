@@ -1,0 +1,106 @@
+# Root Cargo workspace manifest for the Rust control plane (broker + runtime).
+# See `openspec/changes/rust-rewrite/` for the D1–D16 decisions.
+#
+# This is a *virtual* workspace (no `[package]` here); the real crates live in
+# `shared`, `broker`, and `runtime`. Cross-crate dependencies are pinned once in
+# `[workspace.dependencies]` below and consumed as `{ workspace = true }` so the
+# whole dependency tree stays single-version and auditable (D8).
+[workspace]
+resolver = "2"
+members = ["shared", "broker", "runtime"]
+
+[workspace.package]
+edition = "2021"
+license = "AGPL-3.0-only"
+authors = ["the open-websandbox contributors"]
+repository = "https://github.com/volkermauel/open-websandbox"
+homepage = "https://github.com/volkermauel/open-websandbox"
+
+# Pinned once via `cargo add`; member crates reference these with
+# `dep.workspace = true`. Versions resolved against the installed stable
+# toolchain (rustc/cargo 1.97.1).
+[workspace.dependencies]
+anyhow = "1.0.104"
+# Native tar+zstd for `/snapshot`+`/restore` (#94): the `zstd` stage is fully
+# async-streamed via `async-compression` (tokio `ZstdEncoder`/`ZstdDecoder`, Q1-b);
+# the `tar` crate runs synchronously inside a `spawn_blocking` task bridged to the
+# async stream by a bounded mpsc channel; `walkdir` replaces `find -mindepth 1`.
+# libzstd is bundled statically (Q2); `#![forbid(unsafe_code)]` covers our crates
+# only, audited deps with internal unsafe are accepted (Q7) — matching ring/aws-lc.
+async-compression = { version = "0.4", features = ["tokio", "zstd"] }
+async-trait = "0.1.89"
+tar = "0.4"
+walkdir = "2"
+# OpenTelemetry stack (D9): the OTLP exporter + SDK + tracing bridge. The
+# feature set is pinned once here (D8) and consumed via `workspace = true`.
+# - `rt-tokio`: batch span processor runtime (opentelemetry_sdk).
+# - `grpc-tonic`: OTLP/gRPC transport (tonic/prost/h2).
+# - `http-proto` + `reqwest-client`: OTLP/HTTP transport (issue #83), selected
+#   at runtime via `OTEL_EXPORTER_OTLP_PROTOCOL=http` (default `grpc`).
+# The OTLP exporter crate is feature-gated per member (`telemetry-otlp`, default
+# on) so slim builds can drop tonic/prost (OTel gRPC + protobuf) + the OTLP HTTP client entirely (issue
+# #83). The `metrics` facade + Prometheus `/metrics` and the `opentelemetry`
+# tracing SDK stay always-on; ONLY the OTLP exporter transport is conditional.
+# Tracing remains a no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset — boot+serve
+# never depend on a collector being reachable.
+opentelemetry = "0.32"
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "grpc-tonic", "http-proto", "reqwest-client"] }
+tracing-opentelemetry = "0.33"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# k8s-openapi requires exactly one version feature to be enabled. `shared` owns
+# the CRD type derives and therefore owns this feature selection for now; when
+# `broker`/`runtime` gain binaries in PR-B/PR-C, the pinned k8s version feature
+# should move to the binary that talks to the API server (D3).
+k8s-openapi = { version = "0.28.0", features = ["latest"] }
+kube = { version = "4.2.0", features = ["derive"] }
+schemars = "1.2.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+# D9 metrics facade (issue #74 Q4): the `metrics` crate fronts the
+# `metrics-exporter-prometheus` recorder. Pinned once here (D8) and consumed
+# via `workspace = true`; call sites use the `metrics::counter!` /
+# `metrics::histogram!` / `metrics::gauge!` macros against the single
+# per-process recorder installed by `shared`.
+metrics = "0.24"
+metrics-exporter-prometheus = "0.18"
+subtle = "2.6.1"
+thiserror = "2.0.20"
+utoipa = "5.5.0"
+
+# Workspace-wide lint configuration (issue #100 / B5). `clippy::pedantic` is
+# enabled at `warn` with a *negative* priority so individual crate/item-level
+# `allow` attributes (which default to priority 0) still compose on top of it
+# and can override a single lint locally. Each member crate opts in via
+# `[lints] workspace = true` in its own manifest. CI runs
+# `cargo clippy -- -D warnings`, so a pedantic warning is a build failure there.
+# NOTE: `missing_docs` (rustc) is intentionally NOT enabled here — it is a large
+# doc-only diff tracked separately and would break `-D warnings` until done.
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Subset of pedantic allowed workspace-wide: these few lints produce endless
+# churn (doc coverage on every fn, numeric-cast annotations at platform edges,
+# cosmetic name/markup nits) without catching real bugs. The ~60 remaining
+# pedantic lints stay active; override locally with #[allow] only when justified.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+cast_lossless = "allow"
+doc_markdown = "allow"
+module_name_repetitions = "allow"
+# Additional pedantic allows: cosmetic/verbosity lints that produce churn without
+# catching bugs (similar names, duplicate match arms, fn length, string-building
+# style, numeric-cast precision). Fix real issues; allow the stylistic noise.
+similar_names = "allow"
+match_same_arms = "allow"
+too_many_lines = "allow"
+format_push_string = "allow"
+cast_precision_loss = "allow"
+# restriction-group lints (style nits surfaced late by the full pedantic sweep):
+unused_async = "allow"
+unnecessary_debug_formatting = "allow"
+format_collect = "allow"

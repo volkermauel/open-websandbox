@@ -1,0 +1,12 @@
+# Pre-warm sandboxes from the template so first-call latency is low.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: {{ .Values.broker.warmPool }}
+  namespace: {{ include "open-websandbox.runtimeNamespace" . }}
+  labels:
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.warmPool.replicas }}
+  sandboxTemplateRef:
+    name: {{ .Values.warmPool.templateName }}

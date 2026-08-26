@@ -1,0 +1,43 @@
+# pi agent state (ephemeral) — NEVER commit conversations/artifacts/todos
+.pi/
+.pi-subagents/
+# scratch planning files (not project deliverables)
+plan.md
+progress.md
+
+# build artifacts / archives
+*.tar
+*.tgz
+# ...except vendored Helm subchart dependencies (so a plain `helm install` of the
+# chart works without `helm dependency build` — e.g. the optional otel-collector).
+!open-websandbox-platform/chart/charts/*.tgz
+*.tar.gz
+*.zip
+
+# language / tooling junk
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+build/
+site/
+
+# editor / OS
+.DS_Store
+*.swp
+*.swo
+*~
+
+# pi-lens cache (regenerated)
+.pi-lens/
+
+# coverage artifacts
+.coverage
+htmlcov/
+*,cover
+
+# rust / cargo build artifacts
+target/
+/rust/target/

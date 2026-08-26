@@ -1,0 +1,256 @@
+# sandbox-router: dials live sandbox PodIPs (KEP-NNNN fast path) and reverse-proxies.
+{{- $sysNs := include "open-websandbox.systemNamespace" . -}}
+{{- $runNs := include "open-websandbox.runtimeNamespace" . -}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sandbox-router
+  namespace: {{ $sysNs }}
+  labels:
+    app.kubernetes.io/name: sandbox-router
+    app.kubernetes.io/component: sandbox-router
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+---
+# Pod read access for the informer cache (server-side label selector narrows the
+# actual watch to sandbox-owned Pods; the API permission grant itself cannot be
+# label-scoped).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sandbox-router
+  labels:
+    app.kubernetes.io/name: sandbox-router
+    app.kubernetes.io/component: sandbox-router
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sandbox-router
+  labels:
+    app.kubernetes.io/name: sandbox-router
+    app.kubernetes.io/component: sandbox-router
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sandbox-router
+subjects:
+- kind: ServiceAccount
+  name: sandbox-router
+  namespace: {{ $sysNs }}
+---
+# system:auth-delegator for --authz-mode=tokenreview (create on tokenreviews /
+# subjectaccessreviews). Apply only when running the router with tokenreview authz;
+# included here to reproduce the source manifest set.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sandbox-router-auth-delegator
+  labels:
+    app.kubernetes.io/name: sandbox-router
+    app.kubernetes.io/component: sandbox-router
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+- kind: ServiceAccount
+  name: sandbox-router
+  namespace: {{ $sysNs }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox-router-svc
+  namespace: {{ $sysNs }}
+  labels:
+    app.kubernetes.io/name: sandbox-router
+    app.kubernetes.io/component: sandbox-router
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: sandbox-router
+    app.kubernetes.io/component: sandbox-router
+  ports:
+  - name: proxy
+    port: 8080
+    targetPort: proxy
+    protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-router
+  namespace: {{ $sysNs }}
+  labels:
+    app.kubernetes.io/name: sandbox-router
+    app.kubernetes.io/component: sandbox-router
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.router.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sandbox-router
+      app.kubernetes.io/component: sandbox-router
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sandbox-router
+        app.kubernetes.io/component: sandbox-router
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: sandbox-router
+{{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{- toYaml . | nindent 8 }}
+{{- end }}
+      # Spread replicas across nodes/zones so a single failure doesn't take
+      # the router fleet offline.
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: sandbox-router
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: sandbox-router
+      containers:
+      - name: sandbox-router
+        image: {{ include "open-websandbox.image" (dict "Values" .Values "repo" .Values.router.repository) }}
+        imagePullPolicy: {{ .Values.imagePullPolicy }}
+        args:
+        - --http-bind-address=:8080
+        - --metrics-bind-address=:9090
+        - --health-probe-bind-address=:8081
+        - --cluster-domain=cluster.local
+        - --proxy-timeout=180s
+        - --upstream-max-retries=3
+        - --cache-enabled=true
+        ports:
+        - name: proxy
+          containerPort: 8080
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        - name: healthz
+          containerPort: 8081
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: healthz
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: healthz
+          initialDelaySeconds: 1
+          periodSeconds: 5
+          failureThreshold: 2
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+          limits:
+            cpu: "2"
+            memory: 1Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+      # Give in-flight requests a chance to finish before SIGKILL.
+      terminationGracePeriodSeconds: 45
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-router
+  namespace: {{ $sysNs }}
+  labels:
+    app.kubernetes.io/name: sandbox-router
+    app.kubernetes.io/component: sandbox-router
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: sandbox-router
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ $sysNs }}
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  - to:
+    - ipBlock:
+        cidr: {{ .Values.router.kubeApiServerCidr }}    # kube-apiserver (informers + tokenreview)
+    ports:
+    - protocol: TCP
+      port: 443
+  - to:
+    - ipBlock:
+        cidr: {{ .Values.router.kubeDnsCidr }}   # kube-dns (coredns)
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  - to:
+    - ipBlock:
+        cidr: {{ .Values.router.kubeDnsCidrIPv6 }}   # kube-dns IPv6 (coredns) — scoped to the cluster's kube-dns IPv6 ClusterIP (values.router.kubeDnsCidrIPv6); do NOT widen to ::/0
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ $runNs }}
+    ports:
+    - protocol: TCP
+      port: 8888
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: sandbox-router
+  namespace: {{ $sysNs }}
+  labels:
+    app.kubernetes.io/name: sandbox-router
+    app.kubernetes.io/component: sandbox-router
+    {{- include "open-websandbox.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sandbox-router
+      app.kubernetes.io/component: sandbox-router

@@ -1,0 +1,373 @@
+# Vendored upstream agent-sandbox CONTROLLER (apiGroup agents.x-k8s.io), v0.5.3 —
+# NON-CRD slice (controller Deployment, RBAC, ServiceAccount, Service, webhooks).
+#
+# SOURCE (canonical, verbatim, SHA-pinned — DO NOT edit here; edit the source and regenerate):
+#   agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
+#   sha256: b7c047f2c0853034d4645fc0316e22fadebf3abae8de127ef60e50b18effe8f8   (recorded in agent-sandbox-platform/upstream/SHA256SUMS)
+#
+# NOTE: the CustomResourceDefinition documents from the same upstream manifest
+# live in chart/crds/upstream-agent-sandbox-v0.5.3-crds.yaml (applied verbatim by
+# Helm BEFORE templates/, with API-discovery refresh, so the chart's own
+# SandboxTemplate/SandboxWarmPool instances validate). This file therefore
+# contains the controller + its RBAC/Services ONLY — Helm-templated, gated by
+# `upstream.deploy`.
+#
+# DERIVATION: the upstream ships a single v1/List wrapping 15 resources. Helm
+# cannot apply a `kind: List` blob, so the List is split into discrete
+# `---`-separated YAML documents (one per resource). The upstream
+# `Namespace: agent-sandbox-system` resource is intentionally OMITTED — the chart
+# does not manage namespaces (operator/e2e pre-creates them); vendoring it would
+# collide with an existing namespace and break installs. The CRD documents were
+# moved to chart/crds/; what remains here is the non-CRD controller slice.
+#
+# RENDERED BY: chart/templates/upstream/upstream.yaml, gated by `upstream.deploy`.
+#
+# REGENERATE on an upstream version bump (exclude Namespace + CRDs; inter-doc
+# blank lines are stripped so the command reproduces this file exactly):
+#   python3 -c "import yaml;src='agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml';print('\n'.join('---\n'+yaml.safe_dump(i,sort_keys=False,default_flow_style=False,allow_unicode=True,width=100000) for i in (x for x in yaml.safe_load(open(src))['items'] if x.get('kind') not in ('Namespace','CustomResourceDefinition'))))" | sed '/^$/d' > agent-sandbox-platform/chart/files/upstream-agent-sandbox-v0.5.3.yaml
+#
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: '{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"annotations":{},"labels":{"app":"agent-sandbox-controller"},"name":"agent-sandbox-controller","namespace":"agent-sandbox-system"}}
+
+      '
+  labels:
+    app: agent-sandbox-controller
+  name: agent-sandbox-controller
+  namespace: agent-sandbox-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"annotations":{},"name":"agent-sandbox-controller","namespace":"agent-sandbox-system"},"rules":[{"apiGroups":[""],"resources":["secrets"],"verbs":["create"]},{"apiGroups":[""],"resourceNames":["agent-sandbox-webhook-certs"],"resources":["secrets"],"verbs":["get","patch","update"]}]}
+
+      '
+  name: agent-sandbox-controller
+  namespace: agent-sandbox-system
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - secrets
+  verbs:
+  - create
+- apiGroups:
+  - ''
+  resourceNames:
+  - agent-sandbox-webhook-certs
+  resources:
+  - secrets
+  verbs:
+  - get
+  - patch
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"annotations":{},"name":"agent-sandbox-controller"},"rules":[{"apiGroups":[""],"resources":["persistentvolumeclaims","pods","services"],"verbs":["create","delete","get","list","patch","update","watch"]},{"apiGroups":["agents.x-k8s.io"],"resources":["sandboxes"],"verbs":["create","delete","get","list","patch","update","watch"]},{"apiGroups":["agents.x-k8s.io"],"resources":["sandboxes/finalizers","sandboxes/status"],"verbs":["get","patch","update"]},{"apiGroups":["apiextensions.k8s.io"],"resourceNames":["sandboxclaims.extensions.agents.x-k8s.io","sandboxes.agents.x-k8s.io","sandboxtemplates.extensions.agents.x-k8s.io","sandboxwarmpools.extensions.agents.x-k8s.io"],"resources":["customresourcedefinitions"],"verbs":["get","patch","update"]},{"apiGroups":["coordination.k8s.io"],"resources":["leases"],"verbs":["create","get","list","patch","update","watch"]},{"apiGroups":["events.k8s.io"],"resources":["events"],"verbs":["create","patch"]}]}
+
+      '
+  name: agent-sandbox-controller
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - persistentvolumeclaims
+  - pods
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - agents.x-k8s.io
+  resources:
+  - sandboxes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - agents.x-k8s.io
+  resources:
+  - sandboxes/finalizers
+  - sandboxes/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - apiextensions.k8s.io
+  resourceNames:
+  - sandboxclaims.extensions.agents.x-k8s.io
+  - sandboxes.agents.x-k8s.io
+  - sandboxtemplates.extensions.agents.x-k8s.io
+  - sandboxwarmpools.extensions.agents.x-k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"annotations":{},"name":"agent-sandbox-controller-extensions"},"rules":[{"apiGroups":[""],"resources":["pods"],"verbs":["get","list","patch","update","watch"]},{"apiGroups":["","events.k8s.io"],"resources":["events"],"verbs":["create","patch","update"]},{"apiGroups":["agents.x-k8s.io"],"resources":["sandboxes"],"verbs":["create","delete","get","list","patch","update","watch"]},{"apiGroups":["coordination.k8s.io"],"resources":["leases"],"verbs":["create","delete","get","list","patch","update","watch"]},{"apiGroups":["extensions.agents.x-k8s.io"],"resources":["sandboxclaims","sandboxtemplates","sandboxwarmpools"],"verbs":["create","delete","get","list","patch","update","watch"]},{"apiGroups":["extensions.agents.x-k8s.io"],"resources":["sandboxclaims/finalizers","sandboxclaims/status","sandboxtemplates/finalizers","sandboxwarmpools/finalizers","sandboxwarmpools/status"],"verbs":["get","patch","update"]},{"apiGroups":["networking.k8s.io"],"resources":["networkpolicies"],"verbs":["create","delete","get","list","patch","update","watch"]}]}
+
+      '
+  name: agent-sandbox-controller-extensions
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ''
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+  - update
+- apiGroups:
+  - agents.x-k8s.io
+  resources:
+  - sandboxes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - extensions.agents.x-k8s.io
+  resources:
+  - sandboxclaims
+  - sandboxtemplates
+  - sandboxwarmpools
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - extensions.agents.x-k8s.io
+  resources:
+  - sandboxclaims/finalizers
+  - sandboxclaims/status
+  - sandboxtemplates/finalizers
+  - sandboxwarmpools/finalizers
+  - sandboxwarmpools/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"annotations":{},"name":"agent-sandbox-controller","namespace":"agent-sandbox-system"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"agent-sandbox-controller"},"subjects":[{"kind":"ServiceAccount","name":"agent-sandbox-controller","namespace":"agent-sandbox-system"}]}
+
+      '
+  name: agent-sandbox-controller
+  namespace: agent-sandbox-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-sandbox-controller
+subjects:
+- kind: ServiceAccount
+  name: agent-sandbox-controller
+  namespace: agent-sandbox-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"annotations":{},"name":"agent-sandbox-controller"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"agent-sandbox-controller"},"subjects":[{"kind":"ServiceAccount","name":"agent-sandbox-controller","namespace":"agent-sandbox-system"}]}
+
+      '
+  name: agent-sandbox-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agent-sandbox-controller
+subjects:
+- kind: ServiceAccount
+  name: agent-sandbox-controller
+  namespace: agent-sandbox-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"annotations":{},"name":"agent-sandbox-controller-extensions"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"agent-sandbox-controller-extensions"},"subjects":[{"kind":"ServiceAccount","name":"agent-sandbox-controller","namespace":"agent-sandbox-system"}]}
+
+      '
+  name: agent-sandbox-controller-extensions
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agent-sandbox-controller-extensions
+subjects:
+- kind: ServiceAccount
+  name: agent-sandbox-controller
+  namespace: agent-sandbox-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: '{"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"labels":{"app":"agent-sandbox-controller"},"name":"agent-sandbox-controller","namespace":"agent-sandbox-system"},"spec":{"ports":[{"name":"metrics","port":8080,"protocol":"TCP","targetPort":"metrics"}],"selector":{"app":"agent-sandbox-controller"}}}
+
+      '
+  labels:
+    app: agent-sandbox-controller
+  name: agent-sandbox-controller
+  namespace: agent-sandbox-system
+spec:
+  ports:
+  - name: metrics
+    port: 8080
+    protocol: TCP
+    targetPort: metrics
+  selector:
+    app: agent-sandbox-controller
+---
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: '{"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"name":"agent-sandbox-webhook-service","namespace":"agent-sandbox-system"},"spec":{"ports":[{"name":"webhook","port":443,"protocol":"TCP","targetPort":9443}],"selector":{"app":"agent-sandbox-controller"}}}
+
+      '
+  name: agent-sandbox-webhook-service
+  namespace: agent-sandbox-system
+spec:
+  ports:
+  - name: webhook
+    port: 443
+    protocol: TCP
+    targetPort: 9443
+  selector:
+    app: agent-sandbox-controller
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: '{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"labels":{"app":"agent-sandbox-controller"},"name":"agent-sandbox-controller","namespace":"agent-sandbox-system"},"spec":{"replicas":1,"selector":{"matchLabels":{"app":"agent-sandbox-controller"}},"template":{"metadata":{"labels":{"app":"agent-sandbox-controller"}},"spec":{"containers":[{"args":["--leader-elect=true","--extensions"],"image":"registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.3","name":"agent-sandbox-controller","ports":[{"containerPort":8080,"name":"metrics","protocol":"TCP"},{"containerPort":8081,"name":"healthz","protocol":"TCP"},{"containerPort":9443,"name":"webhook","protocol":"TCP"}],"volumeMounts":[{"mountPath":"/etc/sandbox-config","name":"config-volume","readOnly":true}]}],"serviceAccountName":"agent-sandbox-controller","volumes":[{"configMap":{"name":"agent-sandbox-config","optional":true},"name":"config-volume"}]}}}}
+
+      '
+  labels:
+    app: agent-sandbox-controller
+  name: agent-sandbox-controller
+  namespace: agent-sandbox-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-sandbox-controller
+  template:
+    metadata:
+      labels:
+        app: agent-sandbox-controller
+    spec:
+      containers:
+      - args:
+        - --leader-elect=true
+        - --extensions
+        image: registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.3
+        name: agent-sandbox-controller
+        ports:
+        - containerPort: 8080
+          name: metrics
+          protocol: TCP
+        - containerPort: 8081
+          name: healthz
+          protocol: TCP
+        - containerPort: 9443
+          name: webhook
+          protocol: TCP
+        volumeMounts:
+        - mountPath: /etc/sandbox-config
+          name: config-volume
+          readOnly: true
+      serviceAccountName: agent-sandbox-controller
+      volumes:
+      - configMap:
+          name: agent-sandbox-config
+          optional: true
+        name: config-volume

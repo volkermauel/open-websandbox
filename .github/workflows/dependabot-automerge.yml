@@ -1,0 +1,40 @@
+# Auto-merge patch-level Dependabot updates once CI is green.
+#
+# Policy for open-websandbox:
+#   - patch bumps (version-update:semver-patch) -> auto-merge (squash, delete
+#     branch) as soon as required CI checks pass;
+#   - minor / major bumps -> left open for manual review.
+#
+# `gh pr merge --auto` defers the actual merge to GitHub's branch-protection
+# rules, so the merge only happens after the required CI workflow is green.
+name: Dependabot auto-merge
+
+on:
+  pull_request:
+
+# Minimal scopes: only Dependabot PRs are acted on, and only to enable
+# auto-merge + delete the source branch.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    # Only react to Dependabot-authored PRs.
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v3
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Enable auto-merge for patch-level updates
+        # For grouped PRs, update-type reflects the most significant bump in the
+        # group, so a group auto-merges only when every member is a patch.
+        if: steps.meta.outputs.update-type == 'version-update:semver-patch'
+        run: gh pr merge "$PR_URL" --auto --squash --delete-branch
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

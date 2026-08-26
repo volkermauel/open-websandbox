@@ -1,0 +1,47 @@
+open-websandbox ({{ .Chart.Name }}) has been installed.
+
+Release : {{ .Release.Name }}
+Chart   : {{ .Chart.Name }}-{{ .Chart.Version }}
+
+==============================================================================
+  Open WebUI integration
+==============================================================================
+
+Point Open WebUI at the broker service:
+
+  Broker URL   : http://owui-broker.{{ .Values.namespaces.system }}.svc:8080
+
+The broker authenticates callers with a shared secret. Pass this value to
+Open WebUI (e.g. as the broker auth header); it is stored in the Secret
+"owui-broker-secret" (key: shared-secret) in namespace {{ .Values.namespaces.system }}:
+
+{{- if .Values.broker.sharedSecret }}
+  Shared secret : {{ .Values.broker.sharedSecret }}
+{{- else }}
+  Shared secret : (auto-generated — retrieve with)
+    kubectl -n {{ .Values.namespaces.system }} get secret owui-broker-secret \
+      -o jsonpath='{.data.shared-secret}' | base64 -d ; echo
+{{- end }}
+
+The broker forwards sandbox traffic to the router:
+
+  Router URL    : {{ .Values.broker.routerUrl }}
+
+==============================================================================
+  Prerequisites
+==============================================================================
+
+Both namespaces must already exist (they are not created by this chart):
+
+  kubectl create namespace {{ .Values.namespaces.system }}
+  kubectl create namespace {{ .Values.namespaces.runtime }}
+
+==============================================================================
+  Verify
+==============================================================================
+
+  kubectl -n {{ .Values.namespaces.system }}  rollout status deploy/owui-broker
+  kubectl -n {{ .Values.namespaces.system }}  rollout status deploy/sandbox-router
+  kubectl -n {{ .Values.namespaces.runtime }} get sandboxtemplate {{ .Values.sandboxTemplate.name }}
+  kubectl -n {{ .Values.namespaces.runtime }} get sandboxwarmpool {{ .Values.broker.warmPool }}
+  kubectl -n {{ .Values.namespaces.system }}  get secret owui-broker-secret

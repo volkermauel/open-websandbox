@@ -1,0 +1,32 @@
+schema: spec-driven
+
+context: |
+  Project: open-websandbox
+  Goal: Back Open WebUI's "Open Terminal" integration with an isolated, multi-tenant
+        sandbox runtime on PLAIN infrastructure (MicroK8s + containerd), with NO
+        proprietary runtime dependencies.
+  Architecture: Built on kubernetes-sigs/agent-sandbox (controller + Sandbox /
+        SandboxClaim / SandboxTemplate / SandboxWarmPool CRDs). A Rust/Axum
+        **broker** manages per-user/per-chat sandboxes; a Rust/Axum **runtime**
+        runs inside each sandbox pod (command exec, file API, WebSocket PTY) under
+        gVisor (runsc); a Go **sandbox-router** (built from upstream agent-sandbox)
+        reverse-proxies to sandbox pods.
+  Isolation: per-USER (must) + per-CHAT (achieved via per-chat subPath sandboxes).
+        gVisor runsc, uid 1000, no service-account token, restricted PodSecurity,
+        NetworkPolicy egress (DNS to public resolvers + HTTPS 443/80 to the public
+        internet; private + cluster CIDRs blocked). Persistent workspaces on a RWX
+        StorageClass; /home + /packages ephemeral (anti auto-exec / PATH-shadow);
+        tmpfs /tmp hard cap; PID cap.
+  Threat model: trusted internal users (Entra OIDC). Goal is "prevent accidental
+        cross-session leakage + strong practical sandboxing", not "resist a dedicated
+        hostile attacker" (shared kernel is an accepted residual risk).
+  Tech: Rust (Axum/tokio) broker + runtime (workspace `rust/{shared,broker,runtime}`);
+        agent-sandbox); MicroK8s v1.36, Calico CNI, containerd, gVisor nodes.
+  Status: platform built + proven on prod (ephemeral + persistent profiles, interactive
+        terminal, file API, security hardening). Now: release-prep (tests, docs,
+        Kustomize packaging, CI, router self-build) toward v0.1.0.
+  Sibling repos (prior art / contracts):
+        - ~/git/open-webui        — the host we integrate into (terminal API client, XTerminal)
+        - ~/git/open-terminal     — the OWUI REST/OpenAPI contract we reproduce
+        - ~/git/open-terminal-k8s-proxy — prior pod-per-session isolation baseline
+  Historical artifacts live in ./openspec/.

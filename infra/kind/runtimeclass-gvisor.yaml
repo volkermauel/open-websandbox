@@ -1,0 +1,9 @@
+# RuntimeClass for the KIND gVisor e2e leg. Sandbox pods opt in with
+# runtimeClassName: gvisor (the chart's default; values-kind.yaml clears it for runc).
+# The production RuntimeClass (with node scheduling notes) lives at
+# infra/gvisor/manifests/runtimeclass-gvisor.yaml.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc

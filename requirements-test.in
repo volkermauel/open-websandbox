@@ -1,0 +1,13 @@
+# Test dependencies for the Python/KIND end-to-end suite (tests/e2e).
+#
+# The control plane (broker + runtime) is Rust and tested with `cargo`; this file
+# lists only the Python e2e test tooling, pinned to exact versions. The
+# fully-resolved lock (all transitives + hashes), which is what gets installed
+# in CI, is generated into requirements-test.txt.
+#
+# Regenerate the lock after editing this file:
+#   uv pip compile --generate-hashes requirements-test.in -o requirements-test.txt
+pytest==9.1.1
+pytest-asyncio==1.4.0
+httpx==0.28.1
+websockets==17.0.1

@@ -1,0 +1,90 @@
+site_name: open-websandbox
+site_description: A Kubernetes sandbox runtime (gVisor) backing Open WebUI's Open Terminal feature.
+site_url: https://volkermauel.github.io/open-websandbox/
+repo_url: https://github.com/volkermauel/open-websandbox
+repo_name: volkermauel/open-websandbox
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+
+# The docs intentionally cross-reference source files that live at the repo root
+# (upstream CRDs, Go/Python sources, infra/, openspec/) — they render on GitHub but
+# are not part of the generated docs site, so don't fail the build over them.
+validation:
+  omitted_files: info
+  links:
+    absolute_links: info
+    anchors: info
+    not_found: ignore
+    unrecognized_links: ignore
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:mermaid2.fence.fence_mermaid
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+  - mermaid2
+
+nav:
+  - Overview: index.md
+  - Quick start: quickstart.md
+  - Architecture: architecture.md
+  - Deployment guide: deploy.md
+  - Operations runbook: operations.md
+  - S3-tiered storage: s3-tiered-storage.md
+  - Container snapshots (C/R) feasibility: container-snapshots.md
+  - Security model: security.md
+  - Production-readiness checklist: production-readiness-checklist.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/volkermauel/open-websandbox

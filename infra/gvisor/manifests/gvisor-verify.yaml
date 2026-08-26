@@ -1,0 +1,31 @@
+# One-shot pod that proves a node runs pods under gVisor.
+# Pin to a node via nodeSelector; read the banner from logs.
+#
+#   kubectl apply -f gvisor-verify.yaml
+#   # wait ~10s for it to run, then:
+#   kubectl logs gvisor-verify
+#   # expect: uname=4.19.0-gvisor  ...  banner=[...] Starting gVisor...  gvisor=CONFIRMED
+#   kubectl delete -f gvisor-verify.yaml
+#
+# Change the nodeSelector hostname to target the node under test.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gvisor-verify
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: gvisor-worker-1   # node under test
+  runtimeClassName: gvisor
+  restartPolicy: Never
+  containers:
+    - name: probe
+      image: busybox:1.36
+      command:
+        - sh
+        - -c
+        - |
+          echo "uname=$(uname -r)"
+          echo "osrelease=$(cat /proc/sys/kernel/osrelease)"
+          echo "banner=$(dmesg 2>/dev/null | grep -i gvisor | head -1)"
+          echo "gvisor=$([ "$(uname -r)" = "4.19.0-gvisor" ] && echo CONFIRMED || echo NO)"
+          sleep 10

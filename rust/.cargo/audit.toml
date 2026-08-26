@@ -1,0 +1,19 @@
+# cargo-audit policy for the open-websandbox Rust control plane (D8 — vetted deps).
+#
+# cargo-audit reads THIS file (`audit.toml`), NOT `deny.toml`; the two are kept
+# in lock-step. `rust/audit.toml` + `rust/deny.toml` together back the
+# `.github/workflows/rust.yml` supply-chain job (issue #80).
+#
+# Same philosophy as deny.toml: the advisory allow-list is intentionally tight,
+# and every ignored advisory carries a documented reason + expiry so the
+# exception is explicit and time-boxed.
+
+[advisories]
+# Issue #80 follow-up: the three rustls-webpki RUSTSEC-2026-0098/0099/0104
+# advisories (webpki 0.101.7) were CLEARED by dropping aws-sdk-s3's default
+# `rustls` feature in broker/Cargo.toml — the sole source of the legacy
+# hyper-0.14 / rustls-0.21 / webpki-0.101 line. The graph now resolves to
+# rustls-webpki 0.103.13 (rustls 0.23.43) only, so the previously time-boxed
+# ignores were removed. Kept in lock-step with deny.toml; cargo-audit's
+# `ignore` is a bare ID list (no per-entry reason field).
+ignore = []

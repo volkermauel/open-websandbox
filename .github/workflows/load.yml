@@ -1,0 +1,143 @@
+# Load / chaos smoke lane (issues #126, #127) — MANUAL ONLY (workflow_dispatch).
+#
+# The full soak (1k sessions) and the 10k-WS exercise (issue #126) are run by
+# hand / nightly against a dedicated cluster — see tests/load/README.md. This
+# workflow exists so a SHORT smoke of both tools is one click away and stays
+# green in CI: it stands up the same KIND/runc stack the e2e matrix uses and
+# runs a 60s mixed load plus one broker-kill chaos round.
+name: load
+
+on:
+  workflow_dispatch:
+    inputs:
+      users:
+        description: "loadgen virtual users"
+        default: "5"
+      duration:
+        description: "seconds per tool"
+        default: "60"
+
+permissions:
+  contents: read
+
+jobs:
+  load-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KIND_CLUSTER: open-websandbox-load
+      SYS_NS: agent-sandbox-system
+      RUNTIME_NS: agent-sandbox-runtime
+      # Dispatch inputs flow through env (never interpolate ${{ }} into run:
+      # template-injection hygiene) with the same defaults as workflow_dispatch.
+      LOAD_USERS: ${{ github.event.inputs.users || '5' }}
+      LOAD_DURATION: ${{ github.event.inputs.duration || '60' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+      - uses: azure/setup-kubectl@v5
+      - uses: azure/setup-helm@v5
+
+      - name: Create KIND cluster (runc)
+        uses: helm/kind-action@v1
+        with:
+          version: v0.27.0
+          cluster_name: ${{ env.KIND_CLUSTER }}
+          node_image: kindest/node:v1.31.0
+          wait: 60s
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build broker image
+        uses: docker/build-push-action@v7
+        with:
+          context: rust
+          file: rust/broker/Dockerfile
+          load: true
+          provenance: false
+          tags: open-websandbox-broker:v0.1.0
+          cache-from: type=gha,scope=open-websandbox-broker
+          cache-to: type=gha,mode=max,scope=open-websandbox-broker
+      - name: Build runtime image
+        uses: docker/build-push-action@v7
+        with:
+          context: rust
+          file: rust/runtime/Dockerfile
+          load: true
+          provenance: false
+          tags: open-websandbox-runtime:v0.1.0
+          cache-from: type=gha,scope=open-websandbox-runtime
+          cache-to: type=gha,mode=max,scope=open-websandbox-runtime
+      - name: Checkout upstream agent-sandbox@v0.5.3 (router self-build)
+        uses: actions/checkout@v7
+        with:
+          repository: kubernetes-sigs/agent-sandbox
+          ref: v0.5.3
+          path: agent-sandbox
+      - name: Self-build sandbox-router
+        uses: docker/build-push-action@v7
+        with:
+          context: agent-sandbox
+          file: agent-sandbox/sandbox-router/Dockerfile
+          load: true
+          provenance: false
+          tags: open-websandbox-router:v0.1.0
+          cache-from: type=gha,scope=open-websandbox-router
+          cache-to: type=gha,mode=max,scope=open-websandbox-router
+
+      - name: Load images into KIND
+        run: |
+          for img in open-websandbox-broker:v0.1.0 open-websandbox-runtime:v0.1.0 open-websandbox-router:v0.1.0; do
+            kind load docker-image "$img" --name "$KIND_CLUSTER"
+          done
+
+      - name: Helm install (runc profile)
+        run: |
+          kubectl create namespace "$SYS_NS" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace "$RUNTIME_NS" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f open-websandbox-platform/chart/crds/
+          kubectl wait --for=condition=Established --all crd --timeout=120s || true
+          helm install open-websandbox open-websandbox-platform/chart/ \
+            -f open-websandbox-platform/chart/values-kind.yaml -n "$SYS_NS"
+          kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
+          for i in $(seq 1 60); do
+            if kubectl -n "$RUNTIME_NS" get sandbox -o \
+                'go-template={{range .items}}{{range .status.conditions}}{{if eq .type "Ready"}}{{.status}}{{"\n"}}{{end}}{{end}}{{end}}' \
+                2>/dev/null | grep -q True; then break; fi
+            sleep 5
+          done
+
+      - name: Install test deps
+        run: pip install -r requirements-test.txt
+
+      - name: Port-forward broker
+        run: |
+          kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 &
+          echo $! > /tmp/pf.pid
+          for i in $(seq 1 30); do
+            python3 -c "import urllib.request;urllib.request.urlopen('http://localhost:8889/healthz',timeout=2)" >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+      - name: Load smoke (loadgen)
+        run: |
+          SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
+            -o jsonpath='{.data.shared-secret}' | base64 -d)"
+          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" \
+            python3 tests/load/loadgen.py \
+            --users "$LOAD_USERS" --duration "$LOAD_DURATION" --csv /tmp/load.csv
+
+      - name: Chaos smoke (broker kill)
+        run: |
+          SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
+            -o jsonpath='{.data.shared-secret}' | base64 -d)"
+          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" \
+            python3 tests/load/chaos.py --target broker --users 3 --duration 45
+
+      - name: Teardown port-forward
+        if: always()
+        run: kill "$(cat /tmp/pf.pid)" 2>/dev/null || true

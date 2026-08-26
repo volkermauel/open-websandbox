@@ -1,0 +1,56 @@
+# Sandbox-runtime isolation (revised for dynamic dep installs, pip/npm).
+# default-deny ingress+egress; allow:
+#   ingress  — the router (agent-sandbox-system) on the runtime port 8888, AND (when
+#              monitoring.prometheus.enabled) the Prometheus scraper from the 'monitoring' ns
+#   egress   — DNS to PUBLIC resolvers (dnsPolicy: None — no cluster-DNS IP / no
+#              namespace search-domain leak), and HTTPS (443) to the internet for
+#              package installs, EXCLUDING all RFC1918/link-local so a sandbox cannot
+#              reach the cluster/internal nets. (Phase 4 swaps 443 for an allowlist proxy.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-runtime-default-deny
+  namespace: agent-sandbox-runtime
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent-sandbox-system
+      ports:
+        - { protocol: TCP, port: 8888 }
+    - from:                               # Prometheus scraper (PodMonitor) — runtime :8888
+        - namespaceSelector:              # (enable with monitoring.prometheus.enabled)
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - { protocol: TCP, port: 8888 }
+  egress:
+    - to:                               # DNS — public resolvers (matches dnsPolicy: None)
+        - ipBlock: { cidr: 8.8.8.8/32 }
+        - ipBlock: { cidr: 1.1.1.1/32 }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:                               # HTTPS+HTTP (443/80) — pip/npm/git + curl
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:                     # block ALL private — anti-lateral-movement
+              - 10.0.0.0/8              #   pod CIDR 10.244/16 + service CIDR 10.96.0/24
+              - 172.16.0.0/12           #   node host net 10.0.1/24
+              - 192.168.0.0/16
+              - 169.254.0.0/16          #   link-local
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 80 }
+    - to:                               # HTTPS+HTTP (443/80) IPv6
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - fc00::/7                #   ULA
+              - fe80::/10               #   link-local
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 80 }

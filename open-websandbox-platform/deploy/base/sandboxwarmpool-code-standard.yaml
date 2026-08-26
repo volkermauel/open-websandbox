@@ -1,0 +1,10 @@
+# Pre-warm 2 sandboxes from code-standard-v1 so first-call latency is low.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: code-standard-warmpool
+  namespace: agent-sandbox-runtime
+spec:
+  replicas: 2
+  sandboxTemplateRef:
+    name: code-standard-v1
