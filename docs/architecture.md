@@ -142,12 +142,12 @@ stateDiagram-v2
         EClaim --> [*]: idle > IDLE_TTL (120s) → reap
     }
     state Persistent {
-        [*] --> PClaim: per-user SandboxClaim, BROKER_PERSISTENT_MODE = per-user-pvc | shared-subpath
-        PClaim: /workspace on RWX PVC (retained)
-        PClaim --> Running
+        [*] --> Sbx: per-chat Sandbox (owui-c-<sha256(user/session)[:12]>), PVC subPath
+        Sbx: /workspace = PVC chats/<sha256(user/session)[:12]> (retained)
+        Sbx --> Running
         Running --> Parked: idle > PARK_IDLE (120s) → Suspended (Pod deleted, PVC kept)
         Parked --> Running: next request → cold-resume (1–6s)
-        Running --> [*]: idle > REAP (7d) → delete claim + PVC
+        Running --> [*]: idle > REAP (7d) → delete Sandbox (PVC + chat dir kept)
     }
 ```
 
@@ -161,16 +161,25 @@ stateDiagram-v2
 
 ### Persistent (chart default)
 
-`/workspace` is backed by an **RWX PVC**. Two strategies via `BROKER_PERSISTENT_MODE`
-(chart default `per-user-pvc`):
+`/workspace` is backed by a **PVC**, deploy-selectable via
+`broker.persistentMode` (#140). **PVC granularity is the user (quota/reclaim),
+subPath granularity is the chat (isolation)** — every chat mounts only its own
+directory, so a chat's terminal can only ever see or delete its own files:
 
-| `BROKER_PERSISTENT_MODE` | Claim scope | `SandboxClaim` naming | Storage |
-|--------------------------|-------------|------------------------|---------|
-| **`per-user-pvc`** (default) | one per user | `owui-p-<sha256(user)[:12]>` | `volumeClaimTemplates.workspace` PVC (RWX, default `10Gi`), mounted at `/workspace` |
-| **`shared-subpath`** | one per chat | `owui-c-<sha256(user\|session)[:12]>` | sub-path of the shared `workspace-shared` PVC (RWX, `cephfs`, `50Gi`) |
+| `broker.persistentMode` | Sandbox (per chat) | PVC | `/workspace` subPath |
+|--------------------------|--------------------|-----|------------------------|
+| **`per-user-pvc`** (default) | `owui-c-<sha256(user\|session)[:12]>` | one per user: `workspace-p-<sha256(user)[:12]>` (broker-created, RWX, default `10Gi`) | `chats/<sha256(user/session)[:12]>` |
+| **`shared-subpath`** | `owui-c-<sha256(user\|session)[:12]>` | ONE shared `workspace-shared` (chart-rendered, RWX, `cephfs`, `50Gi`) | `users/<sha256(user)[:12]>/chats/<sha256(user/session)[:12]>` |
+| **`s3-tiered`** (#52) | `owui-c-<sha256(user\|session)[:12]>` | none (emptyDir hot tier) | offloaded to S3 on reap, restored on resume |
+
+The broker repoints the cloned pod template's `workspace` volume at the PVC and
+stamps the per-chat `subPath` on its mount (kubelet creates a missing subPath
+directory; the pod's `fsGroup: 1000` makes it writable). Reaping a sandbox
+deletes the Sandbox object but **never the PVC or chat directories** — a
+returning chat transparently re-resolves over its data.
 
 Either way the runtime validates every path before touching it (`safe_path` in
-[`rust/runtime/`](../rust/runtime/)) so a claim can only
+[`rust/runtime/`](../rust/runtime/)) so a session can only
 read/write its own subtree.
 
 ## Isolation layers

@@ -31,4 +31,5 @@ broker:
     tmpfs: false
     reaperPollSeconds: 10         # fast, deterministic offload-on-reap
 sharedPvc:
-  storageClass: standard          # KIND default (unused in s3-tiered — no PVC)
+  storageClass: standard            # local-path
+  accessModes: [ReadWriteOnce]      # local-path is RWO (unused in this lane)

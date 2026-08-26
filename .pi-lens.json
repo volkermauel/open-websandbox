@@ -1,0 +1,3 @@
+{
+  "ignore": ["open-websandbox-platform/chart/templates/**", "open-websandbox-platform/upstream/**"]
+}

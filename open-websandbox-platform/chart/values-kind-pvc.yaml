@@ -1,0 +1,23 @@
+# KIND/runc profile for the per-user-pvc e2e lane (issue #140).
+#
+# Exercises the PVC hot tier: defaultProfile=persistent, so every claim gets a
+# per-user PVC (broker.persistentStorageClass=standard → KIND local-path) with a
+# per-chat subPath at /workspace. local-path is RWO — fine on the single-node
+# KIND cluster where every pod of a user co-schedules on one node.
+sandboxTemplate:
+  runtimeClassName: ""            # runc (KIND can't nest gVisor)
+  maxProcs: 100000               # KIND shared-kernel NPROC collision (see values-kind.yaml)
+router:
+  kubeApiServerCidr: "10.96.0.1/32"   # KIND service CIDR (kubeadm default)
+  kubeDnsCidr: "10.96.0.10/32"
+broker:
+  defaultProfile: persistent
+  persistentMode: per-user-pvc
+  persistentStorage: 2Gi
+  persistentStorageClass: standard     # KIND local-path
+  persistentAccessModes: [ReadWriteOnce]
+  networkPolicy:
+    enabled: false                 # KIND e2e reaches the broker via port-forward (localhost)
+sharedPvc:
+  storageClass: standard
+  accessModes: [ReadWriteOnce]      # unused in per-user-pvc mode (schema requires it)

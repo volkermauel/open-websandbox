@@ -221,3 +221,17 @@ def minio_list_objects(prefix: str = "users/") -> list[str]:
     r = _s3_client().list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
     return [o["Key"] for o in r.get("Contents", [])]
 
+
+
+@pytest.fixture(scope="session")
+def require_pvc() -> None:
+    """Gate the PVC hot-tier e2e: skip unless E2E_PVC=1 (issue #140).
+
+    Runs against the normal broker port-forward (no extra fixtures): the PVC
+    lanes install the chart with broker.persistentMode per-user-pvc /
+    shared-subpath and broker.defaultProfile=persistent, so every claim mounts a
+    PVC-backed /workspace. E2E_PVC_MODE tells the tests which mode is under test
+    (default per-user-pvc).
+    """
+    if not os.environ.get("E2E_PVC"):
+        pytest.skip("PVC hot-tier e2e is opt-in (set E2E_PVC=1)")

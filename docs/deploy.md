@@ -192,15 +192,18 @@ broker:
   claimTimeoutSeconds: 60
   proxyTimeoutSeconds: 660
 
-profile:
-  default: persistent                 # ephemeral | persistent (deploy-fixed)
-  persistentMode: per-user-pvc        # per-user-pvc | shared-subpath
-  persistentStorageClass: cephfs   # RWX class (prereq)
+broker:
+  defaultProfile: persistent          # ephemeral | persistent (deploy-fixed)
+  # PVC hot tiers (#140): per-user-pvc (one RWX PVC per user, per-chat subPath) |
+  # shared-subpath (ONE shared RWX PVC, per-user/per-chat subPath) | s3-tiered
+  persistentMode: per-user-pvc
+  persistentStorageClass: cephfs   # RWX class (prereq; "" = cluster default)
   persistentStorage: 10Gi             # per-user PVC size
-  sharedPvc: workspace-shared
+  persistentAccessModes: [ReadWriteMany]
+  perUserPvcPrefix: workspace-p-
 
-idle:
-  ephemeralTtlSeconds: 120            # ephemeral reap
+broker.idle:
+  idleTtlSeconds: 120                 # ephemeral reap
   parkIdleSeconds: 120                # persistent park (suspend)
   reapSeconds: 604800                 # persistent reap (7d)
 
@@ -208,8 +211,10 @@ warmPool:
   replicas: 2                         # pre-warmed ephemeral sandboxes
   templateRef: code-standard-v1
 
-sharedPvc:
-  storageClassName: cephfs    # used only in shared-subpath mode
+sharedPvc:                            # rendered ONLY in shared-subpath mode (#140)
+  name: workspace-shared
+  storageClassName: cephfs
+  accessModes: [ReadWriteMany]
   size: 50Gi
 
 quota:                                # runtime-namespace ResourceQuota
@@ -232,10 +237,16 @@ Each value maps 1:1 to a real knob — see the [broker env-var
 reference](#broker-environment-variable-reference) below for the exact mapping
 and defaults. Two settings worth calling out:
 
-- **`profile.persistentMode`** — `per-user-pvc` (default) gives each user a
-  dedicated RWX PVC via the claim's `volumeClaimTemplates`; `shared-subpath`
-  mounts each user's `users/<id>/` slice of the single `workspace-shared` PVC
-  (then `sharedPvc` section matters).
+- **`broker.persistentMode`** — the persistent hot tier (#140), deploy-selectable:
+  - `per-user-pvc` (default) — one PVC per user (`workspace-p-<sha256(user)[:12]>`,
+    broker-created, `persistentStorageClass`/`persistentAccessModes`/`persistentStorage`).
+  - `shared-subpath` — ONE chart-rendered `workspace-shared` PVC (`sharedPvc.*` values).
+  - `s3-tiered` — emptyDir hot tier + S3 cold tier (requires `broker.s3.enabled`).
+
+  In **both PVC modes every chat mounts its own subPath**
+  (`chats/<sha256(user/session)[:12]>`, nested under `users/<sha256(user)[:12]>/` in
+  shared mode): a chat's terminal can only ever see — and delete — files of its own
+  chat. Cross-user AND cross-chat isolation are structural, not enforced.
 - **`router.authzMode: tokenreview`** — makes the Go router validate caller
   tokens via `TokenReview`. The chart applies the
   `system:auth-delegator` binding only when this is set; otherwise it stays
@@ -388,18 +399,19 @@ a Helm value unset to inherit the default.
 | `broker.warmPool` | `BROKER_WARMPOOL` | `code-standard-warmpool` | Warm pool (ephemeral profile) the broker binds claims to. |
 | `namespaces.runtime` | `BROKER_RUNTIME_NS` | `agent-sandbox-runtime` | Namespace holding templates/pools/claims/sandboxes. |
 | `broker.routerUrl` | `BROKER_ROUTER_URL` | `http://sandbox-router-svc.agent-sandbox-system:8080` | Where the broker proxies HTTP requests. |
-| `profile.default` | `BROKER_DEFAULT_PROFILE` | `persistent` | Default profile (`ephemeral` \| `persistent`). Deploy-fixed. |
-| `profile.persistentMode` | `BROKER_PERSISTENT_MODE` | `per-user-pvc` | `per-user-pvc` or `shared-subpath`. |
-| `profile.persistentStorage` | `BROKER_PERSISTENT_STORAGE` | `10Gi` | Per-user PVC size (per-user-pvc mode). |
-| `profile.persistentStorageClass` | `BROKER_PERSISTENT_STORAGECLASS` | `cephfs` | RWX StorageClass for persistent PVCs. |
+| `broker.defaultProfile` | `BROKER_DEFAULT_PROFILE` | `persistent` | Default profile (`ephemeral` \| `persistent`). Deploy-fixed. |
+| `broker.persistentMode` | `BROKER_PERSISTENT_MODE` | `per-user-pvc` | `per-user-pvc` \| `shared-subpath` \| `s3-tiered` (needs `broker.s3.enabled`). |
+| `broker.persistentStorage` | `BROKER_PERSISTENT_STORAGE` | `10Gi` | Per-user PVC size (per-user-pvc mode). |
+| `broker.persistentStorageClass` | `BROKER_PERSISTENT_STORAGE_CLASS` | `""` | Per-user PVC StorageClass ("" = cluster default; prod: an RWX class such as CephFS). |
 | `idle.ephemeralTtlSeconds` | `BROKER_IDLE_TTL_SECONDS` | `120` | Ephemeral reap age — claim deleted, sandbox returns to the warm pool. |
 | `idle.parkIdleSeconds` | `BROKER_PARK_IDLE_SECONDS` | `120` | Persistent **park** age — sandbox `Suspended` (pod gone, PVC kept). Cold resume ~1–6 s. |
 | `idle.reapSeconds` | `BROKER_REAP_SECONDS` | `604800` (7 d) | Persistent **reap** age — claim + PVC deleted. |
 | `broker.claimTimeoutSeconds` | `BROKER_CLAIM_TIMEOUT_SECONDS` | `60` | Wait for `Ready` (else HTTP 504). |
 | `broker.proxyTimeoutSeconds` | `BROKER_PROXY_TIMEOUT_SECONDS` | `660` | Upstream proxy timeout (> runtime `MAX_TIMEOUT` 600 s). |
 | `broker.baseTemplate` | `BROKER_BASE_TEMPLATE` | `code-standard-v1` | Base SandboxTemplate cloned for persistent per-chat sandboxes. |
-| `profile.sharedPvc` | `BROKER_SHARED_PVC` | `workspace-shared` | Shared PVC name (shared-subpath mode). |
-| `broker.claimPrefix` / `persistentPrefix` / `chatPrefix` | `BROKER_CLAIM_PREFIX` / `BROKER_PERSISTENT_PREFIX` / `BROKER_CHAT_PREFIX` | `owui-` / `owui-p-` / `owui-c-` | Resource-name prefixes for ephemeral claims / persistent claims / per-chat sandboxes. |
+| `sharedPvc.name` | `BROKER_SHARED_PVC` | `workspace-shared` | Shared PVC name (shared-subpath mode). |
+| `broker.persistentAccessModes` | `BROKER_PERSISTENT_ACCESS_MODES` | `ReadWriteMany` | Per-user PVC access modes, comma-separated (KIND local-path: `ReadWriteOnce`). |
+| `broker.perUserPvcPrefix` | `BROKER_PER_USER_PVC_PREFIX` | `workspace-p-` | Per-user PVC name prefix → `workspace-p-<sha256(user)[:12]>`. |
 | `broker.perUserPvcPrefix` | `BROKER_PER_USER_PVC_PREFIX` | `workspace-p-` | Per-user PVC name prefix (per-user-pvc mode). |
 
 ### Router flags

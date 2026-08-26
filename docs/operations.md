@@ -183,10 +183,15 @@ per-pod template limits — to admit more concurrent sandboxes.
 ## Backup & Restore (per-user PVCs)
 
 The only durable state in open-websandbox is each user's `/workspace`, held on a
-per-user RWX PVC named `workspace-p-<12-hex>` in `agent-sandbox-runtime` (the
-hash is `sha256(user_id)[:12]`, so the name is **deterministic per user** — a
-restored PVC re-binds to the same user when the broker recreates the claim on
-next access). Ephemeral sandboxes use an `emptyDir` and are not backed up.
+per-user RWX PVC named `workspace-p-<12-hex>` in `agent-sandbox-runtime` (#140:
+`broker.persistentMode: per-user-pvc`; the hash is `sha256(user_id)[:12]`, so
+the name is **deterministic per user** — a restored PVC re-binds to the same
+user when the broker recreates it on next access). Each chat lives in its own
+`chats/<sha256(user/session)[:12]>` subPath of that PVC, so snapshotting the
+user PVC captures every chat of that user. In `shared-subpath` mode the same
+applies with ONE shared `workspace-shared` PVC (snapshots cover all users);
+in `s3-tiered` mode the durable state is the S3 bucket instead. Ephemeral
+sandboxes use an `emptyDir` and are not backed up.
 
 > **The PVCs are unencrypted at rest.** Backups do not give you
 > confidentiality. Enable encryption at the **storage layer** (CephFS

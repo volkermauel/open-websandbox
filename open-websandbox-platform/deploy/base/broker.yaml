@@ -92,7 +92,12 @@ spec:
         - {name: BROKER_IDLE_TTL_SECONDS, value: "120"}          # ephemeral reap (return to warm pool)
         - {name: BROKER_DEFAULT_PROFILE, value: "persistent"}    # OWUI can't send X-Persistence; fixed at deploy
         - {name: BROKER_PERSISTENT_STORAGE, value: "10Gi"}       # per-user PVC size (per-user-pvc mode)
-        - {name: BROKER_PERSISTENT_MODE, value: "per-user-pvc"}  # per-user-pvc | shared-subpath
+        - {name: BROKER_PERSISTENT_MODE, value: "per-user-pvc"}  # per-user-pvc | shared-subpath | s3-tiered
+        # PVC hot tiers (#140): per-user PVC knobs (ignored in s3-tiered).
+        - {name: BROKER_PERSISTENT_STORAGE_CLASS, value: ""}     # "" = cluster default SC (prod: cephfs)
+        - {name: BROKER_PERSISTENT_ACCESS_MODES, value: "ReadWriteMany"}
+        - {name: BROKER_SHARED_PVC, value: "workspace-shared"}   # shared-subpath mode
+        - {name: BROKER_PER_USER_PVC_PREFIX, value: "workspace-p-"}
         - {name: BROKER_PARK_IDLE_SECONDS, value: "120"}         # persistent suspend (cold-start 1-6s); pairs with IDLE_TTL
         startupProbe:   {httpGet: {path: /healthz, port: http}, periodSeconds: 5, failureThreshold: 30}
         livenessProbe:  {httpGet: {path: /healthz, port: http}, periodSeconds: 10, failureThreshold: 3}

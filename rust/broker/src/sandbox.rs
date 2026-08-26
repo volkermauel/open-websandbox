@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 
 use kube::ResourceExt;
 
+use serde_json::Value;
 use shared::{OperatingMode, Profile, Sandbox, SandboxSpec, SandboxTemplate, ShutdownPolicy};
 
 use crate::error::ApiError;
@@ -34,6 +35,9 @@ pub const LAST_USED_KEY: &str = "broker-last-used";
 pub const USER_KEY: &str = "broker-user";
 /// Annotation carrying the owning session/chat id (S3 offload reads this).
 pub const SESSION_KEY: &str = "broker-session";
+/// Label key recording a persistent Sandbox's hot-tier backing
+/// (`per-user-pvc` / `shared-subpath` / `s3-tiered`) — #140.
+pub const PERSISTENT_MODE_LABEL_KEY: &str = "broker-persistent-mode";
 
 /// Extract the template's `podTemplate` (opaque JSON) to clone into a Sandbox.
 ///
@@ -46,6 +50,72 @@ pub fn extract_pod_template(template: &SandboxTemplate) -> Result<serde_json::Va
             template.name_any()
         ))
     })
+}
+
+/// PVC hot-tier surgery (#140): repoint the `workspace` volume at the PVC
+/// `claim_name` and give its mount the per-chat `sub_path`.
+///
+/// Mirrors the pre-rewrite broker: everything else in the cloned pod template
+/// (image/env/resources/securityContext/runtimeClass) survives verbatim; only
+/// the `workspace` volume source and its mount's `subPath` change. kubelet
+/// creates a missing subPath directory inside the PVC, and the pod's
+/// `fsGroup` makes it writable by the sandbox uid — no init container needed.
+///
+/// # Errors
+///
+/// [`ApiError::BadRequest`] when the template carries no `workspace` volume
+/// or no container mounts it (the SandboxTemplate contract).
+pub fn apply_persistent_volume(
+    pod_template: &mut serde_json::Value,
+    claim_name: &str,
+    sub_path: &str,
+) -> Result<(), ApiError> {
+    let Some(spec) = pod_template.get_mut("spec").and_then(Value::as_object_mut) else {
+        return Err(ApiError::BadRequest("pod template has no spec".to_string()));
+    };
+    let Some(volumes) = spec.get_mut("volumes").and_then(Value::as_array_mut) else {
+        return Err(ApiError::BadRequest(
+            "pod template has no spec.volumes — no workspace volume to repoint".to_string(),
+        ));
+    };
+    let volume = volumes
+        .iter_mut()
+        .find(|v| v.get("name").and_then(Value::as_str) == Some("workspace"))
+        .ok_or_else(|| {
+            ApiError::BadRequest("no volume named 'workspace' in pod template".to_string())
+        })?;
+    *volume = serde_json::json!({
+        "name": "workspace",
+        "persistentVolumeClaim": {"claimName": claim_name}
+    });
+
+    let containers = spec
+        .get_mut("containers")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| ApiError::BadRequest("pod template has no spec.containers".to_string()))?;
+    let mut patched = 0_usize;
+    for container in containers {
+        let Some(mounts) = container
+            .get_mut("volumeMounts")
+            .and_then(Value::as_array_mut)
+        else {
+            continue;
+        };
+        for mount in mounts {
+            if mount.get("name").and_then(Value::as_str) == Some("workspace") {
+                if let Some(obj) = mount.as_object_mut() {
+                    obj.insert("subPath".to_string(), Value::String(sub_path.to_string()));
+                    patched += 1;
+                }
+            }
+        }
+    }
+    if patched == 0 {
+        return Err(ApiError::BadRequest(
+            "no container mounts the 'workspace' volume".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Build a per-session `Sandbox` from a cloned template pod-blueprint.
@@ -220,5 +290,75 @@ mod tests {
             sbx.spec.pod_template.as_ref().unwrap()["metadata"]["labels"]["profile"],
             "ephemeral"
         );
+    }
+
+    #[test]
+    fn apply_persistent_volume_repoints_workspace_and_sets_subpath() {
+        let mut pod = serde_json::json!({
+            "spec": {
+                "containers": [
+                    {"name": "sandbox", "volumeMounts": [
+                        {"name": "workspace", "mountPath": "/workspace"},
+                        {"name": "home", "mountPath": "/home/sandbox"},
+                    ]},
+                    {"name": "sidecar", "volumeMounts": [
+                        {"name": "workspace", "mountPath": "/workspace", "readOnly": true},
+                    ]},
+                ],
+                "volumes": [
+                    {"name": "workspace", "emptyDir": {}},
+                    {"name": "home", "emptyDir": {}},
+                ],
+            }
+        });
+        apply_persistent_volume(&mut pod, "workspace-p-abc123", "chats/abc123").expect("surgery");
+
+        let vols = &pod["spec"]["volumes"];
+        assert_eq!(vols[0]["name"], "workspace");
+        assert_eq!(
+            vols[0]["persistentVolumeClaim"]["claimName"],
+            "workspace-p-abc123"
+        );
+        assert!(
+            vols[0].get("emptyDir").is_none(),
+            "emptyDir must be replaced"
+        );
+        assert_eq!(vols[1]["name"], "home", "other volumes untouched");
+
+        assert_eq!(
+            pod["spec"]["containers"][0]["volumeMounts"][0]["subPath"],
+            "chats/abc123"
+        );
+        assert!(pod["spec"]["containers"][0]["volumeMounts"][1]
+            .get("subPath")
+            .is_none());
+        assert_eq!(
+            pod["spec"]["containers"][1]["volumeMounts"][0]["subPath"],
+            "chats/abc123"
+        );
+        assert_eq!(
+            pod["spec"]["containers"][1]["volumeMounts"][0]["readOnly"],
+            true
+        );
+    }
+
+    #[test]
+    fn apply_persistent_volume_fails_without_workspace_volume() {
+        let mut pod = serde_json::json!({"spec": {
+            "containers": [{"name": "sandbox", "volumeMounts": [{"name": "workspace", "mountPath": "/workspace"}]}],
+            "volumes": [{"name": "other", "emptyDir": {}}],
+        }});
+        let err = apply_persistent_volume(&mut pod, "c", "s").unwrap_err();
+        assert!(matches!(err, ApiError::BadRequest(_)), "{err:?}");
+    }
+
+    #[test]
+    fn apply_persistent_volume_fails_without_workspace_mount() {
+        let mut pod = serde_json::json!({"spec": {
+            "containers": [{"name": "sandbox", "volumeMounts": [{"name": "home", "mountPath": "/home"}]}],
+            "volumes": [{"name": "workspace", "emptyDir": {}}],
+        }});
+        let err = apply_persistent_volume(&mut pod, "c", "s").unwrap_err();
+        assert!(matches!(err, ApiError::BadRequest(_)), "{err:?}");
     }
 }
