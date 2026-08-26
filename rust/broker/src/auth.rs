@@ -13,6 +13,8 @@
 
 #![forbid(unsafe_code)]
 
+use std::future::Future;
+
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::HeaderMap;
@@ -47,33 +49,41 @@ pub struct Authed;
 impl FromRequestParts<AppState> for Authed {
     type Rejection = ApiError;
 
-    async fn from_request_parts(
+    fn from_request_parts(
         parts: &mut Parts,
         state: &AppState,
-    ) -> Result<Self, Self::Rejection> {
-        let secret = state.config.shared_secret.as_bytes();
-        if is_placeholder_secret(std::str::from_utf8(secret).unwrap_or("")) {
-            // Misconfiguration, not "disabled": fail closed at the request path
-            // regardless of the boot guard.
-            metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "misconfigured_secret")
-                .increment(1);
-            return Err(ApiError::ServiceUnavailable(
-                "BROKER_SHARED_SECRET is not configured".to_string(),
-            ));
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> {
+        // Non-async impl of the RPITIT method (clippy 1.98 unused_async_trait_impl):
+        // the check is synchronous, so wrap it in an immediately-ready future.
+        std::future::ready(check_bearer(parts, state))
+    }
+}
+
+/// The synchronous bearer check backing [`Authed`]: fail-closed on the
+/// placeholder secret, constant-time token comparison, outcome-labeled metrics.
+/// A plain fn (not async) because it needs no awaits.
+fn check_bearer(parts: &Parts, state: &AppState) -> Result<Authed, ApiError> {
+    let secret = state.config.shared_secret.as_bytes();
+    if is_placeholder_secret(std::str::from_utf8(secret).unwrap_or("")) {
+        // Misconfiguration, not "disabled": fail closed at the request path
+        // regardless of the boot guard.
+        metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "misconfigured_secret").increment(1);
+        return Err(ApiError::ServiceUnavailable(
+            "BROKER_SHARED_SECRET is not configured".to_string(),
+        ));
+    }
+    match bearer_from_headers(&parts.headers) {
+        Some(token) if constant_time_eq(&token, secret) => Ok(Authed),
+        Some(_) => {
+            // Present-but-mismatched Bearer: keep the message identical to the
+            // missing-token case so the outcome label (not the body) is the only
+            // signal — a brute-forcer learns nothing from the response text.
+            metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "bad_token").increment(1);
+            Err(ApiError::Unauthorized("invalid bearer token".to_string()))
         }
-        match bearer_from_headers(&parts.headers) {
-            Some(token) if constant_time_eq(&token, secret) => Ok(Authed),
-            Some(_) => {
-                // Present-but-mismatched Bearer: keep the message identical to the
-                // missing-token case so the outcome label (not the body) is the only
-                // signal — a brute-forcer learns nothing from the response text.
-                metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "bad_token").increment(1);
-                Err(ApiError::Unauthorized("invalid bearer token".to_string()))
-            }
-            None => {
-                metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "missing_token").increment(1);
-                Err(ApiError::Unauthorized("invalid bearer token".to_string()))
-            }
+        None => {
+            metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "missing_token").increment(1);
+            Err(ApiError::Unauthorized("invalid bearer token".to_string()))
         }
     }
 }

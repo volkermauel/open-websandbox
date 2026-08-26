@@ -19,6 +19,7 @@
 #![forbid(unsafe_code)]
 
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
@@ -207,22 +208,26 @@ pub struct Authed;
 impl FromRequestParts<AppState> for Authed {
     type Rejection = ApiError;
 
-    async fn from_request_parts(
+    fn from_request_parts(
         parts: &mut Parts,
         state: &AppState,
-    ) -> Result<Self, Self::Rejection> {
-        match state
-            .key_store
-            .check(bearer_from_headers(&parts.headers).as_deref())
-        {
-            AuthOutcome::Ok => Ok(Authed),
-            AuthOutcome::Unconfigured => Err(ApiError::ServiceUnavailable(
-                "per-session runtime API key is not configured".to_string(),
-            )),
-            AuthOutcome::Invalid => Err(ApiError::Unauthorized(
-                "invalid runtime api key".to_string(),
-            )),
-        }
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> {
+        // Non-async impl of the RPITIT method (clippy 1.98 unused_async_trait_impl):
+        // the check is synchronous, so wrap it in an immediately-ready future.
+        std::future::ready(
+            match state
+                .key_store
+                .check(bearer_from_headers(&parts.headers).as_deref())
+            {
+                AuthOutcome::Ok => Ok(Authed),
+                AuthOutcome::Unconfigured => Err(ApiError::ServiceUnavailable(
+                    "per-session runtime API key is not configured".to_string(),
+                )),
+                AuthOutcome::Invalid => Err(ApiError::Unauthorized(
+                    "invalid runtime api key".to_string(),
+                )),
+            },
+        )
     }
 }
 
