@@ -35,7 +35,7 @@ lifecycle, and the four isolation layers.
 
 ```mermaid
 flowchart LR
-    WebUI["Open WebUI"] -->|HTTP / WS :8080| Broker
+    WebUI["Open WebUI"]
     subgraph cp["agent-sandbox-system (control plane)"]
         Broker["broker<br/>(Rust/Axum)"]
         Router["sandbox-router<br/>(Go)"]
@@ -45,9 +45,10 @@ flowchart LR
         WarmPool["SandboxWarmPool<br/>code-standard-warmpool (x2)"]
         Pod["runtime Pod<br/>(gVisor, :8888)"]
     end
-    Broker -->|HTTP proxy<br/>+ X-Sandbox-Pod-IP| Router
-    Broker -.->|WS :8888 direct<br/>(terminals)| Pod
-    Router -->|HTTP :8888| Pod
+    WebUI -->|"HTTP / WS :8080"| Broker
+    Broker -->|"HTTP proxy + X-Sandbox-Pod-IP"| Router
+    Broker -.->|"WS :8888 direct (terminals)"| Pod
+    Router -->|"HTTP :8888"| Pod
     Broker -->|get/create| Ctrl
     Ctrl -->|reconciles| WarmPool
     WarmPool -.->|owns| Pod

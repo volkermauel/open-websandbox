@@ -3,7 +3,7 @@
 > Verdict record for [issue #134](https://github.com/volkermauel/open-websandbox/issues/134).
 > Investigation date: 2026-08-15. Sources: upstream docs + source, GKE docs,
 > gVisor source on our pinned release, our chart/configs. Full evidence log:
-> `.notes-134.md` in the repo root.
+> the [investigation comment on issue #134](https://github.com/volkermauel/open-websandbox/issues/134#issuecomment-5301287859).
 
 ## Verdict in one paragraph
 
