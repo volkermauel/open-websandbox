@@ -194,10 +194,18 @@ def minio_port_forward():
 
 
 @pytest.fixture(scope="session")
-def require_s3(minio_port_forward) -> None:
-    """Gate the s3-tiered e2e: skip unless E2E_S3=1. Ensures the bucket exists."""
+def require_s3(request) -> None:
+    """Gate the s3-tiered e2e: skip unless E2E_S3=1. Ensures the bucket exists.
+
+    The gate MUST run before the MinIO port-forward is requested: taking
+    `minio_port_forward` as a parameter would instantiate it first (pytest
+    resolves dependencies before the fixture body), so lanes without in-cluster
+    MinIO (the runc/gvisor matrix) would spend 30s on a dead port-forward and
+    ERROR instead of skipping. Resolve it lazily, only after the gate passes.
+    """
     if not os.environ.get("E2E_S3"):
         pytest.skip("S3-tiered e2e is opt-in (set E2E_S3=1)")
+    request.getfixturevalue("minio_port_forward")
     from botocore.exceptions import ClientError
     c = _s3_client()
     try:
