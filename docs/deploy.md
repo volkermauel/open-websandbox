@@ -74,7 +74,7 @@ that registry).
 # broker — Rust (axum/tokio), distroless nonroot
 docker build -t ghcr.io/<owner>/open-websandbox-broker:<tag> -f rust/broker/Dockerfile rust
 
-# runtime — Rust (axum/tokio), debian-slim + shell toolchain
+# runtime — Rust (axum/tokio), debian-slim + shell toolchain + LibreOffice (nogui)
 docker build -t ghcr.io/<owner>/open-websandbox-runtime:<tag> -f rust/runtime/Dockerfile rust
 
 # sandbox-router — Go (self-build; upstream publishes only :latest at v0.5.3,

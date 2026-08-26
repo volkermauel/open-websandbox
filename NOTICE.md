@@ -14,6 +14,7 @@ license text is in [`LICENSE`](./LICENSE).
 |-----------|---------|-------|
 | [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox) controller + CRDs (pinned **v0.5.3**) | Apache License 2.0 | `open-websandbox-platform/upstream/` (vendored, SHA256-pinned) |
 | [gVisor (`runsc`)](https://gvisor.dev/) RuntimeClass | Apache License 2.0 | installed on cluster nodes; not distributed in this repository |
+| [LibreOffice](https://www.libreoffice.org/) (`-nogui` Debian packages) | Mozilla Public License 2.0 | installed in the runtime container image by `rust/runtime/Dockerfile`; not distributed in this repository |
 
 Third-party Rust / Go / Python dependencies retain their respective licenses
 (declared in each manifest: `rust/Cargo.toml`, the router module, and

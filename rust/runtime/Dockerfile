@@ -8,8 +8,8 @@
 #   /files/grep is implemented in Rust (regex), but `grep`/`find` are kept for any
 #   tenant `/execute` script that expects a normal POSIX userland.
 # So the final stage is `debian:bookworm-slim` + the minimal apt set those code paths
-# need (D13: keep a debian base; D16: the full data-science toolchain is a separate,
-# follow-up layer — this PR ships the Rust server + its own shell-out deps only).
+# need (D13: keep a debian base) plus the office toolchain (LibreOffice nogui,
+# see stage 3).
 #
 # Image name/tag are owned by the chart helper `open-websandbox.image`
 # (`.Values.sandboxTemplate.runtimeRepository` = `open-websandbox-runtime`) — built
@@ -62,6 +62,22 @@ RUN apt-get update \
       findutils \
       grep \
       coreutils \
+ && rm -rf /var/lib/apt/lists/*
+
+# Office toolchain: LibreOffice nogui variants (headless `soffice` conversions,
+# no GUI toolkit deps) + metric-compatible core fonts. Debian's `-nogui` binary
+# packages keep the layer ~70 MiB smaller than the full suite and avoid pulling
+# X/GTK; installed size is ~750 MiB — the single biggest line in this image, and
+# an accepted cost of document support. MPL-2.0 upstream (see NOTICE.md).
+# soffice needs a writable profile dir; the sandbox HOME (/home/sandbox) is a
+# mounted volume, and conversions can pin it via
+#   -env:UserInstallation=file:///tmp/lo
+# when run from tenant /execute scripts.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      libreoffice-nogui \
+      fonts-liberation \
+      fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/*
 
 # Non-root uid 1000 — matches the chart's sandboxTemplate.uid (1000) and the Python

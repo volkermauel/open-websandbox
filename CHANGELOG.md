@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **LibreOffice in the runtime image.** Debian's `-nogui` LibreOffice suite
+  (writer/calc/impress/draw, headless `soffice`) plus Liberation/DejaVu core fonts
+  is installed in `open-websandbox-runtime` (installed size ≈ 750 MiB — the dominant
+  layer of the image, accepted as the cost of document support). Tenants convert
+  documents headless as the non-root sandbox user, e.g.
+  `soffice --headless -env:UserInstallation=file:///tmp/lo --convert-to pdf doc.fodt`.
+  Verified by an e2e lane (`tests/e2e/test_office.py`).
+
 ### Changed
 
 - **Control plane rewritten in Rust (Axum).** The Python/FastAPI broker + runtime are
