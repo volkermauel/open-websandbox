@@ -42,11 +42,15 @@ jobs:
       # those pass while strict-validating every built-in resource we author
       # (Deployments, Services, NetworkPolicies, ResourceQuota, ...). A typo or
       # invalid field in any built-in resource still FAILS the gate.
-      - name: kubeconform
-        uses: helm/kubeconform-action@v1
-        with:
-          files: /tmp/rendered.yaml
-          kubernetes_version: "1.30.0"
-          strict: true
-          ignore_missing_schemas: true
-          summary: true
+      # NOTE: `helm/kubeconform-action` does not exist (the helm org ships
+      # kind-action / chart-testing-action / chart-releaser-action only). This
+      # step referenced a nonexistent action since inception; it only surfaced
+      # once Actions minutes were unblocked and the job actually ran. Run the
+      # pinned upstream binary directly instead.
+      - name: kubeconform (pinned v0.6.7)
+        run: |
+          curl -sSfL -o /tmp/kubeconform.tgz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeconform.tgz -C /tmp kubeconform
+          /tmp/kubeconform -strict -summary -kubernetes-version 1.30.0 \
+            -ignore-missing-schemas /tmp/rendered.yaml

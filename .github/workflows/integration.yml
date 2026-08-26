@@ -29,16 +29,11 @@ jobs:
     name: broker live backends (KIND + MinIO)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      # C2 target: MinIO S3 API on :9000 (no health-cmd; minio/minio ships no
-      # curl — a `Wait for MinIO` step below polls the runner-side health URL).
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: minio
-          MINIO_ROOT_PASSWORD: minio123
-        ports:
-          - 9000:9000
+    # C2 target: MinIO S3 API on :9000. Started as a docker-run step (NOT a
+    # `services:` container): GH service containers cannot pass a `server /data`
+    # command, and current minio/minio images no longer start a server without
+    # one — the container dies and :9000 never listens. Pinned release; image
+    # tag verified to exist.
     env:
       KIND_CLUSTER: owui-c1c2
     steps:
@@ -52,6 +47,11 @@ jobs:
           workspaces: rust
 
       # --- C2: MinIO ---------------------------------------------------------
+      - name: Start MinIO (pinned release, S3 API on :9000)
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minio -e MINIO_ROOT_PASSWORD=minio123 \
+            minio/minio:RELEASE.2024-01-16T16-07-38Z server /data
       - name: Wait for MinIO (:9000)
         run: |
           for i in $(seq 1 30); do
