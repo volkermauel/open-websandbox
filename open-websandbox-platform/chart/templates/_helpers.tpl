@@ -20,6 +20,31 @@ app.kubernetes.io/part-of: open-websandbox
 {{- end -}}
 
 {{/*
+Chart labels WITHOUT app.kubernetes.io/name — for resources whose source
+manifest already sets its own app.kubernetes.io/name (the vendored
+sandbox-router set). Emitting both renders a duplicate YAML map key:
+helm lint tolerates it (last key wins) but strict schema validation
+(kubeconform -strict, the chart CI gate) rejects the document.
+*/}}
+{{- define "open-websandbox.chartLabels" -}}
+helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/part-of: open-websandbox
+{{- end -}}
+
+{{/*
+Chart labels WITHOUT app.kubernetes.io/managed-by — for resources that
+declare their own manager (workspace-shared PVC: managed-by owui-broker).
+*/}}
+{{- define "open-websandbox.labelsNoManagedBy" -}}
+app.kubernetes.io/name: open-websandbox
+helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/part-of: open-websandbox
+{{- end -}}
+
+{{/*
 System (control-plane) namespace — broker + router.
 */}}
 {{- define "open-websandbox.systemNamespace" -}}

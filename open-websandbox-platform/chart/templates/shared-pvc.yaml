@@ -10,7 +10,7 @@ metadata:
   namespace: {{ include "open-websandbox.runtimeNamespace" . }}
   labels:
     app.kubernetes.io/managed-by: owui-broker
-    {{- include "open-websandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labelsNoManagedBy" . | nindent 4 }}
 spec:
   accessModes:
   - ReadWriteMany
