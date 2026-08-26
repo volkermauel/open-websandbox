@@ -489,5 +489,3 @@ jobs:
           E2E_PVC=1 E2E_PVC_MODE=${{ matrix.mode }} \
             pytest tests/e2e/test_pvc_persistence.py -v
           kill "$PF"
-        env:
-          KUBECONFIG: ${{ github.workspace }}/.kube/config
