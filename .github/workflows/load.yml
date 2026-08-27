@@ -59,7 +59,7 @@ jobs:
           file: rust/broker/Dockerfile
           load: true
           provenance: false
-          tags: open-websandbox-broker:v0.1.0
+          tags: open-websandbox-broker:v0.1.1
           cache-from: type=gha,scope=open-websandbox-broker
           cache-to: type=gha,mode=max,scope=open-websandbox-broker
       - name: Build runtime image
@@ -69,7 +69,7 @@ jobs:
           file: rust/runtime/Dockerfile
           load: true
           provenance: false
-          tags: open-websandbox-runtime:v0.1.0
+          tags: open-websandbox-runtime:v0.1.1
           cache-from: type=gha,scope=open-websandbox-runtime
           cache-to: type=gha,mode=max,scope=open-websandbox-runtime
       - name: Checkout upstream agent-sandbox@v0.5.3 (router self-build)
@@ -85,13 +85,13 @@ jobs:
           file: agent-sandbox/sandbox-router/Dockerfile
           load: true
           provenance: false
-          tags: open-websandbox-router:v0.1.0
+          tags: open-websandbox-router:v0.1.1
           cache-from: type=gha,scope=open-websandbox-router
           cache-to: type=gha,mode=max,scope=open-websandbox-router
 
       - name: Load images into KIND
         run: |
-          for img in open-websandbox-broker:v0.1.0 open-websandbox-runtime:v0.1.0 open-websandbox-router:v0.1.0; do
+          for img in open-websandbox-broker:v0.1.1 open-websandbox-runtime:v0.1.1 open-websandbox-router:v0.1.1; do
             kind load docker-image "$img" --name "$KIND_CLUSTER"
           done
 

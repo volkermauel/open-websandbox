@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.1.1] - 2026-08-27
+
 ### Fixed (#147)
 
 - **WS terminal relay now authenticates to the runtime.** Since #98's hard

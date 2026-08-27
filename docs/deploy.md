@@ -273,7 +273,7 @@ install, set at least these in your values file:
 |-----|------------------|--------------|
 | `imageRegistry` | `""` | `ghcr.io` (the public registry). |
 | `imageOwner` | `""` | `$OWNER` — your GHCR org/namespace. |
-| `imageTag` | `v0.1.0` | A pinned tag; **pin by digest** for production. |
+| `imageTag` | `v0.1.1` | A pinned tag; **pin by digest** for production. |
 | `imagePullPolicy` | `Never` | `IfNotPresent` once images are pulled from a registry (not pre-loaded). |
 | `broker.sharedSecret` | `dev-shared-secret-change-me` | `openssl rand -hex 32` — **must override**. Becomes the broker's `BROKER_SHARED_SECRET`. |
 | `router.kubeApiServerCidr` | `10.96.0.1/32` (kubeadm; default) | ClusterIP of the `kubernetes` Service. k3s: `10.43.0.1/32`; MicroK8s: `10.152.183.1/32`. Wrong here and the router can't reach the API server. |
