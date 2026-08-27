@@ -79,14 +79,21 @@ fn decide(
     cfg: &shared::BrokerConfig,
 ) -> ReaperAction {
     match profile {
-        // s3-tiered persistent — reap at IDLE_TTL (like ephemeral) so
-        // the cold tier (S3) captures state before the emptyDir is destroyed.
+        // empty-dir hot tier — reap at IDLE_TTL (like ephemeral) so the
+        // cold tier (S3) captures state before the emptyDir is destroyed.
         // The reaper offloads first (C-4 ReapOffload); never parks (the pod
-        // must be alive to snapshot). Gated on `s3_enabled`.
-        Profile::Persistent if cfg.s3_enabled && idle_secs > cfg.idle_ttl_seconds => {
+        // must be alive to snapshot). Keyed on the HOT tier, not on
+        // s3_enabled: PVC × S3 hybrids park/reap normally (#142) — their
+        // data survives pod delete, and reap-of-parked resumes to offload.
+        Profile::Persistent
+            if matches!(cfg.persistent_mode, shared::PersistentMode::EmptyDir)
+                && idle_secs > cfg.idle_ttl_seconds =>
+        {
             ReaperAction::Reap
         }
-        Profile::Persistent if cfg.s3_enabled => ReaperAction::Skip,
+        Profile::Persistent if matches!(cfg.persistent_mode, shared::PersistentMode::EmptyDir) => {
+            ReaperAction::Skip
+        }
         // persistent (non-s3-tiered) — park at PARK_TTL, reap at REAP_TTL.
         // Reap takes precedence; an already-Suspended sandbox is never re-parked.
         Profile::Persistent if idle_secs > cfg.reap_seconds => ReaperAction::Reap,
@@ -227,7 +234,17 @@ pub async fn reap_once(
                             // reap conditions) — drives idle_reaps_total{reason}.
                             let reason = match profile {
                                 Profile::Ephemeral => "ephemeral_idle",
-                                Profile::Persistent if cfg.s3_enabled => "s3_tiered_idle",
+                                // Mirrors decide(): only the empty-dir hot tier
+                                // reaps at IDLE_TTL (the cold tier is its only
+                                // durability). PVC hybrids reap at REAP_TTL.
+                                Profile::Persistent
+                                    if matches!(
+                                        cfg.persistent_mode,
+                                        shared::PersistentMode::EmptyDir
+                                    ) =>
+                                {
+                                    "cold_tier_idle"
+                                }
                                 Profile::Persistent => "persistent_reap_ttl",
                             };
                             metrics::counter!(IDLE_REAPS_TOTAL, "reason" => reason).increment(1);
@@ -421,14 +438,16 @@ mod tests {
             park_idle_seconds: park,
             reap_seconds: reap,
             s3_enabled: true,
+            persistent_mode: shared::PersistentMode::EmptyDir,
             ..Default::default()
         }
     }
 
     #[test]
-    fn s3_tiered_persistent_reaps_at_idle_ttl_like_ephemeral() {
-        // s3-tiered reaps at IDLE_TTL (cold tier is S3) — never waits
-        // for PARK/REAP_TTL — so the emptyDir state is captured before destroy.
+    fn empty_dir_hot_tier_reaps_at_idle_ttl_like_ephemeral() {
+        // empty-dir hot tier reaps at IDLE_TTL (the cold tier is the only
+        // durability) — never waits for PARK/REAP_TTL, so the emptyDir state
+        // is captured before the pod is destroyed.
         let c = cfg_s3(120, 300, 604_800);
         assert_eq!(
             decide(Profile::Persistent, 121, OperatingMode::Running, &c),
@@ -441,8 +460,8 @@ mod tests {
     }
 
     #[test]
-    fn s3_tiered_persistent_is_never_parked() {
-        // The s3-tiered branch only ever returns Reap (over IDLE_TTL) or Skip
+    fn empty_dir_hot_tier_is_never_parked() {
+        // The empty-dir branch only ever returns Reap (over IDLE_TTL) or Skip
         // (under) — never Park — so the pod stays alive to snapshot. The
         // PARK_TTL threshold is never consulted (the cold tier is S3).
         let c = cfg_s3(120, 300, 604_800);
@@ -461,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn s3_tiered_persistent_under_idle_ttl_is_skipped() {
+    fn empty_dir_hot_tier_under_idle_ttl_is_skipped() {
         let c = cfg_s3(120, 300, 604_800);
         assert_eq!(
             decide(Profile::Persistent, 120, OperatingMode::Running, &c),
@@ -471,8 +490,8 @@ mod tests {
 
     #[test]
     fn s3_disabled_persistent_still_parks_and_reaps_normally() {
-        // The s3-tiered branch only applies when s3_enabled (cfg() defaults it
-        // off): a PVC-persistent sandbox parks at PARK_TTL, reaps at REAP_TTL.
+        // A PVC hot tier parks at PARK_TTL and reaps at REAP_TTL with the cold
+        // tier off (cfg() defaults s3_enabled off and mode per-user-pvc).
         let c = cfg(120, 300, 604_800);
         assert_eq!(
             decide(Profile::Persistent, 400, OperatingMode::Running, &c),
@@ -482,6 +501,40 @@ mod tests {
             decide(Profile::Persistent, 604_801, OperatingMode::Running, &c),
             ReaperAction::Reap
         );
+    }
+
+    #[test]
+    fn hybrid_pvc_with_s3_still_parks_and_reaps_normally() {
+        // #142: tiering is independent of the hot tier. A PVC-backed
+        // persistent sandbox parks/reaps on the PVC schedule even with the
+        // cold tier enabled — the data survives pod delete, and the reaper
+        // resumes a parked sandbox to offload before deleting it.
+        for mode in [
+            shared::PersistentMode::PerUserPvc,
+            shared::PersistentMode::SharedSubpath,
+        ] {
+            let c = shared::BrokerConfig {
+                idle_ttl_seconds: 120,
+                park_idle_seconds: 300,
+                reap_seconds: 604_800,
+                s3_enabled: true,
+                persistent_mode: mode,
+                ..Default::default()
+            };
+            assert_eq!(
+                decide(Profile::Persistent, 121, OperatingMode::Running, &c),
+                ReaperAction::Skip,
+                "hybrid must not reap at IDLE_TTL (that is empty-dir behaviour)"
+            );
+            assert_eq!(
+                decide(Profile::Persistent, 400, OperatingMode::Running, &c),
+                ReaperAction::Park
+            );
+            assert_eq!(
+                decide(Profile::Persistent, 604_801, OperatingMode::Suspended, &c),
+                ReaperAction::Reap
+            );
+        }
     }
 
     // --- annotation/label parsing -------------------------------------------

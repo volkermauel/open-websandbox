@@ -12,6 +12,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — composable S3 tiering (#142)
+
+The S3 cold tier (`broker.s3.enabled`) is now **independent of the hot tier**
+(`broker.persistentMode`): offload-on-reap + restore-on-resume compose with every
+hot tier. `s3-tiered` is renamed `empty-dir` (the hot tier it actually selects) and
+remains fail-closed — `empty-dir` without S3 is rejected at broker boot. New hybrid
+tiering for PVC modes: park/resume serves the PVC directly; reap offloads the chat
+to S3, **purges it from the hot tier** (freeing PVC space), and the next resolve
+restores from the cold tier. A stale cold object never clobbers newer PVC data —
+the runtime restores only into an empty workspace (the reserved
+`.open-websandbox/` dir does not count; it is recreated by the SIGTERM scrollback
+flush after a purge). New: `broker.reapSeconds` chart knob, `values-kind-pvc-s3.yaml`
+profile, e2e lane `pvc-s3` (`E2E_PVC_S3=1`), and hybrid tiering tests (park
+no-clobber, reap offload/purge/cold-restore).
+
 ### Added
 
 - **PVC hot tiers restored, with per-chat isolation (#140).** `broker.persistentMode`

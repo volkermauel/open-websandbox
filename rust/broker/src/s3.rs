@@ -408,6 +408,10 @@ pub enum RestoreOutcome {
     Restored(String),
     /// No object under the namespace — first creation; restore skipped.
     NoObject,
+    /// The runtime's workspace was NON-empty (PVC hot hit — #142): the cold
+    /// object exists but unpacking it over newer hot data would regress state,
+    /// so the runtime skipped and keeps serving the hot tier.
+    HotTierHit,
 }
 
 /// The S3-tiered offload/restore driver. Implements [`ReapOffload`] (the reaper
@@ -422,6 +426,12 @@ pub struct S3Offload {
     runtime_api_key: String,
     max_attempts: u32,
     backoff_base: Duration,
+    /// Hot tier (#142): PVC-backed sandboxes get their chat dir PURGED from
+    /// the hot tier after a fully-successful offload (true tiering: the PVC
+    /// frees space); empty-dir sandboxes do not (the pod is deleted anyway).
+    purge_hot_tier: bool,
+    /// Bound for the resume-of-parked wait (pod must exist to snapshot).
+    resume_timeout: Duration,
     /// Test/dev seam: when set, runtime hops target `{base}/snapshot` +
     /// `{base}/restore` instead of `http://<pod-ip>:8888/...` (used by the
     /// `wiremock`-backed integration tests). `None` in production.
@@ -445,6 +455,8 @@ impl S3Offload {
             runtime_api_key: cfg.runtime_api_key.clone(),
             max_attempts: DEFAULT_OFFLOAD_MAX_ATTEMPTS,
             backoff_base: DEFAULT_OFFLOAD_BACKOFF,
+            purge_hot_tier: cfg.persistent_mode.is_pvc(),
+            resume_timeout: Duration::from_secs(cfg.claim_timeout_seconds.max(15)),
             runtime_upstream_override: None,
             store: None,
         }
@@ -601,6 +613,21 @@ impl S3Offload {
                 text.chars().take(200).collect::<String>()
             )));
         }
+        // Restore-if-empty (#142): a 200 with `restored: false` means the
+        // runtime found a non-empty workspace (PVC hot hit — e.g. park resume)
+        // and deliberately skipped so the hot tier keeps serving.
+        let body = resp.text().await.unwrap_or_default();
+        let restored = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("restored").and_then(serde_json::Value::as_bool))
+            .unwrap_or(true);
+        if !restored {
+            tracing::info!(
+                sandbox = %name, key = %latest,
+                "s3 restore skipped — non-empty workspace (hot-tier hit)"
+            );
+            return Ok(RestoreOutcome::HotTierHit);
+        }
         tracing::info!(sandbox = %name, key = %latest, "s3 restore complete");
         Ok(RestoreOutcome::Restored(latest))
     }
@@ -609,30 +636,31 @@ impl S3Offload {
 #[async_trait]
 impl ReapOffload for S3Offload {
     async fn offload_on_reap(&self, sandbox: &Sandbox) -> Result<(), OffloadError> {
-        // Only persistent s3-tiered sandboxes are offloaded; ephemeral +
-        // PVC-persistent carry nothing for the cold tier. When S3 tiering is
-        // enabled, every *persistent* reap is an s3-tiered reap.
+        // Cold tier offloads every persistent reap (#142): empty-dir hot
+        // tier (its only durability) AND PVC hybrids (tiering — reap frees
+        // the hot tier). Ephemeral sandboxes carry nothing to offload.
         if profile_of(sandbox) != Profile::Persistent {
             return Ok(());
         }
         let name = sandbox.name_any();
-        let pod_ip = sandbox
-            .status
-            .as_ref()
-            .and_then(|s| s.pod_ip())
-            .ok_or_else(|| {
-                OffloadError::Failed(format!(
-                    "no pod IP for {name}; cannot offload (leave for next tick)"
-                ))
-            })?
-            .to_owned();
+        let pod_ip = self.ensure_running_pod(sandbox).await?;
         let user = annotation(sandbox, USER_KEY);
         let session = annotation(sandbox, SESSION_KEY);
 
         // Retry with linear backoff (D7): on exhaustion, keep the sandbox alive.
         for attempt in 1..=self.max_attempts {
             match self.offload_once(&name, &pod_ip, &user, &session).await {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    // #142: after a FULLY-successful offload (new object stored +
+                    // keep-latest delete done), purge the chat dir from a PVC
+                    // hot tier so it actually frees space. Best-effort: the
+                    // object is durable, a stale dir merely wastes hot bytes
+                    // until the next reap converges.
+                    if self.purge_hot_tier {
+                        self.purge_workspace(&name, &pod_ip).await;
+                    }
+                    return Ok(());
+                }
                 Err(e) => {
                     tracing::warn!(
                         %name, attempt, max = self.max_attempts, error = %e,
@@ -648,6 +676,119 @@ impl ReapOffload for S3Offload {
             "offload {name} failed after {} attempts (keeping sandbox alive)",
             self.max_attempts
         )))
+    }
+}
+
+impl S3Offload {
+    /// Pod IP for the offload, resuming a parked sandbox first (#142).
+    ///
+    /// A `Suspended` (parked) PVC-hybrid sandbox has no pod, but the snapshot
+    /// lives in the runtime — so the reaper briefly resumes it (patch
+    /// `Running`, wait Ready, bounded by `claim_timeout_seconds`) before
+    /// offloading. The sandbox is deleted right after, so the pod's lifetime
+    /// is seconds. A `Running` sandbox without an IP yet keeps the old
+    /// behaviour (error, leave for the next tick).
+    async fn ensure_running_pod(&self, sandbox: &Sandbox) -> Result<String, OffloadError> {
+        let name = sandbox.name_any();
+        if let Some(ip) = sandbox.status.as_ref().and_then(|s| s.pod_ip()) {
+            return Ok(ip.to_owned());
+        }
+        let suspended = sandbox
+            .spec
+            .operating_mode
+            .is_some_and(|m| m == shared::OperatingMode::Suspended);
+        if !suspended {
+            return Err(OffloadError::Failed(format!(
+                "no pod IP for {name}; cannot offload (leave for next tick)"
+            )));
+        }
+        let Some(store) = self.store.as_ref() else {
+            return Err(OffloadError::Failed(format!(
+                "suspended {name} cannot be resumed without a store"
+            )));
+        };
+        tracing::info!(sandbox = %name, "resuming parked sandbox for cold-tier offload");
+        if let Err(e) = store
+            .patch_operating_mode(&name, shared::OperatingMode::Running)
+            .await
+        {
+            return Err(OffloadError::Failed(format!(
+                "resume {name} for offload failed: {e} (leave for next tick)"
+            )));
+        }
+        let deadline = tokio::time::Instant::now() + self.resume_timeout;
+        loop {
+            if tokio::time::Instant::now() >= deadline {
+                return Err(OffloadError::Failed(format!(
+                    "resume {name} for offload timed out after {:?} (leave for next tick)",
+                    self.resume_timeout
+                )));
+            }
+            match store.get_sandbox(&name).await {
+                Ok(Some(sbx)) => {
+                    if let Some(ip) = sbx.status.as_ref().and_then(|s| s.pod_ip()) {
+                        if sbx
+                            .status
+                            .as_ref()
+                            .is_some_and(shared::SandboxStatus::is_ready)
+                        {
+                            return Ok(ip.to_owned());
+                        }
+                    }
+                }
+                Ok(None) => {
+                    return Err(OffloadError::Failed(format!(
+                        "sandbox {name} vanished while resuming for offload"
+                    )));
+                }
+                Err(e) => {
+                    tracing::warn!(sandbox = %name, %e, "poll during offload resume failed; retrying");
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    /// Clear the workspace contents from the hot tier after a successful
+    /// offload (#142). Contents only — never the subPath mount point itself —
+    /// via the runtime's own `/execute` inside the sandbox.
+    async fn purge_workspace(&self, name: &str, pod_ip: &str) {
+        let bearer = self.runtime_key(name).await;
+        let cmd = "find /workspace -mindepth 1 -delete";
+        let payload = serde_json::json!({ "command": cmd });
+        let res = self
+            .http
+            .post(self.runtime_url(pod_ip, "/execute"))
+            .bearer_auth(&bearer)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(payload.to_string())
+            .send()
+            .await;
+        let outcome = match res {
+            Ok(resp) if resp.status().is_success() => match resp.text().await {
+                Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+                    Ok(body)
+                        if body.get("exit_code").and_then(serde_json::Value::as_i64) == Some(0) =>
+                    {
+                        Ok(())
+                    }
+                    Ok(body) => Err(format!("exited non-zero: {body}")),
+                    Err(e) => Err(format!("response unreadable: {e}")),
+                },
+                Err(e) => Err(format!("response unreadable: {e}")),
+            },
+            Ok(resp) => Err(format!("HTTP {}", resp.status())),
+            Err(e) => Err(format!("request failed: {e}")),
+        };
+        match outcome {
+            Ok(()) => {
+                tracing::info!(sandbox = %name, "purged chat dir from PVC hot tier after offload");
+            }
+            Err(why) => tracing::warn!(
+                sandbox = %name, %why,
+                "hot-tier purge failed (stale dir kept; S3 object is durable)"
+            ),
+        }
     }
 }
 
@@ -846,6 +987,143 @@ mod tests {
         let sbx = sandbox("persistent", None);
         let err = offload.offload_on_reap(&sbx).await.unwrap_err();
         assert!(matches!(err, OffloadError::Failed(_)), "{err:?}");
+    }
+
+    // --- #142: resume-of-parked, hot-tier purge, restore-if-empty ----------
+
+    fn wiremock_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .expect("test client")
+    }
+
+    fn pvc_cfg() -> BrokerConfig {
+        BrokerConfig {
+            s3_enabled: true,
+            persistent_mode: shared::PersistentMode::PerUserPvc,
+            ..Default::default()
+        }
+    }
+
+    fn suspended_persistent(name: &str) -> Sandbox {
+        let mut sbx = sandbox("persistent", None);
+        sbx.metadata.name = Some(name.to_string());
+        sbx.spec.operating_mode = Some(shared::OperatingMode::Suspended);
+        sbx
+    }
+
+    #[tokio::test]
+    async fn offload_resumes_suspended_sandbox_before_snapshot() {
+        // A parked PVC-hybrid sandbox has no pod; the offloader must patch it
+        // Running and wait for a Ready pod before snapshotting (#142).
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/snapshot"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"zstd-bytes"))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/execute"))
+            .and(body_partial_json(serde_json::json!({
+                "command": "find /workspace -mindepth 1 -delete"
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "exit_code": 0, "stdout": "" })),
+            )
+            .expect(1..)
+            .mount(&server)
+            .await;
+
+        let store = Arc::new(crate::store::test_fakes::StubSandboxStore::new());
+        store.insert_sandbox(suspended_persistent("owui-c-res"));
+        // Flip the sandbox Ready shortly after the resume patch lands, as the
+        // upstream controller would.
+        let flipper = store.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            flipper.mark_ready("owui-c-res", "10.1.2.3");
+        });
+
+        let offload = S3Offload::new(
+            &pvc_cfg(),
+            Arc::new(InMemoryColdStore::new()),
+            wiremock_client(),
+        )
+        .with_store(store.clone())
+        .with_runtime_upstream_override(server.uri());
+        offload
+            .offload_on_reap(&store.snapshot()["owui-c-res"].clone())
+            .await
+            .expect("offload after resume");
+
+        // The resume actually happened through the store.
+        assert_eq!(
+            store.snapshot()["owui-c-res"].spec.operating_mode,
+            Some(shared::OperatingMode::Running)
+        );
+    }
+
+    #[tokio::test]
+    async fn purge_is_skipped_for_empty_dir_hot_tier() {
+        // empty-dir pods are deleted right after the reap; clearing them is
+        // pointless — the purge hop must NOT fire.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/snapshot"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"zstd-bytes"))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/execute"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let cfg = BrokerConfig {
+            s3_enabled: true,
+            persistent_mode: shared::PersistentMode::EmptyDir,
+            ..Default::default()
+        };
+        let offload = S3Offload::new(&cfg, Arc::new(InMemoryColdStore::new()), wiremock_client())
+            .with_runtime_upstream_override(server.uri());
+        let sbx = sandbox("persistent", Some("10.0.0.9"));
+        offload.offload_on_reap(&sbx).await.expect("offload ok");
+    }
+
+    #[tokio::test]
+    async fn restore_hot_tier_hit_when_runtime_reports_non_empty() {
+        // The runtime declines with `restored: false` (workspace-non-empty) —
+        // the broker must surface HotTierHit, not an error.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/restore"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({ "restored": false, "bytes": 0, "skipped": "workspace-non-empty" }),
+            ))
+            .mount(&server)
+            .await;
+
+        let cold = Arc::new(InMemoryColdStore::new());
+        cold.seed("users/u/chats/s/workspace-0000000001.tar.zst", &b"cold"[..]);
+        let offload = S3Offload::new(&pvc_cfg(), cold, wiremock_client())
+            .with_runtime_upstream_override(server.uri());
+        let outcome = offload
+            .restore_on_resume("owui-c-x", "10.0.0.1", "u", "s")
+            .await
+            .expect("skip is Ok");
+        assert_eq!(outcome, RestoreOutcome::HotTierHit);
     }
 
     #[tokio::test]

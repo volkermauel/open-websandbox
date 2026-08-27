@@ -344,18 +344,21 @@ jobs:
             pytest tests/e2e/test_s3_tiered.py -v
           kill "$PF"
 
-  # PVC hot-tier e2e (issue #140): runc-only matrix over both PVC modes.
+  # PVC hot-tier e2e (issue #140) + hybrid tiering (#142): runc-only matrix.
   # per-user-pvc  — broker-created per-user PVC (local-path RWO) + per-chat subPath.
   # shared-subpath — chart-rendered workspace-shared PVC + per-user/per-chat subPath.
-  # Both prove: persistence across Sandbox deletion, cross-chat isolation (a chat
-  # can only see/delete its own directory), cross-user isolation, PVC naming.
+  # pvc-s3        — #142 hybrid: per-user-pvc hot tier × MinIO cold tier. Proves
+  #                 tiering is hot-tier independent (park-resume = hot hit, no S3
+  #                 clobber; reap = offload + PVC purge + cold restore).
+  # All lanes prove: persistence across Sandbox deletion, cross-chat isolation
+  # (a chat can only see/delete its own directory), cross-user isolation.
   e2e-pvc:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        mode: [per-user-pvc, shared-subpath]
+        mode: [per-user-pvc, shared-subpath, pvc-s3]
     env:
       KIND_CLUSTER: open-websandbox-e2e-pvc
       SYS_NS: agent-sandbox-system
@@ -446,11 +449,20 @@ jobs:
           kubectl apply -f open-websandbox-platform/chart/crds/
           kubectl wait --for=condition=Established --all crd --timeout=120s || true
 
+      - name: Deploy MinIO fixture (pvc-s3 lane only)
+        if: matrix.mode == 'pvc-s3'
+        run: |
+          kubectl -n "$SYS_NS" apply -f tests/e2e/fixtures/minio.yaml
+          kubectl -n "$SYS_NS" rollout status deploy/minio --timeout=180s
+
       - name: Helm install (${{ matrix.mode }} profile)
         run: |
           VALUES="open-websandbox-platform/chart/values-kind-pvc.yaml"
           if [ "${{ matrix.mode }}" = "shared-subpath" ]; then
             VALUES="open-websandbox-platform/chart/values-kind-pvc-shared.yaml"
+          fi
+          if [ "${{ matrix.mode }}" = "pvc-s3" ]; then
+            VALUES="open-websandbox-platform/chart/values-kind-pvc-s3.yaml"
           fi
           helm install open-websandbox open-websandbox-platform/chart/ \
             -f "$VALUES" -n "$SYS_NS"
@@ -485,7 +497,20 @@ jobs:
           for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
           SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
             -o jsonpath='{.data.shared-secret}' | base64 -d)"
-          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" \
-          E2E_PVC=1 E2E_PVC_MODE=${{ matrix.mode }} \
-            pytest tests/e2e/test_pvc_persistence.py -v
+          if [ "${{ matrix.mode }}" = "pvc-s3" ]; then
+            # The reaper offloads to MinIO regardless of which module runs;
+            # create the bucket BEFORE pytest so non-s3 modules (which never
+            # resolve require_s3) don't fight offload failures.
+            python tests/e2e/ensure_minio_bucket.py
+            # #142 hybrid: PVC tests + the s3-tiered suite (hot-tier-agnostic)
+            # + the hybrid tiering suite, all against the per-user-pvc install.
+            BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" \
+            E2E_PVC=1 E2E_PVC_MODE=per-user-pvc E2E_S3=1 E2E_PVC_S3=1 \
+              pytest tests/e2e/test_pvc_persistence.py tests/e2e/test_s3_tiered.py \
+                     tests/e2e/test_pvc_s3_tiering.py -v
+          else
+            BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" \
+            E2E_PVC=1 E2E_PVC_MODE=${{ matrix.mode }} \
+              pytest tests/e2e/test_pvc_persistence.py -v
+          fi
           kill "$PF"

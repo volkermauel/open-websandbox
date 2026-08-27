@@ -235,3 +235,16 @@ def require_pvc() -> None:
     """
     if not os.environ.get("E2E_PVC"):
         pytest.skip("PVC hot-tier e2e is opt-in (set E2E_PVC=1)")
+
+
+@pytest.fixture(scope="session")
+def require_pvc_s3(request) -> None:
+    """Gate the HYBRID PVC × S3 tiering e2e (#142): E2E_PVC_S3=1.
+
+    Combines both gates: PVC hot tier (per-user-pvc) + the in-cluster MinIO
+    cold tier. Resolves require_s3 lazily (same ordering rule: the MinIO
+    port-forward must not spin up in lanes without MinIO).
+    """
+    if not os.environ.get("E2E_PVC_S3"):
+        pytest.skip("hybrid PVC×S3 e2e is opt-in (set E2E_PVC_S3=1)")
+    request.getfixturevalue("require_s3")

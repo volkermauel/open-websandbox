@@ -122,7 +122,7 @@ impl BrokerMetrics {
             IDLE_REAPS_TOTAL,
             "Sandboxes reaped (deleted) by the leader idle reaper, by reason."
         );
-        for reason in ["ephemeral_idle", "s3_tiered_idle", "persistent_reap_ttl"] {
+        for reason in ["ephemeral_idle", "cold_tier_idle", "persistent_reap_ttl"] {
             metrics::counter!(IDLE_REAPS_TOTAL, "reason" => reason).increment(0);
         }
 

@@ -75,8 +75,9 @@
         "routerUrl": { "type": "string", "minLength": 1 },
         "idleTtlSeconds": { "type": "integer", "minimum": 0 },
         "parkIdleSeconds": { "type": "integer", "minimum": 0 },
+        "reapSeconds": { "type": "integer", "minimum": 0, "description": "Persistent reap age in seconds (default 604800 = 7d). With the S3 cold tier enabled, reap offloads the workspace first and frees the PVC hot tier (#142)." },
         "defaultProfile": { "type": "string", "enum": ["persistent", "ephemeral"] },
-        "persistentMode": { "type": "string", "enum": ["per-user-pvc", "shared-subpath", "s3-tiered"] },
+        "persistentMode": { "type": "string", "enum": ["per-user-pvc", "shared-subpath", "empty-dir"] },
         "persistentStorage": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" },
         "persistentStorageClass": { "type": "string" },
         "persistentAccessModes": {
@@ -108,10 +109,10 @@
         "s3": {
           "type": "object",
           "additionalProperties": false,
-          "description": "S3-tiered cold tier (issue #52). Set broker.persistentMode=s3-tiered + enabled=true to eliminate PVCs (hot tier=emptyDir, cold tier=S3). Off by default; default install unchanged.",
+          "description": "S3 cold tier (#142): composes with ANY hot tier (per-user-pvc, shared-subpath, empty-dir). empty-dir REQUIRES it (boot fails closed otherwise). With a PVC hot tier it adds hybrid tiering: park/resume serves the PVC, reap offloads to S3 and frees the hot tier. Off by default.",
           "required": ["enabled", "endpoint", "bucket", "prefix", "region", "credentialsSecret", "retentionDays", "compression", "sse", "periodicSyncInterval", "sizeLimit", "tmpfs"],
           "properties": {
-            "enabled": { "type": "boolean", "description": "Gate the whole feature (and the broker boot guard that rejects s3-tiered without it)." },
+            "enabled": { "type": "boolean", "description": "Gate the whole feature (and the broker boot guard that rejects empty-dir without it)." },
             "endpoint": { "type": "string", "description": "Bring-your-own S3-compatible URL (https://...). Empty allowed when enabled=false." },
             "bucket": { "type": "string", "description": "Pre-existing bucket name." },
             "prefix": { "type": "string", "pattern": "^[A-Za-z0-9._-]*$", "description": "Object-key prefix (default users)." },

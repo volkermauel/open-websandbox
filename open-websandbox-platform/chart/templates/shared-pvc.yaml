@@ -7,7 +7,7 @@
 
      Rendered ONLY in shared-subpath mode: the broker mounts it by name (and
      fails closed if it is missing). per-user-pvc mode instead gives every user
-     their own PVC (created directly by the broker); s3-tiered needs no PVC at
+     their own PVC (created directly by the broker); empty-dir needs no PVC at
      all — rendering it there just left a forever-Pending claim in KIND. */}}
 {{- if eq .Values.broker.persistentMode "shared-subpath" }}
 apiVersion: v1

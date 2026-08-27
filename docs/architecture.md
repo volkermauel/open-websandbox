@@ -161,7 +161,7 @@ stateDiagram-v2
 
 ### Persistent (chart default)
 
-`/workspace` is backed by a **PVC**, deploy-selectable via
+`/workspace` is backed by a **hot tier**, deploy-selectable via
 `broker.persistentMode` (#140). **PVC granularity is the user (quota/reclaim),
 subPath granularity is the chat (isolation)** — every chat mounts only its own
 directory, so a chat's terminal can only ever see or delete its own files:
@@ -170,13 +170,30 @@ directory, so a chat's terminal can only ever see or delete its own files:
 |--------------------------|--------------------|-----|------------------------|
 | **`per-user-pvc`** (default) | `owui-c-<sha256(user\|session)[:12]>` | one per user: `workspace-p-<sha256(user)[:12]>` (broker-created, RWX, default `10Gi`) | `chats/<sha256(user/session)[:12]>` |
 | **`shared-subpath`** | `owui-c-<sha256(user\|session)[:12]>` | ONE shared `workspace-shared` (chart-rendered, RWX, `cephfs`, `50Gi`) | `users/<sha256(user)[:12]>/chats/<sha256(user/session)[:12]>` |
-| **`s3-tiered`** (#52) | `owui-c-<sha256(user\|session)[:12]>` | none (emptyDir hot tier) | offloaded to S3 on reap, restored on resume |
+| **`empty-dir`** (#52, #142) | `owui-c-<sha256(user\|session)[:12]>` | none (emptyDir hot tier; needs `broker.s3.enabled`) | — (S3 cold tier is the only durability) |
 
 The broker repoints the cloned pod template's `workspace` volume at the PVC and
 stamps the per-chat `subPath` on its mount (kubelet creates a missing subPath
 directory; the pod's `fsGroup: 1000` makes it writable). Reaping a sandbox
 deletes the Sandbox object but **never the PVC or chat directories** — a
 returning chat transparently re-resolves over its data.
+
+#### Cold tier composes with every hot tier (#142)
+
+`broker.s3.enabled` is an independent **cold tier** — it never changes the hot
+tier anymore:
+
+| hot tier \ cold tier | S3 off | S3 on |
+|---|---|---|
+| `per-user-pvc` / `shared-subpath` | park/resume over the PVC (hybrid tiering off) | **hybrid tiering**: park serves the PVC; reap offloads to S3, purges the chat dir from the PVC, and the next resolve restores from S3 |
+| `empty-dir` | invalid (fails closed at boot) | tier-only: reap offloads to S3, restore on resolve (#52 behavior) |
+
+Hybrid reap briefly resumes a suspended sandbox so a pod exists to snapshot,
+offloads, then clears the chat dir (`find /workspace -mindepth 1 -delete`) to
+free the hot tier. Restore only happens into an **empty** workspace — a stale
+cold object can never clobber newer PVC data (the runtime's reserved
+`.open-websandbox/` dir does not count as data; it is recreated by the SIGTERM
+scrollback flush after a purge).
 
 Either way the runtime validates every path before touching it (`safe_path` in
 [`rust/runtime/`](../rust/runtime/)) so a session can only
