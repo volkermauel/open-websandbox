@@ -100,7 +100,7 @@ forbids the placeholder.
 {{/*
 Kubernetes storage quantity -> whole bytes, for the runtime MAX_WORKSPACE_BYTES
 env (broker.s3.sizeLimit, default 2Gi). Handles binary suffixes Ki/Mi/Gi/Ti and plain
-integers; decimal suffixes (K/M/G/T) round up. Used only when s3-tiered is enabled.
+integers; decimal suffixes (K/M/G/T) round up. Used only in empty-dir mode.
 */}}
 {{- define "open-websandbox.sizeBytes" -}}
 {{- $s := (toString .) -}}

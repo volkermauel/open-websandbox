@@ -240,6 +240,7 @@ async fn restore_client_disconnect_midstream_is_error_not_ok() {
         .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let blob = common::body_bytes(resp).await;
+    std::fs::remove_file(env.workdir.join("x.txt")).unwrap(); // fresh pod: restore-if-empty (#142)
     let half = blob[..blob.len() / 2].to_vec();
     let stream = futures_util::stream::iter(vec![
         Ok::<Bytes, std::io::Error>(Bytes::from(half)),

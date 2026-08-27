@@ -11,7 +11,7 @@ imagePullPolicy: Never   # prod: IfNotPresent
 #   open-websandbox-runtime  -> rust/runtime/Dockerfile  (debian-slim Rust binary; shells out to tar/zstd/grep)
 #   open-websandbox-router   -> Go, self-built from the vendored upstream agent-sandbox@v0.5.3
 # .github/workflows/e2e.yml builds + `kind load`s all three at THIS tag and then runs the live
-# pytest tests/e2e suite against the broker (runc + gvisor matrix, plus a separate s3-tiered
+# pytest tests/e2e suite against the broker (runc + gvisor matrix, plus a separate empty-dir+s3
 # job) — i.e. the Rust broker/runtime HAVE end-to-end coverage. release.yml publishes the
 # same images to ghcr.io/<owner>/open-websandbox-{broker,runtime,router}. There is no Python
 # image: the Rust images were a drop-in replacement at the same name/tag (see Dockerfile headers).
@@ -58,10 +58,16 @@ broker:
   routerUrl: http://sandbox-router-svc.agent-sandbox-system:8080
   idleTtlSeconds: 120
   parkIdleSeconds: 120
+  # #142 hybrid tiering: persistent reap age. idle > reapSeconds → the reaper
+  # (briefly resumes a parked sandbox, with s3 enabled) offloads /workspace to
+  # the cold tier, purges the PVC chat dir, then deletes the sandbox.
+  reapSeconds: 604800            # 7d
   defaultProfile: persistent
   # Persistent hot-tier backing (#140): per-user-pvc (one RWX PVC per user,
   # per-chat subPath), shared-subpath (ONE shared RWX PVC, per-user/per-chat
-  # subPath), or s3-tiered (emptyDir hot + S3 cold; requires broker.s3.enabled).
+  # subPath), or empty-dir (emptyDir hot tier; REQUIRES broker.s3.enabled —
+  #  #142: the S3 cold tier is composable with every hot tier, but an emptyDir
+  # hot tier without it would silently lose data on pod delete).
   persistentMode: per-user-pvc
   persistentStorage: 10Gi           # per-user PVC size (per-user-pvc mode)
   persistentStorageClass: ""        # per-user PVC StorageClass; "" = cluster default (prod: cephfs RWX)
@@ -90,12 +96,12 @@ broker:
     port: 8080
     path: /metrics
   # S3-tiered cold tier (issue #52). A third persistent backing mode
-  # (broker.persistentMode: s3-tiered): the hot tier is a size-limited emptyDir
+  # (broker.persistentMode: empty-dir): the hot tier is a size-limited emptyDir
   # /workspace; the cold tier is a bring-your-own S3-compatible bucket. The broker is
   # the SOLE S3 client (the runtime pod stays network-isolated). Off by default so the
   # default install + e2e are unchanged. See docs/s3-tiered-storage.md.
   s3:
-    enabled: false              # MUST be true to use persistentMode: s3-tiered
+    enabled: false              # cold tier (#142): composes with ANY hot tier; REQUIRED by empty-dir
     endpoint: ""                # bring-your-own S3-compatible URL (https://s3.example.com)
     bucket: ""                  # bucket name (must already exist)
     prefix: "users"             # object-key prefix (users/<uid>/chats/<sid>/workspace-<ts>.tar.zst)

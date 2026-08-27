@@ -190,7 +190,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: trivy image (HIGH,CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         env:
           # Private ghcr.io read auth for the published images.
           TRIVY_USERNAME: ${{ github.actor }}
@@ -243,7 +243,7 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:pr-scan
           cache-from: type=gha,scope=${{ matrix.image }}
       - name: trivy image (HIGH,CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:pr-scan
           severity: HIGH,CRITICAL

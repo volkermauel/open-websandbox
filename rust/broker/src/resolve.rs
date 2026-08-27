@@ -99,7 +99,9 @@ fn workspace_layout(
             config.shared_pvc_name.clone(),
             format!("users/{user}/chats/{chat}"),
         ),
-        PersistentMode::PerUserPvc | PersistentMode::S3Tiered => (
+        // `EmptyDir` never reaches the PVC block (is_pvc() gate at the call
+        // site); the match stays exhaustive, its layout is unused.
+        PersistentMode::PerUserPvc | PersistentMode::EmptyDir => (
             format!("{}{user}", config.per_user_pvc_prefix),
             format!("chats/{chat}"),
         ),
@@ -286,6 +288,12 @@ pub async fn resolve_sandbox(
                     tracing::debug!(
                         sandbox = %resolved.name,
                         "s3 restore skipped (no object — first creation)"
+                    );
+                }
+                Ok(crate::s3::RestoreOutcome::HotTierHit) => {
+                    tracing::debug!(
+                        sandbox = %resolved.name,
+                        "s3 restore skipped (workspace non-empty — hot-tier hit)"
                     );
                 }
                 Err(e) => {

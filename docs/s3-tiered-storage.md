@@ -1,11 +1,17 @@
-# S3-tiered storage mode
+# S3 cold-tier storage
 
-`broker.persistentMode: s3-tiered` is a third **persistent backing mode** (alongside
-`per-user-pvc` / `shared-subpath`) that eliminates PVCs: the **hot tier** is a size-limited
-ephemeral pod volume (`emptyDir`, optionally `tmpfs`); the **cold tier** is an
-S3-compatible bucket. On session reap the broker offloads `/workspace` → S3; on resume it
-restores S3 → the new ephemeral pod. Fully behind `broker.s3.enabled` (default **off**), so
-the default install is unchanged.
+`broker.s3.enabled` turns on the **cold tier** — an S3-compatible bucket holding
+compressed workspace snapshots. Since #142 the cold tier is **independent of the
+hot tier** (`broker.persistentMode`), so it composes with all of them:
+
+| hot tier (`persistentMode`) | behavior with S3 on |
+|---|---|
+| `empty-dir` | tier-only (#52 behavior): reap offloads `/workspace` → S3 and deletes the pod; resume restores into the fresh pod. No PVCs at all. |
+| `per-user-pvc` / `shared-subpath` | **hybrid tiering**: park/resume serves the PVC directly (no S3 I/O); reap offloads to S3, then purges the chat dir from the PVC to free the hot tier; the next resolve restores from S3. |
+
+On session reap the broker offloads `/workspace` → S3; on resolve it restores S3 →
+`/workspace`. Fully behind `broker.s3.enabled` (default **off**), so the default
+install is unchanged.
 
 ## How it works
 
@@ -20,10 +26,11 @@ the default install is unchanged.
 
 ### Lifecycle
 
-| event | s3-tiered behavior |
-|-------|--------------------|
-| idle > `idleTtlSeconds` | broker offloads `/workspace` → S3, then deletes the pod + CR + per-session key (cold tier holds the data) |
-| resume | broker creates a fresh ephemeral pod, waits for readiness, then **synchronously** restores S3 → `/workspace` before the session becomes ready |
+| event | behavior |
+|-------|---------|
+| idle > park age (PVC tiers) | sandbox suspended — resume serves the PVC directly, no S3 involved |
+| idle > reap age | broker offloads `/workspace` → S3 (briefly resuming a suspended sandbox so a pod exists to snapshot), then deletes the pod + CR + per-session key — and for PVC tiers purges the chat dir from the hot tier |
+| resolve after reap | broker creates a fresh pod, waits for readiness, then **synchronously** restores S3 → `/workspace` before the session becomes ready (only if the workspace is empty — hot-tier data always wins) |
 | long-running session | a leader-gated task snapshots it every `broker.s3.periodicSyncInterval`, so a node loss loses at most one interval |
 | offload failure on reap | retried with backoff; the pod + CR stay alive until success or `maxAttempts` (**no silent data loss**) |
 | restore failure on resume | the resume **fails** (surfaced as an error); an empty workspace is never handed back |
@@ -36,7 +43,7 @@ broker at `/etc/s3-creds`:
 
 ```yaml
 broker:
-  persistentMode: s3-tiered
+  persistentMode: empty-dir   # or per-user-pvc / shared-subpath for hybrid tiering
   s3:
     enabled: true
     endpoint: "https://s3.example.com"
@@ -109,6 +116,5 @@ references it.
 
 ## Non-goals
 
-- This mode does **not** change the vendored controller/CRDs or the PVC modes.
-- **R3** (an optional PVC + `reclaimPolicy:Delete` + S3 hybrid) is a documented follow-up;
-  core `s3-tiered` is the scope here.
+- This mode does **not** change the vendored controller/CRDs.
+- Per-object encryption-at-rest beyond SSE is out of scope; layer it at the bucket.

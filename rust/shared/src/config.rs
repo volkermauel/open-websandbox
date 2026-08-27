@@ -121,14 +121,15 @@ pub enum PersistentMode {
     /// One shared RWX PVC (chart-rendered `workspace-shared`), each chat
     /// mounting `users/<sha256(user)[:12]>/chats/<sha256(user/session)[:12]>`.
     SharedSubpath,
-    /// emptyDir hot tier + S3 cold tier (issue #52); requires
-    /// `BROKER_S3_ENABLED`.
-    S3Tiered,
+    /// emptyDir hot tier (issue #52): the S3 cold tier is the ONLY
+    /// durability — requires `BROKER_S3_ENABLED` (boot fails closed
+    /// otherwise: pod delete would destroy the workspace).
+    EmptyDir,
 }
 
 impl PersistentMode {
     /// Whether this mode backs `/workspace` with a PVC the broker must
-    /// ensure/mount (both PVC hot tiers; `false` for `s3-tiered`).
+    /// ensure/mount (both PVC hot tiers; `false` for `empty-dir`).
     #[must_use]
     pub fn is_pvc(self) -> bool {
         matches!(
@@ -137,14 +138,14 @@ impl PersistentMode {
         )
     }
 
-    /// Lowercase wire value (`per-user-pvc` / `shared-subpath` / `s3-tiered`),
+    /// Lowercase wire value (`per-user-pvc` / `shared-subpath` / `empty-dir`),
     /// used for the `broker-persistent-mode` Sandbox label.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             PersistentMode::PerUserPvc => "per-user-pvc",
             PersistentMode::SharedSubpath => "shared-subpath",
-            PersistentMode::S3Tiered => "s3-tiered",
+            PersistentMode::EmptyDir => "empty-dir",
         }
     }
 }
@@ -156,7 +157,7 @@ impl FromStr for PersistentMode {
         match s.to_ascii_lowercase().as_str() {
             "per-user-pvc" => Ok(PersistentMode::PerUserPvc),
             "shared-subpath" => Ok(PersistentMode::SharedSubpath),
-            "s3-tiered" => Ok(PersistentMode::S3Tiered),
+            "empty-dir" => Ok(PersistentMode::EmptyDir),
             _ => Err(()),
         }
     }
@@ -564,7 +565,7 @@ impl BrokerConfig {
                         .map_err(|()| ConfigError::Invalid {
                             var: "BROKER_PERSISTENT_MODE",
                             message: format!(
-                                "{raw:?} is not one of per-user-pvc | shared-subpath | s3-tiered",
+                                "{raw:?} is not one of per-user-pvc | shared-subpath | empty-dir",
                             ),
                         })
                 })
@@ -621,27 +622,17 @@ impl BrokerConfig {
             s3_secret_access_key,
             s3_path_style: get("BROKER_S3_PATH_STYLE").is_none_or(|raw| parse_bool(&raw)),
         };
-        // Mode exclusivity (#140): the S3 cold tier is wired ONLY into the
-        // s3-tiered mode (offload-on-reap + restore-on-resume would fight a
-        // PVC-backed workspace), and s3-tiered without S3 configured cannot
-        // keep any promise of persistence. Fail closed at boot either way.
-        match (cfg.persistent_mode, cfg.s3_enabled) {
-            (PersistentMode::S3Tiered, false) => {
-                return Err(ConfigError::Invalid {
-                    var: "BROKER_PERSISTENT_MODE",
-                    message: "s3-tiered requires broker.s3.enabled=true (BROKER_S3_ENABLED)"
-                        .to_string(),
-                });
-            }
-            (mode, true) if !matches!(mode, PersistentMode::S3Tiered) => {
-                return Err(ConfigError::Invalid {
-                    var: "BROKER_PERSISTENT_MODE",
-                    message: format!(
-                        "broker.s3.enabled=true requires BROKER_PERSISTENT_MODE=s3-tiered (got {mode:?})",
-                    ),
-                });
-            }
-            _ => {}
+        // Hot/cold tier composability (#142): the persistent mode is the HOT
+        // tier; broker.s3.enabled is the COLD tier and composes with any hot
+        // tier. The only fatal combination is empty-dir WITHOUT the cold
+        // tier — pod delete would destroy the workspace (the #140 bug class).
+        // PVC × S3 (hybrid tiering) is valid: park/resume serves the PVC,
+        // reap offloads to S3 and frees the hot tier.
+        if matches!(cfg.persistent_mode, PersistentMode::EmptyDir) && !cfg.s3_enabled {
+            return Err(ConfigError::Invalid {
+                var: "BROKER_PERSISTENT_MODE",
+                message: "empty-dir hot tier requires broker.s3.enabled=true ".to_string(),
+            });
         }
         Ok(cfg)
     }
@@ -845,7 +836,7 @@ mod tests {
             rate_limit_enabled: true,
             rate_limit_per_second: 7,
             rate_limit_burst: 14,
-            persistent_mode: PersistentMode::S3Tiered,
+            persistent_mode: PersistentMode::EmptyDir,
             persistent_storage: "5Gi".into(),
             persistent_storage_class: "cephfs".into(),
             persistent_access_modes: vec!["ReadWriteMany".into()],
@@ -883,7 +874,7 @@ mod tests {
             ("BROKER_LEADER_DURATION_SECONDS", "30"),
             ("BROKER_LEADER_RENEW_SECONDS", "10"),
             ("BROKER_S3_ENABLED", "yes"),
-            ("BROKER_PERSISTENT_MODE", "s3-tiered"),
+            ("BROKER_PERSISTENT_MODE", "empty-dir"),
             ("BROKER_S3_ENDPOINT", "http://minio:9000"),
             ("BROKER_S3_REGION", "eu-west-1"),
             ("BROKER_S3_BUCKET", "owui-cold"),
@@ -1017,7 +1008,7 @@ mod tests {
     fn s3_sse_read_from_env() {
         let cfg = BrokerConfig::from_map(|k: &str| match k {
             "BROKER_S3_ENABLED" => Some("true".to_string()),
-            "BROKER_PERSISTENT_MODE" => Some("s3-tiered".to_string()),
+            "BROKER_PERSISTENT_MODE" => Some("empty-dir".to_string()),
             "BROKER_S3_SSE" => Some("AES256".to_string()),
             "BROKER_S3_BUCKET" => Some("b".to_string()),
             _ => None,
@@ -1072,33 +1063,50 @@ mod tests {
     }
 
     #[test]
-    fn s3_mode_exclusivity_fails_closed() {
-        // s3-tiered without S3 configured.
+    fn empty_dir_without_s3_fails_closed() {
+        // The only fatal hot×cold combination: emptyDir loses the workspace on
+        // pod delete, so the cold tier is mandatory (#142).
+        let err = BrokerConfig::from_map(|k| {
+            (k == "BROKER_PERSISTENT_MODE").then(|| "empty-dir".to_string())
+        })
+        .expect_err("empty-dir without S3 must fail boot");
+        assert!(matches!(
+            err,
+            ConfigError::Invalid {
+                var: "BROKER_PERSISTENT_MODE",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn hybrid_pvc_with_s3_boots() {
+        // PVC hot tier × S3 cold tier is the composable hybrid (#142): every
+        // combination must boot.
+        for mode in ["per-user-pvc", "shared-subpath"] {
+            let cfg = BrokerConfig::from_map(|k| match k {
+                "BROKER_S3_ENABLED" => Some("true".to_string()),
+                "BROKER_PERSISTENT_MODE" => Some(mode.to_string()),
+                _ => None,
+            })
+            .expect("PVC + S3 hybrid must boot");
+            assert!(cfg.s3_enabled);
+            assert!(cfg.persistent_mode.is_pvc());
+        }
+    }
+
+    #[test]
+    fn s3_tiered_mode_string_is_retired() {
+        // `s3-tiered` conflated the tiers; retired in #142. It must fail as an
+        // unknown mode (not parse into anything).
         let err = BrokerConfig::from_map(|k| {
             (k == "BROKER_PERSISTENT_MODE").then(|| "s3-tiered".to_string())
         })
-        .expect_err("s3-tiered without S3 must fail boot");
-        assert!(matches!(
-            err,
-            ConfigError::Invalid {
-                var: "BROKER_PERSISTENT_MODE",
-                ..
-            }
-        ));
-
-        // S3 enabled with a PVC mode.
-        let err = BrokerConfig::from_map(|k| match k {
-            "BROKER_S3_ENABLED" => Some("true".to_string()),
-            "BROKER_PERSISTENT_MODE" => Some("per-user-pvc".to_string()),
-            _ => None,
-        })
-        .expect_err("S3 with a PVC mode must fail boot");
-        assert!(matches!(
-            err,
-            ConfigError::Invalid {
-                var: "BROKER_PERSISTENT_MODE",
-                ..
-            }
-        ));
+        .expect_err("s3-tiered must be rejected post-#142");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("empty-dir"),
+            "error should name a valid mode: {msg}"
+        );
     }
 }

@@ -84,11 +84,29 @@ const DUPLEX_BUF: usize = 64 * 1024;
 const ZSTD_LEVEL: i32 = 3;
 
 /// Response body for `PUT /restore`: whether the workspace was restored and the
-/// compressed bytes ingested.
+/// compressed bytes ingested. `restored: false` with `skipped:
+/// Some("workspace-non-empty")` is the #142 hot-tier hit: the caller (broker)
+/// asked for a cold restore, but the mounted workspace already has data (PVC
+/// park-resume), and unpacking the cold object over it could regress newer
+/// state — so the runtime declines and keeps serving the hot tier.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RestoreResponse {
     restored: bool,
     bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skipped: Option<&'static str>,
+}
+
+/// Whether the workspace root holds any USER entry (#142 restore-if-empty gate).
+///
+/// `.open-websandbox` is the runtime's own reserved namespace and does NOT
+/// count: the SIGTERM scrollback flush (#129) recreates
+/// `.open-websandbox/scrollback` under the workspace as the pod dies — i.e.
+/// AFTER a reap-time purge — so a freshly created PVC pod can legitimately
+/// carry that directory while having no user data to serve from the hot tier.
+fn workspace_non_empty(base: &std::path::Path) -> bool {
+    std::fs::read_dir(base)
+        .is_ok_and(|mut it| it.any(|e| e.is_ok_and(|e| e.file_name() != ".open-websandbox")))
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +279,27 @@ pub async fn restore(
     let base = request_base(&state.config.workdir, None)?;
     let cap = state.config.max_workspace_bytes;
 
+    // Restore-if-empty (#142): with a PVC hot tier the workspace survives pod
+    // delete, so a restore request can arrive while hot data is already
+    // mounted (park resume, or a purge that failed after a previous offload).
+    // Only this side can see the mount — if anything is present, decline with
+    // `restored: false` instead of unpacking a possibly-stale cold object over
+    // newer hot data. emptyDir callers are unaffected: a fresh pod's workspace
+    // is always empty, so the restore proceeds as before.
+    if workspace_non_empty(&base) {
+        // Drain the request body so the connection can be reused cleanly (the
+        // broker always sends the full object; bounded by its size cap).
+        tokio::spawn(async move {
+            let _ = http_body_util::BodyExt::collect(body).await;
+        });
+        tracing::info!("restore skipped: workspace non-empty (hot-tier hit)");
+        return Ok(Json(RestoreResponse {
+            restored: false,
+            bytes: 0,
+            skipped: Some("workspace-non-empty"),
+        }));
+    }
+
     // async→sync bridge: the async `ZstdDecoder` (decompressed tar bytes) feeds the
     // `spawn_blocking` `tar::Archive` extractor (sync `Read`) through a bounded
     // channel.
@@ -380,6 +419,7 @@ pub async fn restore(
     Ok(Json(RestoreResponse {
         restored: true,
         bytes: received,
+        skipped: None,
     }))
 }
 
@@ -788,13 +828,30 @@ mod tests {
             "snapshot body is not a zstd stream"
         );
 
-        // Restore the valid archive back into the workspace — must succeed.
+        // Restore the valid archive — into the EMPTY workspace (fresh-pod
+        // semantics: the broker only restores when nothing is mounted, #142).
+        tokio::fs::remove_file(dir.path().join("a.txt"))
+            .await
+            .unwrap();
+        tokio::fs::remove_file(dir.path().join("b.txt"))
+            .await
+            .unwrap();
         let ok = restore(Authed, State(state.clone()), Body::from(body.to_vec()))
             .await
             .expect("restore ok");
         assert!(ok.restored, "restore reported not restored");
+        assert!(dir.path().join("a.txt").exists(), "restored file missing");
+        assert!(dir.path().join("b.txt").exists(), "restored file missing");
 
-        // Corrupt restore — must be a 500, not a silent success (#82).
+        // Corrupt restore — must be a 500, not a silent success (#82). The
+        // restore-if-empty gate needs an empty workspace to even attempt the
+        // decode, so clear the just-restored files first.
+        tokio::fs::remove_file(dir.path().join("a.txt"))
+            .await
+            .unwrap();
+        tokio::fs::remove_file(dir.path().join("b.txt"))
+            .await
+            .unwrap();
         let bad = restore(
             Authed,
             State(state),
@@ -804,6 +861,51 @@ mod tests {
         assert!(
             matches!(bad, Err(ApiError::Internal(_))),
             "expected Err(Internal) on corrupt restore, got {bad:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_proceeds_when_only_reserved_dir_present() {
+        // #129 recreates `.open-websandbox/scrollback` as the pod DIES (after a
+        // reap-time purge) — a fresh PVC pod can carry exactly that dir and no
+        // user data. It must NOT block the cold restore (#142).
+        let src = TempDir::new().unwrap();
+        tokio::fs::write(src.path().join("cold.txt"), b"cold user data")
+            .await
+            .unwrap();
+        let cold = {
+            let state = make_state(&src);
+            let resp = snapshot(Authed, State(state)).await.expect("snapshot ok");
+            resp.into_body().collect().await.unwrap().to_bytes()
+        };
+
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join(".open-websandbox/scrollback")).unwrap();
+        let state = make_state(&dir);
+        let res = restore(Authed, State(state), Body::from(cold.to_vec())).await;
+        let ok = res.expect("restore over reserved-dir-only workspace");
+        assert!(ok.restored, "reserved dir must not block restore");
+        assert!(dir.path().join("cold.txt").exists(), "user data restored");
+        assert!(dir.path().join(".open-websandbox/scrollback").exists());
+    }
+
+    #[tokio::test]
+    async fn restore_skips_when_workspace_non_empty() {
+        // #142 hot-tier hit: the cold object exists, but the PVC workspace
+        // still has data. The runtime must decline (restored: false) and
+        // leave the hot data untouched — never unpack stale-cold over hot.
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("hot.txt"), b"hot data v2").unwrap();
+        let state = make_state(&dir);
+        let cold = zstd_compress(b"stale cold data v1".to_vec()).await;
+        let res = restore(Authed, State(state), Body::from(cold)).await;
+        let ok = res.expect("skip is a 200, not an error");
+        assert!(!ok.restored, "must not restore over hot data");
+        assert_eq!(ok.skipped, Some("workspace-non-empty"));
+        assert_eq!(
+            std::fs::read(dir.path().join("hot.txt")).unwrap(),
+            b"hot data v2",
+            "hot data must be untouched"
         );
     }
 
@@ -889,8 +991,9 @@ mod tests {
             .await
             .expect("snapshot ok");
         let full = resp.into_body().collect().await.unwrap().to_bytes();
-        // Cutting the stream in half lands inside a zstd frame: the decoder hits an
-        // unexpected end-of-stream, which (#82) must surface as a 500, not a 200.
+        std::fs::remove_file(dir.path().join("f.txt")).unwrap(); // fresh pod (#142)
+                                                                 // Cutting the stream in half lands inside a zstd frame: the decoder hits an
+                                                                 // unexpected end-of-stream, which (#82) must surface as a 500, not a 200.
         let truncated = &full[..full.len() / 2];
         let res = restore(Authed, State(state), Body::from(truncated.to_vec())).await;
         assert!(

@@ -1,0 +1,44 @@
+# KIND/Runc profile for the HYBRID PVC × S3 tiering e2e suite (issue #142).
+#
+# Hot tier: per-user PVC (broker-created, local-path RWO). Cold tier: in-cluster
+# MinIO. This is the composability lane — tiering is independent of the hot
+# tier:
+#   * park (idle > parkIdleSeconds) suspends the pod, the PVC keeps serving on
+#     resume and a stale S3 object must NOT clobber newer PVC data;
+#   * reap (idle > reapSeconds) briefly resumes the parked sandbox, offloads
+#     /workspace to MinIO, PURGES the chat dir from the PVC (true tiering),
+#     then deletes the sandbox;
+#   * the next resolve of the same chat restores from the cold tier.
+# Timers are short for deterministic tests. Default e2e (values-kind.yaml) is
+# unaffected.
+sandboxTemplate:
+  runtimeClassName: ""            # runc (KIND can't nest gVisor)
+  maxProcs: 100000               # KIND shared-kernel NPROC collision (see values-kind.yaml)
+router:
+  kubeApiServerCidr: "10.96.0.1/32"   # KIND service CIDR (kubeadm default)
+  kubeDnsCidr: "10.96.0.10/32"
+broker:
+  defaultProfile: persistent
+  persistentMode: per-user-pvc    # PVC hot tier + S3 cold tier (#142 hybrid)
+  persistentStorageClass: standard   # local-path
+  persistentAccessModes: [ReadWriteOnce]
+  idleTtlSeconds: 15              # only ephemeral sandboxes reap here
+  parkIdleSeconds: 12             # park fast so the no-clobber test is quick
+  reapSeconds: 50                 # reap → resume → offload → purge → delete
+  s3:
+    enabled: true
+    endpoint: "http://minio.agent-sandbox-system:9000"
+    bucket: "owsb-e2e"
+    prefix: "users"
+    region: "us-east-1"
+    credentialsSecret: "owui-s3-creds"   # created by tests/e2e/fixtures/minio.yaml
+    retentionDays: 1
+    compression: zstd
+    sse: ""                      # dev MinIO has no KMS/SSE backend; disable SSE (the broker omits the header)
+    periodicSyncInterval: 600     # keep the periodic sweep out of the way (reap is authoritative)
+    sizeLimit: "2Gi"
+    tmpfs: false
+    reaperPollSeconds: 5          # fast, deterministic offload-on-reap
+sharedPvc:
+  storageClass: standard            # local-path
+  accessModes: [ReadWriteOnce]      # local-path is RWO (unused in this lane)

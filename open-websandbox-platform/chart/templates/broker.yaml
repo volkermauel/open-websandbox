@@ -177,7 +177,7 @@ spec:
           value: {{ .Values.broker.persistentStorage | quote }}
         - name: BROKER_PERSISTENT_MODE
           value: {{ .Values.broker.persistentMode | quote }}
-        # PVC hot tiers (#140): per-user PVC knobs (ignored in s3-tiered).
+        # PVC hot tiers (#140): per-user PVC knobs (ignored in empty-dir mode).
         - name: BROKER_PERSISTENT_STORAGE_CLASS
           value: {{ .Values.broker.persistentStorageClass | quote }}
         - name: BROKER_PERSISTENT_ACCESS_MODES
@@ -188,6 +188,8 @@ spec:
           value: {{ .Values.broker.perUserPvcPrefix | quote }}
         - name: BROKER_PARK_IDLE_SECONDS
           value: {{ .Values.broker.parkIdleSeconds | quote }}
+        - name: BROKER_REAP_SECONDS
+          value: {{ .Values.broker.reapSeconds | quote }}
         {{- if .Values.broker.s3.enabled }}
         # S3-tiered cold tier (issue #52): the broker is the sole S3 client. Credentials are
         # read from a projected Secret volume at /etc/s3-creds (no secret in env, #48).

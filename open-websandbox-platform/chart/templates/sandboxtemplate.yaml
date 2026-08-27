@@ -104,8 +104,8 @@ spec:
           value: ""
         - name: KUBERNETES_PORT_443_TCP_PROTO
           value: ""
-        {{- if eq .Values.broker.persistentMode "s3-tiered" }}
-        # S3-tiered (issue #52): cap snapshot/restore at the hot-tier sizeLimit (D9).
+        {{- if eq .Values.broker.persistentMode "empty-dir" }}
+        # empty-dir hot tier (#142): cap snapshot/restore at the hot-tier sizeLimit (D9).
         - name: MAX_WORKSPACE_BYTES
           value: {{ include "open-websandbox.sizeBytes" .Values.broker.s3.sizeLimit | quote }}
         {{- end }}

@@ -191,20 +191,17 @@ broker:
   routerUrl: http://sandbox-router-svc.agent-sandbox-system:8080
   claimTimeoutSeconds: 60
   proxyTimeoutSeconds: 660
-
-broker:
   defaultProfile: persistent          # ephemeral | persistent (deploy-fixed)
-  # PVC hot tiers (#140): per-user-pvc (one RWX PVC per user, per-chat subPath) |
-  # shared-subpath (ONE shared RWX PVC, per-user/per-chat subPath) | s3-tiered
+  # Hot tiers (#140/#142): per-user-pvc (one RWX PVC per user, per-chat subPath) |
+  # shared-subpath (ONE shared RWX PVC, per-user/per-chat subPath) |
+  # empty-dir (needs the S3 cold tier)
   persistentMode: per-user-pvc
   persistentStorageClass: cephfs   # RWX class (prereq; "" = cluster default)
   persistentStorage: 10Gi             # per-user PVC size
   persistentAccessModes: [ReadWriteMany]
   perUserPvcPrefix: workspace-p-
-
-broker.idle:
-  idleTtlSeconds: 120                 # ephemeral reap
-  parkIdleSeconds: 120                # persistent park (suspend)
+  idleTtlSeconds: 120                 # ephemeral reap (also empty-dir persistent reap)
+  parkIdleSeconds: 120                # persistent park (suspend; PVC tiers only)
   reapSeconds: 604800                 # persistent reap (7d)
 
 warmPool:
@@ -237,11 +234,20 @@ Each value maps 1:1 to a real knob — see the [broker env-var
 reference](#broker-environment-variable-reference) below for the exact mapping
 and defaults. Two settings worth calling out:
 
-- **`broker.persistentMode`** — the persistent hot tier (#140), deploy-selectable:
+- **`broker.persistentMode`** — the persistent **hot tier** (what backs
+  `/workspace` while the sandbox runs, #140/#142), deploy-selectable:
   - `per-user-pvc` (default) — one PVC per user (`workspace-p-<sha256(user)[:12]>`,
     broker-created, `persistentStorageClass`/`persistentAccessModes`/`persistentStorage`).
   - `shared-subpath` — ONE chart-rendered `workspace-shared` PVC (`sharedPvc.*` values).
-  - `s3-tiered` — emptyDir hot tier + S3 cold tier (requires `broker.s3.enabled`).
+  - `empty-dir` — plain emptyDir (the cold tier is the only durability;
+    **requires `broker.s3.enabled`**, the broker fails closed at boot otherwise).
+
+- **`broker.s3.enabled`** — the **cold tier**, independent of the hot tier (#142):
+  offload-on-reap + restore-on-resume compose with **every** hot tier. With a PVC
+  hot tier this is hybrid tiering — park/resume serves the PVC directly, reap
+  offloads the chat to S3 and frees the hot tier, and the next resolve restores
+  from the cold tier. A stale cold object never clobbers hot data: the runtime
+  restores only into an empty workspace.
 
   In **both PVC modes every chat mounts its own subPath**
   (`chats/<sha256(user/session)[:12]>`, nested under `users/<sha256(user)[:12]>/` in
@@ -400,12 +406,12 @@ a Helm value unset to inherit the default.
 | `namespaces.runtime` | `BROKER_RUNTIME_NS` | `agent-sandbox-runtime` | Namespace holding templates/pools/claims/sandboxes. |
 | `broker.routerUrl` | `BROKER_ROUTER_URL` | `http://sandbox-router-svc.agent-sandbox-system:8080` | Where the broker proxies HTTP requests. |
 | `broker.defaultProfile` | `BROKER_DEFAULT_PROFILE` | `persistent` | Default profile (`ephemeral` \| `persistent`). Deploy-fixed. |
-| `broker.persistentMode` | `BROKER_PERSISTENT_MODE` | `per-user-pvc` | `per-user-pvc` \| `shared-subpath` \| `s3-tiered` (needs `broker.s3.enabled`). |
+| `broker.persistentMode` | `BROKER_PERSISTENT_MODE` | `per-user-pvc` | **Hot tier**: `per-user-pvc` \| `shared-subpath` \| `empty-dir` (needs `broker.s3.enabled`). |
 | `broker.persistentStorage` | `BROKER_PERSISTENT_STORAGE` | `10Gi` | Per-user PVC size (per-user-pvc mode). |
 | `broker.persistentStorageClass` | `BROKER_PERSISTENT_STORAGE_CLASS` | `""` | Per-user PVC StorageClass ("" = cluster default; prod: an RWX class such as CephFS). |
-| `idle.ephemeralTtlSeconds` | `BROKER_IDLE_TTL_SECONDS` | `120` | Ephemeral reap age — claim deleted, sandbox returns to the warm pool. |
-| `idle.parkIdleSeconds` | `BROKER_PARK_IDLE_SECONDS` | `120` | Persistent **park** age — sandbox `Suspended` (pod gone, PVC kept). Cold resume ~1–6 s. |
-| `idle.reapSeconds` | `BROKER_REAP_SECONDS` | `604800` (7 d) | Persistent **reap** age — claim + PVC deleted. |
+| `broker.idleTtlSeconds` | `BROKER_IDLE_TTL_SECONDS` | `120` | Ephemeral reap age — claim deleted, sandbox returns to the warm pool. Also the reap age of `empty-dir` persistent sandboxes. |
+| `broker.parkIdleSeconds` | `BROKER_PARK_IDLE_SECONDS` | `120` | Persistent **park** age — sandbox `Suspended` (pod gone, PVC kept). Cold resume ~1–6 s. PVC hot tiers only; `empty-dir` never parks. |
+| `broker.reapSeconds` | `BROKER_REAP_SECONDS` | `604800` (7 d) | Persistent **reap** age — with the cold tier on, reap offloads to S3 first and frees the hot tier (#142); the per-user PVC itself is kept. |
 | `broker.claimTimeoutSeconds` | `BROKER_CLAIM_TIMEOUT_SECONDS` | `60` | Wait for `Ready` (else HTTP 504). |
 | `broker.proxyTimeoutSeconds` | `BROKER_PROXY_TIMEOUT_SECONDS` | `660` | Upstream proxy timeout (> runtime `MAX_TIMEOUT` 600 s). |
 | `broker.baseTemplate` | `BROKER_BASE_TEMPLATE` | `code-standard-v1` | Base SandboxTemplate cloned for persistent per-chat sandboxes. |

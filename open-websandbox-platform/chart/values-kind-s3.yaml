@@ -1,6 +1,6 @@
 # KIND/runc profile for the S3-tiered e2e suite (issue #52).
 #
-# Runs the broker with broker.persistentMode=s3-tiered + broker.s3.enabled=true, pointed
+# Runs the broker with broker.persistentMode=empty-dir + broker.s3.enabled=true, pointed
 # at the in-cluster MinIO fixture (tests/e2e/fixtures/minio.yaml). The hot tier is an
 # emptyDir /workspace; the cold tier is MinIO. idleTtlSeconds + reaperPollSeconds are
 # lowered so the offload-on-reap path is exercised deterministically within the test
@@ -12,9 +12,9 @@ router:
   kubeApiServerCidr: "10.96.0.1/32"   # KIND service CIDR (kubeadm default)
   kubeDnsCidr: "10.96.0.10/32"
 broker:
-  defaultProfile: persistent      # s3-tiered is a persistent backing mode
-  persistentMode: s3-tiered
-  idleTtlSeconds: 15              # reap (offload) idle s3-tiered sandboxes fast
+  defaultProfile: persistent      # empty-dir hot tier is a persistent backing mode
+  persistentMode: empty-dir
+  idleTtlSeconds: 15              # reap (offload) idle empty-dir sandboxes fast
   parkIdleSeconds: 15
   s3:
     enabled: true

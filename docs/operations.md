@@ -189,9 +189,11 @@ the name is **deterministic per user** — a restored PVC re-binds to the same
 user when the broker recreates it on next access). Each chat lives in its own
 `chats/<sha256(user/session)[:12]>` subPath of that PVC, so snapshotting the
 user PVC captures every chat of that user. In `shared-subpath` mode the same
-applies with ONE shared `workspace-shared` PVC (snapshots cover all users);
-in `s3-tiered` mode the durable state is the S3 bucket instead. Ephemeral
-sandboxes use an `emptyDir` and are not backed up.
+applies with ONE shared `workspace-shared` PVC (snapshots cover all users).
+In `empty-dir` mode the durable state is the S3 bucket instead (#142), and in
+the PVC modes with `broker.s3.enabled` hybrid tiering applies: a reaped chat's
+data lives in S3 until its next resolve, so restore BOTH the PVCs and the S3
+bucket. Ephemeral sandboxes use an `emptyDir` and are not backed up.
 
 > **The PVCs are unencrypted at rest.** Backups do not give you
 > confidentiality. Enable encryption at the **storage layer** (CephFS

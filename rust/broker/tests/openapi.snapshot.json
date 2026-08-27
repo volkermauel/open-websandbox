@@ -382,7 +382,7 @@
         "type": "object"
       },
       "RestoreResponse": {
-        "description": "Response body for `PUT /restore`: whether the workspace was restored and the\ncompressed bytes ingested.",
+        "description": "Response body for `PUT /restore`: whether the workspace was restored and the\ncompressed bytes ingested. `restored: false` with `skipped:\nSome(\"workspace-non-empty\")` is the #142 hot-tier hit: the caller (broker)\nasked for a cold restore, but the mounted workspace already has data (PVC\npark-resume), and unpacking the cold object over it could regress newer\nstate — so the runtime declines and keeps serving the hot tier.",
         "properties": {
           "bytes": {
             "format": "int64",
@@ -391,6 +391,12 @@
           },
           "restored": {
             "type": "boolean"
+          },
+          "skipped": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
