@@ -535,6 +535,9 @@ when the runtime pod is recreated, and the controller reattaches it on the next 
 [`tests/e2e/test_upgrade_rollback.py`](../tests/e2e/test_upgrade_rollback.py) — an
 opt-in lane (`E2E_UPGRADE=1`) that writes a marker file to a persistent sandbox,
 upgrades, asserts the file survives, rolls back, and asserts the image reverts.
+The lane runs **weekly in CI** (`.github/workflows/e2e-upgrade.yml`, Mondays 04:05
+UTC + `workflow_dispatch`) — not per-PR, since the mechanics only change with the
+chart's image/PVC plumbing.
 
 **Version-skew rules**
 

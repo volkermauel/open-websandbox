@@ -23,9 +23,11 @@ What it proves
 
 See ``docs/operations.md`` → *Upgrade & rollback* / *Helm upgrade & version skew*.
 """
+import contextlib
 import json
 import os
 import subprocess
+import time
 import uuid
 
 import httpx
@@ -42,7 +44,14 @@ from conftest import (  # noqa: E402
 
 RELEASE = os.environ.get("E2E_RELEASE", "open-websandbox")
 CHART = os.environ.get("E2E_CHART", "open-websandbox-platform/chart")
+# The release namespace — helm defaults to the kubeconfig's current namespace
+# ("default" in CI and KIND), NOT the install namespace, so every helm call
+# must pass it explicitly.
+NS = os.environ.get("E2E_NS", "agent-sandbox-system")
 RT_NAMESPACE = os.environ.get("E2E_RT_NS", "agent-sandbox-runtime")
+# The base SandboxTemplate the chart renders (broker.baseTemplate) — the pod
+# template `helm upgrade --set imageTag` eventually repoints.
+TEMPLATE = os.environ.get("E2E_BASE_TEMPLATE", "code-standard-v1")
 # Two loaded runtime image tags: A = installed, B = upgrade target.
 IMAGE_A = os.environ.get("E2E_IMAGE_A", "")
 IMAGE_B = os.environ.get("E2E_IMAGE_B", "")
@@ -66,8 +75,8 @@ def _runtime_image() -> str:
     """The runtime container image currently rendered by the SandboxTemplate."""
     r = _run([
         "kubectl", *EXTRA_KC, "-n", RT_NAMESPACE,
-        "get", "sandboxtemplate", "code-standard", "-o",
-        "jsonpath={.spec.template.podTemplate.spec.containers[0].image}",
+        "get", "sandboxtemplate", TEMPLATE, "-o",
+        "jsonpath={.spec.podTemplate.spec.containers[0].image}",
     ])
     return r.stdout.strip()
 
@@ -77,9 +86,40 @@ def _tag_of(image: str) -> str:
     return image.rsplit(":", 1)[-1]
 
 
+@contextlib.contextmanager
+def _fresh_port_forward(local: int):
+    """Own port-forward for POST-upgrade checks.
+
+    ``helm upgrade --set imageTag=...`` rolls ALL platform images — including
+    the broker — so any port-forward bound to the old broker pod dies with it.
+    This helper owns a NEW port-forward against the service (post-upgrade pod)
+    and waits for ``/healthz`` before handing the URL over.
+    """
+    pf = subprocess.Popen(
+        ["kubectl", *EXTRA_KC, "-n", NS, "port-forward", "svc/owui-broker",
+         f"{local}:8080"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        url = f"http://localhost:{local}"
+        for _ in range(30):
+            try:
+                if httpx.get(f"{url}/healthz", timeout=2).status_code == 200:
+                    break
+            except httpx.HTTPError:
+                pass
+            time.sleep(1)
+        else:
+            pytest.fail(f"port-forward :{local} did not come up after upgrade")
+        yield url
+    finally:
+        pf.terminate()
+        pf.wait(timeout=10)
+
+
 def _helm_releases() -> list[int]:
     """Deployed revision numbers for ``RELEASE``, ascending."""
-    r = _run(["helm", *EXTRA_KC, "history", RELEASE, "-o", "json"], timeout=60)
+    r = _run(["helm", *EXTRA_KC, "history", RELEASE, "-n", NS, "-o", "json"], timeout=60)
     try:
         history = json.loads(r.stdout)
     except ValueError:
@@ -118,14 +158,16 @@ def test_pvc_survives_helm_upgrade(require_upgrade) -> None:
 
     # --- helm upgrade: same chart, new runtime tag (IMAGE_B) ---
     _run([
-        "helm", *EXTRA_KC, "upgrade", RELEASE, CHART,
+        "helm", *EXTRA_KC, "upgrade", RELEASE, CHART, "-n", NS,
         "--reuse-values",
         "--set", f"imageTag={_tag_of(IMAGE_B)}",
         "--wait", "--timeout", "5m",
     ], timeout=420)
 
     # The recreated runtime pod reattaches the retained PVC; the marker survives.
-    with httpx.Client(base_url=BROKER_URL, timeout=60) as c:
+    # (The upgrade also replaced the broker pod, so go through a FRESH
+    # port-forward — the lane's original one died with the old broker.)
+    with _fresh_port_forward(8890) as url, httpx.Client(base_url=url, timeout=60) as c:
         r = c.post(
             "/execute",
             json={"command": "cat /workspace/upgrade-marker.txt"},
@@ -140,6 +182,6 @@ def test_helm_rollback_reverts_image(require_upgrade) -> None:
     """`helm rollback` to the prior revision restores IMAGE_A; the file remains."""
     releases = _helm_releases()
     prev = min(releases)  # the install revision, before the upgrade in the test above
-    _run(["helm", *EXTRA_KC, "rollback", RELEASE, str(prev), "--wait", "--timeout", "5m"],
+    _run(["helm", *EXTRA_KC, "rollback", RELEASE, str(prev), "-n", NS, "--wait", "--timeout", "5m"],
          timeout=420)
     assert _tag_of(IMAGE_A) in _runtime_image(), "runtime image did not revert to IMAGE_A"
