@@ -308,4 +308,4 @@ jobs:
           files: |
             open-websandbox-*.tgz
             open-websandbox-chart-*.spdx.json
-            image-sboms/*.spdx.json
+            image-sboms/*
