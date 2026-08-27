@@ -193,9 +193,29 @@ async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, s
         }
     };
 
+    // 2.5 (#98/#147): the runtime's per-session key is MANDATORY on the pod
+    //     hop — the WS upgrade included. Fail closed (1011) rather than attach
+    //     unauthenticated and let the runtime reject the upgrade mid-relay.
+    let runtime_api_key = match state.store.read_runtime_key(&resolved.name).await {
+        Ok(Some(k)) => k,
+        Ok(None) => {
+            tracing::warn!(
+                sandbox = %resolved.name,
+                "no per-session runtime key for terminal relay (owui-runtime-key-* missing)"
+            );
+            close_1011(&mut client, "terminal unavailable").await;
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(sandbox = %resolved.name, error = %e, "read runtime key failed");
+            close_1011(&mut client, "terminal unavailable").await;
+            return;
+        }
+    };
+
     // 3. best-effort: ensure an interactive PTY exists on the resolved pod before
     //    attaching (idempotent; errors suppressed).
-    ensure_pty(&state, &resolved.pod_ip, &session_id).await;
+    ensure_pty(&state, &resolved.pod_ip, &session_id, &runtime_api_key).await;
 
     tracing::info!(
         user = %identity.user_id,
@@ -213,20 +233,54 @@ async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, s
         "ws://{}:{RUNTIME_PORT}/api/terminals/{session_id}",
         resolved.pod_ip
     );
-    relay_to_upstream(client, &upstream_url).await;
+    relay_to_upstream(client, &upstream_url, &runtime_api_key).await;
 }
 
-/// Connect the upstream runtime terminal WS (`upstream_url`) and relay frames
-/// bidirectionally with the OWUI client `WebSocket` until either side closes
-/// (first-completed-wins; the other pump task is aborted). On upstream-connect
-/// failure the client socket is closed with 1011.
+/// Close the client socket with `1011` + reason (shared failure path).
+async fn close_1011(client: &mut WebSocket, reason: &str) {
+    let _ = client
+        .send(AxumMsg::Close(Some(axum::extract::ws::CloseFrame {
+            code: 1011,
+            reason: reason.into(),
+        })))
+        .await;
+}
+
+/// Connect the upstream runtime terminal WS (`upstream_url`) — authenticated
+/// with the sandbox's per-session `runtime_api_key` (#147: the runtime's
+/// fail-closed per-session auth applies to the WS upgrade too) — and relay
+/// frames bidirectionally with the OWUI client `WebSocket` until either side
+/// closes (first-completed-wins; the other pump task is aborted). On
+/// upstream-connect failure the client socket is closed with 1011.
 ///
 /// Factored out of `relay` (steps 4–5) as a test seam: the rest of `relay`
 /// needs an [`AppState`] plus a resolved sandbox pod, which is heavier than a
 /// test wires up, but this connect + pump path is fully exercisable against a
 /// local in-process echo server (see `tests/ws_relay.rs`).
-pub async fn relay_to_upstream(mut client: WebSocket, upstream_url: &str) {
-    let upstream = match tokio_tungstenite::connect_async(upstream_url).await {
+pub async fn relay_to_upstream(mut client: WebSocket, upstream_url: &str, runtime_api_key: &str) {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    let mut request = match upstream_url.into_client_request() {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(%upstream_url, "terminal ws upstream request build failed: {e}");
+            close_1011(&mut client, "terminal unavailable").await;
+            return;
+        }
+    };
+    match format!("Bearer {runtime_api_key}").parse::<axum::http::HeaderValue>() {
+        Ok(v) => {
+            request
+                .headers_mut()
+                .insert(axum::http::header::AUTHORIZATION, v);
+        }
+        Err(e) => {
+            tracing::warn!(%upstream_url, "terminal ws upstream bearer invalid: {e}");
+            close_1011(&mut client, "terminal unavailable").await;
+            return;
+        }
+    }
+    let upstream = match tokio_tungstenite::connect_async(request).await {
         Ok((stream, _)) => stream,
         Err(e) => {
             tracing::warn!(%upstream_url, "terminal ws upstream connect failed: {e}");
@@ -322,22 +376,20 @@ async fn wait_auth(client: &mut WebSocket, secret: &str) -> AuthResult {
 
 /// Best-effort `POST /api/terminals` to the resolved pod so an interactive PTY
 /// exists before the WS attaches (idempotent; errors swallowed).
-async fn ensure_pty(state: &AppState, pod_ip: &str, session_id: &str) {
+async fn ensure_pty(state: &AppState, pod_ip: &str, session_id: &str, runtime_api_key: &str) {
     let mut headers = HeaderMap::new();
     if let Ok(v) = "application/json".parse() {
         headers.insert(axum::http::header::CONTENT_TYPE, v);
     }
-    if !state.config.runtime_api_key.is_empty() {
-        if let Ok(v) = format!("Bearer {}", state.config.runtime_api_key).parse() {
-            headers.insert(axum::http::header::AUTHORIZATION, v);
-        }
+    if let Ok(v) = format!("Bearer {runtime_api_key}").parse() {
+        headers.insert(axum::http::header::AUTHORIZATION, v);
     }
     if let Ok(v) = session_id.parse() {
         headers.insert("x-session-id", v);
     }
     // Best-effort (errors swallowed): ensures an interactive PTY exists on the
-    // resolved pod before the WS attaches. The runtime key is the C-2 shared
-    // key; C-3 resolves this pod's per-session Secret instead.
+    // resolved pod before the WS attaches. #147: authorized with the sandbox's
+    // per-session runtime key (same fail-closed source as the proxy hop).
     let url = format!("http://{pod_ip}:{RUNTIME_PORT}/api/terminals");
     let _ = state.http.post(&url).headers(headers).send().await;
 }

@@ -351,6 +351,11 @@ jobs:
   #                 tiering is hot-tier independent (park-resume = hot hit, no S3
   #                 clobber; reap = offload + PVC purge + cold restore).
   # pvc-s3-shared — #144: the same hybrid proof on the shared-PVC hot tier.
+  # drain         — #146: pod-eviction resilience (E2E_DRAIN=1). The test never
+  #                 drains a node — it deletes the sandbox pod (same blast
+  #                 radius), which single-node KIND serves fine (RWO local-path
+  #                 rebinds on the same node); real kubectl drain needs
+  #                 multi-node + RWX and stays future work.
   # All lanes prove: persistence across Sandbox deletion, cross-chat isolation
   # (a chat can only see/delete its own directory), cross-user isolation.
   e2e-pvc:
@@ -359,7 +364,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [per-user-pvc, shared-subpath, pvc-s3, pvc-s3-shared]
+        mode: [per-user-pvc, shared-subpath, pvc-s3, pvc-s3-shared, drain]
     env:
       KIND_CLUSTER: open-websandbox-e2e-pvc
       SYS_NS: agent-sandbox-system
@@ -501,7 +506,15 @@ jobs:
           for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
           SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
             -o jsonpath='{.data.shared-secret}' | base64 -d)"
-          if [ "${{ matrix.mode }}" = "pvc-s3" ] || [ "${{ matrix.mode }}" = "pvc-s3-shared" ]; then
+          if [ "${{ matrix.mode }}" = "drain" ]; then
+            # #146: pod-eviction resilience on the per-user PVC profile. The live
+            # WS dies with the pod; reconnect re-resolves the recreated pod,
+            # replays the SIGTERM-flushed scrollback, and the marker file
+            # survives on the PVC.
+            BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" \
+            E2E_DRAIN=1 \
+              pytest tests/e2e/test_node_drain.py -v
+          elif [ "${{ matrix.mode }}" = "pvc-s3" ] || [ "${{ matrix.mode }}" = "pvc-s3-shared" ]; then
             # The reaper offloads to MinIO regardless of which module runs;
             # create the bucket BEFORE pytest so non-s3 modules (which never
             # resolve require_s3) don't fight offload failures.
