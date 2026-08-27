@@ -77,7 +77,7 @@ Keyless verification pins the **OIDC issuer** (always GitHub Actions) and the
 fails verification.
 
 ```bash
-TAG=v0.1.0                                                            # the tag you pulled
+TAG=v0.1.1                                                            # the tag you pulled
 IMAGE=ghcr.io/volkermauel/open-websandbox-broker                         # ...or -runtime / -router
 
 cosign verify --yes \

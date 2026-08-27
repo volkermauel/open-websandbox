@@ -66,25 +66,25 @@ sha256sum -c open-websandbox-platform/upstream/SHA256SUMS
 !!! warning "Pre-release — artifacts are not published yet"
 
     **No GitHub Release has been cut yet.** The pre-built images
-    (`ghcr.io/volkermauel/open-websandbox-{broker,runtime,router}:v0.1.0`), the OCI chart
+    (`ghcr.io/volkermauel/open-websandbox-{broker,runtime,router}:v0.1.1`), the OCI chart
     (`oci://ghcr.io/volkermauel/charts/open-websandbox --version 0.1.0`), and the release
-    tarball (`…/releases/download/v0.1.0/open-websandbox-0.1.0.tgz`) are all produced by
+    tarball (`…/releases/download/v0.1.1/open-websandbox-0.1.0.tgz`) are all produced by
     the [`release.yml`](../.github/workflows/release.yml) workflow **on the first
-    `v0.1.0` git tag**. Until that tag exists those references `404`, and any install
+    `v0.1.1` git tag**. Until that tag exists those references `404`, and any install
     that pulls them ends in `ImagePullBackOff`.
 
     **Until the first release, use Option A (build from source) below** — it builds
     the three images locally and installs from your checkout with no registry pull.
     Options B and C (the OCI chart and the release tarball) are the intended
     post-release install paths, kept here verbatim; they become valid the moment
-    `v0.1.0` is tagged.
+    `v0.1.1` is tagged.
 
 The chart ships three images — `open-websandbox-broker`, `open-websandbox-runtime`, and
 `open-websandbox-router` (the last is self-built from upstream `kubernetes-sigs/agent-sandbox`
 v0.5.3; see [`release.yml`](../.github/workflows/release.yml)). Match the install path
 to your situation:
 
-### Option A — build from source *(primary path until v0.1.0 is released)*
+### Option A — build from source *(primary path until v0.1.1 is released)*
 
 Build the three images and load them into each gVisor worker, then install from your
 local checkout. The chart defaults to local/dev tags with `imagePullPolicy: Never`,
@@ -110,18 +110,18 @@ these values:
 # Values shared by the post-release methods (B and C) — pull published images from GHCR:
 COMMON="--set imageRegistry=ghcr.io \
         --set imageOwner=volkermauel \
-        --set imageTag=v0.1.0 \
+        --set imageTag=v0.1.1 \
         --set imagePullPolicy=IfNotPresent"
 ```
 
-### Option B — published chart tarball *(available once the v0.1.0 Release is published)*
+### Option B — published chart tarball *(available once the v0.1.1 Release is published)*
 
-Once `release.yml` runs on the `v0.1.0` tag it attaches `open-websandbox-0.1.0.tgz` to the
+Once `release.yml` runs on the `v0.1.1` tag it attaches `open-websandbox-0.1.0.tgz` to the
 GitHub Release:
 
 ```bash
 helm install open-websandbox \
-  https://github.com/volkermauel/open-websandbox/releases/download/v0.1.0/open-websandbox-0.1.0.tgz \
+  https://github.com/volkermauel/open-websandbox/releases/download/v0.1.1/open-websandbox-0.1.0.tgz \
   $COMMON
 ```
 
