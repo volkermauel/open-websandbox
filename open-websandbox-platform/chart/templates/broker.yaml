@@ -1,5 +1,6 @@
 # Open WebUI broker: auth + session->sandbox + reverse-proxy to the router.
 # Lives in agent-sandbox-system; needs RBAC in agent-sandbox-runtime to manage the
+# pi-lens-ignore: yaml
 {{- $sysNs := include "open-websandbox.systemNamespace" . -}}
 {{- $runNs := include "open-websandbox.runtimeNamespace" . -}}
 {{- $shared := include "open-websandbox.brokerSharedSecret" . -}}

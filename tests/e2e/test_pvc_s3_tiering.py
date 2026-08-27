@@ -36,7 +36,11 @@ from conftest import (  # type: ignore[import-not-found]
 )
 
 RT_NS = os.getenv("E2E_RT_NS", "agent-sandbox-runtime")
-# parkIdleSeconds=12, reapSeconds=50, reaperPoll=5 (values-kind-pvc-s3.yaml).
+# Hot tier of the lane: per-user-pvc (values-kind-pvc-s3.yaml) or
+# shared-subpath (values-kind-pvc-shared-s3.yaml) — the hybrid proof must hold
+# for BOTH (#144).
+MODE = os.getenv("E2E_PVC_MODE", "per-user-pvc")
+# parkIdleSeconds=12, reapSeconds=50, reaperPoll=5 (values-kind-pvc-s3*.yaml).
 PARK_WAIT = 30          # > parkIdle + controller settle
 REAP_WAIT = 150         # > reapSeconds + resume + offload + poll slack
 
@@ -62,12 +66,28 @@ def _sbx_name(user: str, session: str) -> str:
     return "owui-c-" + hashlib.sha256(f"{user}/{session}".encode()).hexdigest()[:12]
 
 
-def _chat_dir(session: str) -> str:
-    return hashlib.sha256(session.encode()).hexdigest()[:12]
-
-
 def _pvc_name(user: str) -> str:
+    """The PVC holding this user's chats: the broker-created per-user PVC, or
+    the chart-rendered shared PVC in shared-subpath mode."""
+    if MODE == "shared-subpath":
+        return os.getenv("E2E_SHARED_PVC", "workspace-shared")
     return f"workspace-p-{hashlib.sha256(user.encode()).hexdigest()[:12]}"
+
+
+def _chat_path(user: str, session: str) -> str:
+    """The chat's subPath on the PVC — mirror of `workspace_layout` in
+    rust/broker/src/resolve.rs.
+
+    The chat component is sha256(user/session)[:12]. Hashing ONLY the session
+    (the original version of this helper) points at a nonexistent directory:
+    `ls -A` comes back empty and the purge assertion passes VACUOUSLY — the
+    exact bug this rewrite fixes (#144).
+    """
+    chat = hashlib.sha256(f"{user}/{session}".encode()).hexdigest()[:12]
+    if MODE == "shared-subpath":
+        u = hashlib.sha256(user.encode()).hexdigest()[:12]
+        return f"users/{u}/chats/{chat}"
+    return f"chats/{chat}"
 
 
 def _exec(c: httpx.Client, user: str, session: str, command: str) -> tuple[int, str]:
@@ -86,7 +106,7 @@ def _sandbox_gone(name: str) -> bool:
     return r.returncode != 0
 
 
-def _pvc_chat_dir_has_user_data(pvc: str, chat_dir: str) -> bool:
+def _pvc_chat_dir_has_user_data(pvc: str, chat_path: str) -> bool:
     """Mount the PVC in a debug pod; True if the chat dir holds USER data.
 
     After reap the chat dir is purged from the hot tier (#142). The runtime's
@@ -101,7 +121,7 @@ def _pvc_chat_dir_has_user_data(pvc: str, chat_dir: str) -> bool:
         "kubectl", "-n", RT_NS, "run", dbg, "--image=busybox", "--restart=Never",
         "--overrides", (
             '{"spec":{"containers":[{"name":"dbg","image":"busybox",'
-            '"command":["sh","-c","ls -A /ws/chats/' + chat_dir + ' 2>/dev/null || true"],'
+            '"command":["sh","-c","ls -A /ws/' + chat_path + ' 2>/dev/null || true"],'
             '"volumeMounts":[{"name":"ws","mountPath":"/ws"}]}],'
             '"volumes":[{"name":"ws","persistentVolumeClaim":{"claimName":"' + pvc + '"}}]}}'
         ),
@@ -111,7 +131,7 @@ def _pvc_chat_dir_has_user_data(pvc: str, chat_dir: str) -> bool:
         _run(["kubectl", "-n", RT_NS, "wait", "--for=condition=Ready", f"pod/{dbg}",
               "--timeout=60s"], timeout=70)
         r = _run(["kubectl", "-n", RT_NS, "exec", dbg, "--", "sh", "-c",
-                  f"ls -A /ws/chats/{chat_dir} 2>/dev/null | grep -v -x .open-websandbox || true"],
+                  f"ls -A /ws/{chat_path} 2>/dev/null | grep -v -x .open-websandbox || true"],
                  timeout=60)
         return bool((r.stdout or "").strip())
     finally:
@@ -147,7 +167,7 @@ def test_reap_offloads_purges_hot_tier_and_restores_on_resolve():
     user = f"hy-{uuid.uuid4().hex[:6]}"
     session = f"reap-{uuid.uuid4().hex[:6]}"
     name = _sbx_name(user, session)
-    chat = _chat_dir(session)
+    chat = _chat_path(user, session)
     pvc = _pvc_name(user)
     marker = f"COLD-{uuid.uuid4().hex[:8]}"
     with httpx.Client(base_url=BROKER_URL, timeout=CLAIM_TIMEOUT) as c:
@@ -169,7 +189,7 @@ def test_reap_offloads_purges_hot_tier_and_restores_on_resolve():
 
         # The chat dir is PURGED of user data (true tier-down, not a copy).
         assert not _pvc_chat_dir_has_user_data(pvc, chat), (
-            f"chat dir chats/{chat} still holds user data after reap — purge did not run"
+            f"chat dir {chat} still holds user data after reap — purge did not run"
         )
 
         # Re-resolve: fresh pod, empty subPath → restore-if-empty proceeds and

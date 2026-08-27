@@ -1,3 +1,4 @@
+# pi-lens-ignore: yaml
 {{/* Shared RWX PVC backing /workspace for the shared-subpath persistent mode
      (BROKER_PERSISTENT_MODE=shared-subpath) — issue #140. ONE volume shared by
      every chat sandbox; each mounts only its own

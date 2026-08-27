@@ -350,6 +350,7 @@ jobs:
   # pvc-s3        — #142 hybrid: per-user-pvc hot tier × MinIO cold tier. Proves
   #                 tiering is hot-tier independent (park-resume = hot hit, no S3
   #                 clobber; reap = offload + PVC purge + cold restore).
+  # pvc-s3-shared — #144: the same hybrid proof on the shared-PVC hot tier.
   # All lanes prove: persistence across Sandbox deletion, cross-chat isolation
   # (a chat can only see/delete its own directory), cross-user isolation.
   e2e-pvc:
@@ -358,7 +359,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [per-user-pvc, shared-subpath, pvc-s3]
+        mode: [per-user-pvc, shared-subpath, pvc-s3, pvc-s3-shared]
     env:
       KIND_CLUSTER: open-websandbox-e2e-pvc
       SYS_NS: agent-sandbox-system
@@ -449,8 +450,8 @@ jobs:
           kubectl apply -f open-websandbox-platform/chart/crds/
           kubectl wait --for=condition=Established --all crd --timeout=120s || true
 
-      - name: Deploy MinIO fixture (pvc-s3 lane only)
-        if: matrix.mode == 'pvc-s3'
+      - name: Deploy MinIO fixture (hybrid lanes only)
+        if: matrix.mode == 'pvc-s3' || matrix.mode == 'pvc-s3-shared'
         run: |
           kubectl -n "$SYS_NS" apply -f tests/e2e/fixtures/minio.yaml
           kubectl -n "$SYS_NS" rollout status deploy/minio --timeout=180s
@@ -463,6 +464,9 @@ jobs:
           fi
           if [ "${{ matrix.mode }}" = "pvc-s3" ]; then
             VALUES="open-websandbox-platform/chart/values-kind-pvc-s3.yaml"
+          fi
+          if [ "${{ matrix.mode }}" = "pvc-s3-shared" ]; then
+            VALUES="open-websandbox-platform/chart/values-kind-pvc-shared-s3.yaml"
           fi
           helm install open-websandbox open-websandbox-platform/chart/ \
             -f "$VALUES" -n "$SYS_NS"
@@ -497,15 +501,20 @@ jobs:
           for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
           SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
             -o jsonpath='{.data.shared-secret}' | base64 -d)"
-          if [ "${{ matrix.mode }}" = "pvc-s3" ]; then
+          if [ "${{ matrix.mode }}" = "pvc-s3" ] || [ "${{ matrix.mode }}" = "pvc-s3-shared" ]; then
             # The reaper offloads to MinIO regardless of which module runs;
             # create the bucket BEFORE pytest so non-s3 modules (which never
             # resolve require_s3) don't fight offload failures.
             python tests/e2e/ensure_minio_bucket.py
-            # #142 hybrid: PVC tests + the s3-tiered suite (hot-tier-agnostic)
-            # + the hybrid tiering suite, all against the per-user-pvc install.
+            # #142/#144 hybrid: PVC tests + the s3-tiered suite (hot-tier-agnostic)
+            # + the hybrid tiering suite — against EITHER PVC hot tier.
+            if [ "${{ matrix.mode }}" = "pvc-s3" ]; then
+              PVC_MODE=per-user-pvc
+            else
+              PVC_MODE=shared-subpath
+            fi
             BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" \
-            E2E_PVC=1 E2E_PVC_MODE=per-user-pvc E2E_S3=1 E2E_PVC_S3=1 \
+            E2E_PVC=1 E2E_PVC_MODE="$PVC_MODE" E2E_S3=1 E2E_PVC_S3=1 \
               pytest tests/e2e/test_pvc_persistence.py tests/e2e/test_s3_tiered.py \
                      tests/e2e/test_pvc_s3_tiering.py -v
           else

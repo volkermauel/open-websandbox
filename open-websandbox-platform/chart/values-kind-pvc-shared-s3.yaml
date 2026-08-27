@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# KIND/Runc profile for the HYBRID shared-PVC × S3 tiering e2e lane (issue #144).
+#
+# Same composability proof as values-kind-pvc-s3.yaml, but the hot tier is the
+# chart-rendered shared `workspace-shared` PVC (shared-subpath mode): every chat
+# mounts only its own users/<sha256(user)[:12]>/chats/<sha256(user/session)[:12]>
+# slice. The cold tier (MinIO) must compose identically — park serves the PVC,
+# reap offloads + purges the chat dir, re-resolve restores from S3.
+# Timers are short for deterministic tests. Default e2e (values-kind.yaml) is
+# unaffected.
+sandboxTemplate:
+  runtimeClassName: ""            # runc (KIND can't nest gVisor)
+  maxProcs: 100000               # KIND shared-kernel NPROC collision (see values-kind.yaml)
+router:
+  kubeApiServerCidr: "10.96.0.1/32"   # KIND service CIDR (kubeadm default)
+  kubeDnsCidr: "10.96.0.10/32"
+broker:
+  defaultProfile: persistent
+  persistentMode: shared-subpath  # shared PVC hot tier + S3 cold tier (#142 hybrid)
+  networkPolicy:
+    enabled: false               # KIND e2e reaches the broker via port-forward (localhost)
+  idleTtlSeconds: 15             # only ephemeral sandboxes reap here
+  parkIdleSeconds: 12            # park fast so the no-clobber test is quick
+  reapSeconds: 50                # reap → resume → offload → purge → delete
+  s3:
+    enabled: true
+    endpoint: "http://minio.agent-sandbox-system:9000"
+    bucket: "owsb-e2e"
+    prefix: "users"
+    region: "us-east-1"
+    credentialsSecret: "owui-s3-creds"   # created by tests/e2e/fixtures/minio.yaml
+    retentionDays: 1
+    compression: zstd
+    sse: ""                      # dev MinIO has no KMS/SSE backend; disable SSE (the broker omits the header)
+    periodicSyncInterval: 600     # keep the periodic sweep out of the way (reap is authoritative)
+    sizeLimit: "2Gi"
+    tmpfs: false
+    reaperPollSeconds: 5          # fast, deterministic offload-on-reap
+sharedPvc:
+  storageClass: standard            # KIND local-path
+  accessModes: [ReadWriteOnce]      # single-node KIND: RWO suffices
+  size: 5Gi

@@ -43,11 +43,13 @@ use std::sync::OnceLock;
 
 use broker::reaper::MANAGED_BY_SELECTOR;
 use broker::sandbox::build_sandbox;
-use broker::{build_client, KubeLease, KubeSandboxStore, LeaseClient, SandboxStore};
+use broker::store::WorkspacePvcSpec;
+use broker::{build_client, KubeLease, KubeSandboxStore, LeaseClient, SandboxStore, StoreError};
 use k8s_openapi::api::coordination::v1::{Lease, LeaseSpec};
+use k8s_openapi::api::core::v1::PersistentVolumeClaim;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::MicroTime;
 use k8s_openapi::jiff;
-use kube::api::{Api, ObjectMeta, PostParams};
+use kube::api::{Api, DeleteParams, ListParams, ObjectMeta, PostParams};
 use kube::ResourceExt;
 use shared::{BrokerConfig, Profile};
 
@@ -478,4 +480,142 @@ async fn lease_holder(client: &kube::Client, ns: &str, name: &str) -> Option<Str
 async fn lease_is_absent(client: &kube::Client, ns: &str, name: &str) -> bool {
     let api: Api<Lease> = Api::namespaced(client.clone(), ns);
     matches!(api.get(name).await, Err(kube::Error::Api(e)) if e.code == 404)
+}
+
+// --- ensure_workspace_pvc (#140): idempotency + concurrent-create race ------
+// The per-user PVC is created lazily on first resolve; two chats of the same
+// user resolving concurrently (or a retry after a timeout) both call
+// `ensure_workspace_pvc` with the same deterministic name. The real-API
+// contract: every caller succeeds (a 409 from the loser is swallowed) and
+// exactly one PVC object exists. The shared-subpath mode (`create: None`) is
+// an existence check that must surface a missing chart PVC as NotFound.
+
+/// The spec the broker derives from its config for a per-user workspace PVC
+/// (cluster-default storage class → KIND local-path; the PVC is never bound
+/// here — `ensure` only creates the object, binding waits for a consumer).
+fn workspace_pvc_spec() -> WorkspacePvcSpec {
+    WorkspacePvcSpec {
+        access_modes: vec!["ReadWriteOnce".to_string()],
+        storage: "1Gi".to_string(),
+        storage_class: String::new(),
+    }
+}
+
+/// Delete the named PVC (404-tolerant) so repeated live runs stay tidy.
+async fn delete_pvc(client: &kube::Client, name: &str) {
+    let pvcs: Api<PersistentVolumeClaim> = Api::namespaced(client.clone(), NS);
+    match pvcs.delete(name, &DeleteParams::default()).await {
+        Ok(_) => {}
+        Err(kube::Error::Api(e)) if e.code == 404 => {}
+        Err(e) => panic!("delete pvc {name}: {e}"),
+    }
+}
+
+/// How many PVCs named `name` exist in the shared test namespace.
+async fn count_pvcs(client: &kube::Client, name: &str) -> usize {
+    let pvcs: Api<PersistentVolumeClaim> = Api::namespaced(client.clone(), NS);
+    pvcs.list(&ListParams::default().fields(&format!("metadata.name={name}")))
+        .await
+        .unwrap_or_else(|e| panic!("list pvcs {name}: {e}"))
+        .items
+        .len()
+}
+
+#[tokio::test]
+async fn workspace_pvc_ensure_is_idempotent_and_carries_spec() {
+    if !gated() {
+        return;
+    }
+    let client = client().await;
+    ensure_ns(&client).await;
+    let store = KubeSandboxStore::new(client.clone(), NS);
+    let name = uniq("pvc");
+    let spec = workspace_pvc_spec();
+
+    store
+        .ensure_workspace_pvc(&name, Some(&spec))
+        .await
+        .expect("first ensure creates the PVC");
+    // A second resolve of the same user hits the existing object: the 409 that
+    // a naive create would return must be swallowed (idempotent success).
+    store
+        .ensure_workspace_pvc(&name, Some(&spec))
+        .await
+        .expect("second ensure tolerates AlreadyExists");
+    // The shared-mode existence check on a PRESENT PVC also succeeds.
+    store
+        .ensure_workspace_pvc(&name, None)
+        .await
+        .expect("existence check succeeds for a present PVC");
+
+    let pvcs: Api<PersistentVolumeClaim> = Api::namespaced(client.clone(), NS);
+    let got = pvcs.get(&name).await.expect("pvc readable");
+    assert_eq!(count_pvcs(&client, &name).await, 1, "exactly one PVC");
+    let s = got.spec.expect("pvc spec");
+    assert_eq!(
+        s.access_modes.as_deref(),
+        Some(["ReadWriteOnce".to_string()].as_slice()),
+        "access modes from the spec"
+    );
+    assert_eq!(
+        s.resources
+            .and_then(|r| r.requests)
+            .and_then(|m| m.get("storage").cloned())
+            .map(|q| q.0),
+        Some("1Gi".to_string()),
+        "storage request from the spec"
+    );
+    delete_pvc(&client, &name).await;
+}
+
+#[tokio::test]
+async fn workspace_pvc_concurrent_ensure_creates_exactly_one() {
+    if !gated() {
+        return;
+    }
+    let client = client().await;
+    ensure_ns(&client).await;
+    let name = uniq("pvc-race");
+    let spec = workspace_pvc_spec();
+
+    // Eight concurrent resolves of the same user (two chats × four retries, or
+    // a burst from Open Web UI) race the create. JoinSet drives them in
+    // parallel on the shared test runtime, exactly like concurrent requests.
+    let mut set = tokio::task::JoinSet::new();
+    for _ in 0..8 {
+        let store = KubeSandboxStore::new(client.clone(), NS);
+        let name = name.clone();
+        let spec = spec.clone();
+        set.spawn(async move { store.ensure_workspace_pvc(&name, Some(&spec)).await });
+    }
+    while let Some(joined) = set.join_next().await {
+        joined
+            .expect("task panicked")
+            .unwrap_or_else(|e| panic!("concurrent ensure failed: {e}"));
+    }
+    assert_eq!(
+        count_pvcs(&client, &name).await,
+        1,
+        "the race must converge on exactly one PVC"
+    );
+    delete_pvc(&client, &name).await;
+}
+
+#[tokio::test]
+async fn workspace_pvc_shared_mode_missing_pvc_is_not_found() {
+    if !gated() {
+        return;
+    }
+    let client = client().await;
+    ensure_ns(&client).await;
+    let store = KubeSandboxStore::new(client.clone(), NS);
+    let name = uniq("pvc-missing");
+
+    // shared-subpath: the chart owns the PVC. A missing one is an install
+    // misconfiguration and must surface as NotFound, not be papered over by a
+    // silent create.
+    match store.ensure_workspace_pvc(&name, None).await {
+        Err(StoreError::NotFound) => {}
+        other => panic!("expected NotFound for a missing shared PVC, got {other:?}"),
+    }
 }

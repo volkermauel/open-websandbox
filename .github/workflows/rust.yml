@@ -93,3 +93,47 @@ jobs:
         run: cargo install --locked cargo-audit
       - name: cargo audit
         run: cargo audit
+
+  coverage:
+    # Issue #144: report-only line coverage of the Rust control plane.
+    # Produces a lcov artifact (consumable by any viewer/codecov later) plus a
+    # one-line summary in the job log. Non-blocking (continue-on-error):
+    # coverage is now MEASURABLE; gating on a number is a separate decision.
+    name: coverage (report-only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: cargo llvm-cov (workspace → lcov)
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - name: Coverage summary
+        run: |
+          python3 - <<'PY'
+          import re
+          hit = lines = 0
+          # DA:<line>,<execution-count> — a line is covered when the count > 0.
+          for m in re.finditer(r"^DA:(\d+),(\d+)", open("lcov.info").read(), re.M):
+              lines += 1
+              if int(m.group(2)) > 0:
+                  hit += 1
+          pct = 100.0 * hit / lines if lines else 0.0
+          print(f"line coverage: {hit}/{lines} ({pct:.1f}%)")
+          PY
+      - uses: actions/upload-artifact@v5
+        with:
+          name: rust-coverage-lcov
+          path: rust/lcov.info
+          if-no-files-found: warn

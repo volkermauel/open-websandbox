@@ -1034,4 +1034,50 @@ mod tests {
         assert_eq!(a.len(), 8);
         assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
     }
+
+    #[test]
+    fn scrollback_ring_evicts_oldest_beyond_cap() {
+        // The TAIL is what a reattaching client needs: once `cap` is exceeded
+        // the oldest bytes are dropped, never the newest (#129/#142 invariant —
+        // a pod that dies mid-flush leaves a bounded, newest-first tail).
+        let mut ring = Scrollback::new(8);
+        ring.push(b"abcdefghij"); // 10 bytes > cap 8 → keep the last 8
+        assert_eq!(ring.snapshot(), b"cdefghij");
+        ring.push(b"XY"); // one more eviction
+        assert_eq!(ring.snapshot(), b"efghijXY");
+    }
+
+    #[test]
+    fn scrollback_ring_disabled_at_cap_zero() {
+        // cap == 0 disables capture entirely — nothing may be buffered.
+        let mut ring = Scrollback::new(0);
+        ring.push(b"data");
+        assert!(ring.snapshot().is_empty());
+    }
+
+    #[tokio::test]
+    async fn flush_scrollbacks_noop_when_disabled() {
+        use crate::auth::SessionKeyStore;
+        use crate::config::RuntimeConfig;
+        use crate::state::AppState;
+
+        // terminal_scrollback_bytes == 0 → flush must return early: no session
+        // is written AND the reserved dir is not created (a purge-then-die pod
+        // with scrollback disabled must not resurrect .open-websandbox/, which
+        // is exactly the shape that broke #142's restore-if-empty gate).
+        let dir = tempfile::TempDir::new().unwrap();
+        let state = AppState::new(
+            RuntimeConfig {
+                workdir: dir.path().to_path_buf(),
+                terminal_scrollback_bytes: 0,
+                ..Default::default()
+            },
+            SessionKeyStore::new(dir.path().join("api-key")),
+        );
+        assert_eq!(flush_scrollbacks(&state).await, 0);
+        assert!(
+            !dir.path().join(".open-websandbox").exists(),
+            "disabled flush must not create the scrollback dir"
+        );
+    }
 }

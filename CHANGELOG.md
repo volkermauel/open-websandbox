@@ -12,6 +12,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — CI/test hardening (#144)
+
+- **Weekly upgrade/rollback e2e lane** (`.github/workflows/e2e-upgrade.yml`): proves a
+  persistent sandbox's PVC survives `helm upgrade` and `helm rollback` reverts the
+  runtime image (`E2E_UPGRADE=1` was previously never executed in CI).
+- **`pvc-s3-shared` e2e matrix arm**: the #142 hybrid tiering proof (park no-clobber,
+  reap offload/purge/cold-restore) now runs against the shared-subpath hot tier too,
+  via the new `values-kind-pvc-shared-s3.yaml`.
+- **`ensure_workspace_pvc` race tests** (live-gated `kube_live`): 8 concurrent ensures
+  converge on exactly one PVC; idempotent second call; missing shared PVC → NotFound.
+- **Report-only coverage job** in `rust.yml` (`cargo-llvm-cov` → lcov artifact +
+  line-coverage summary; non-blocking).
+- **Terminals unit tests**: scrollback ring evicts oldest beyond cap, `cap == 0`
+  disables capture, and `flush_scrollbacks` no-ops (and creates no dir) when
+  scrollback is disabled.
+- Fixed a latent e2e bug: `test_pvc_s3_tiering.py` hashed only the session for the
+  chat-dir path, but the broker subPath is `sha256(user/session)[:12]` — the purge
+  assertion inspected a nonexistent directory and passed vacuously.
+
 ### Changed — composable S3 tiering (#142)
 
 The S3 cold tier (`broker.s3.enabled`) is now **independent of the hot tier**
