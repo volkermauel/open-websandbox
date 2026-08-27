@@ -589,6 +589,9 @@ resumes the **same shell** with the tail replayed first.
 Cross-node drain needs an **RWX** storage class for the persistent profile (see
 [PVC Pending](#pvc-pending-persistent-workspace)); single-node KIND's default RWO class
 works because the recreated pod lands on the same node. The whole flow is exercised
-end-to-end by [`tests/e2e/test_node_drain.py`](../tests/e2e/test_node_drain.py) — an
-opt-in lane (`E2E_DRAIN=1`) that opens a terminal, deletes the sandbox pod, and asserts
-the reconnect replays the pre-eviction tail with the marker file intact.
+end-to-end by [`tests/e2e/test_node_drain.py`](../tests/e2e/test_node_drain.py) — a
+lane (`E2E_DRAIN=1`, run in CI as the `drain` arm of the `e2e-pvc` matrix on the
+per-user PVC profile) that opens a terminal, deletes the sandbox pod, and asserts
+the reconnect replays the pre-eviction tail with the marker file intact. A *real*
+`kubectl drain` (cordon + evict from a node that stays down) additionally needs a
+multi-node cluster — future work, tracked separately from this lane.

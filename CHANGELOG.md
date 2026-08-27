@@ -12,6 +12,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (#147)
+
+- **WS terminal relay now authenticates to the runtime.** Since #98's hard
+  cutover to per-session runtime keys, the broker's HTTP proxy hop fetched the
+  sandbox's key from its `owui-runtime-key-*` Secret — but the terminal relay
+  sent no Authorization on the WS upgrade (and `ensure_pty` still sent the
+  removed static C-2 key with errors swallowed), so every broker-relayed
+  interactive terminal failed to attach with 401 against a hardened runtime.
+  Caught by the #146 drain lane's first-ever execution. The relay now fetches
+  the per-session key (fail-closed 1011 when missing), authorizes `ensure_pty`
+  with it, and puts `Authorization: Bearer <key>` on the tokio-tungstenite
+  upgrade request; `ws_relay.rs`'s echo seam now captures and asserts the
+  header.
+
+### Added — CI/test hardening, cont. (#146)
+
+- **`drain` arm in the `e2e-pvc` e2e matrix** (`E2E_DRAIN=1`): pod-eviction
+  resilience now runs in CI on the per-user PVC profile — the live WS dies with
+  the deleted pod, reconnect re-resolves the recreated pod, replays the
+  SIGTERM-flushed scrollback, and the marker file survives on the PVC. (The test
+  deletes the pod — same blast radius as a node drain for the pod; a real
+  `kubectl drain` needs multi-node + RWX and remains future work.)
+
 ### Added — CI/test hardening (#144)
 
 - **Weekly upgrade/rollback e2e lane** (`.github/workflows/e2e-upgrade.yml`): proves a
