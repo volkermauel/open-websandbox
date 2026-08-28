@@ -12,6 +12,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — draft adoption (#157)
+
+- **Files follow the chat**: OWUI v0.11 sends no `X-Session-Id` until a new
+  chat is persisted (first message), so pre-message uploads landed in the
+  user-keyed draft sandbox and vanished from the chat's view. Within
+  `BROKER_DRAFT_ADOPTION_WINDOW_SECONDS` (default 6 h, `0` disables) a NEW
+  chat sandbox now moves the draft workspace into its own subPath via a
+  one-shot Job on the workspace PVC — blocking readiness, best-effort, counted
+  in `owui_broker_draft_adoptions_total{result}`. Broker RBAC gains
+  `batch/jobs` create/get/delete; 4 new unit tests + a per-user-pvc e2e lane
+  test.
+
+### Changed
+
+- Per-user rate limits raised 20→30 req/s and burst 40→60 (#98 A3 defaults):
+  OWUI's FileNav polls `/files` per open pane and a chat + terminal saturates
+  the old budget. Set `broker.rateLimit.perSecond`/`burst` to override.
+
 ### Added — v0.5.6 adoption (#155)
 
 - **Readiness-timeout diagnostics**: the broker's `503 sandbox … not ready in

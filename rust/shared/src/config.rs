@@ -251,6 +251,17 @@ pub struct BrokerConfig {
     #[serde(default = "default_claim_timeout_seconds")]
     pub claim_timeout_seconds: u64,
 
+    /// Draft-adoption window (env `BROKER_DRAFT_ADOPTION_WINDOW_SECONDS`,
+    /// default `21600` = 6h; `0` disables). OWUI sends no `X-Session-Id`
+    /// until a new chat gets its server-assigned id (first message), so
+    /// pre-message uploads land in the user-keyed *draft* sandbox
+    /// (`owui-c-<sha256(user/user)>`). When a NEW chat sandbox is created and
+    /// the draft was last used within this window, the broker moves the draft
+    /// workspace into the chat's workspace before readiness returns — uploads
+    /// follow the chat (#157).
+    #[serde(default = "default_draft_adoption_window_seconds")]
+    pub draft_adoption_window_seconds: u64,
+
     /// Total seconds allowed for one broker→runtime pod hop (env
     /// `BROKER_PROXY_TIMEOUT_SECONDS`, default `660`); applied to the shared
     /// `reqwest` client.
@@ -395,6 +406,10 @@ const fn default_claim_timeout_seconds() -> u64 {
     60
 }
 
+const fn default_draft_adoption_window_seconds() -> u64 {
+    21600
+}
+
 const fn default_proxy_timeout_seconds() -> u64 {
     660
 }
@@ -419,13 +434,14 @@ const fn default_reaper_poll_seconds() -> u64 {
 const fn default_rate_limit_enabled() -> bool {
     true
 }
-/// Default: 20 requests/sec/user (#98 A3).
+/// Default: 30 requests/sec/user (#98 A3; raised from 20 — OWUI's FileNav
+/// polls /files per open pane and a chat + terminal easily saturates 20/s).
 const fn default_rate_limit_per_second() -> u32 {
-    20
+    30
 }
-/// Default: burst of 40/user (#98 A3).
+/// Default: burst of 60/user (#98 A3; raised alongside perSecond).
 const fn default_rate_limit_burst() -> u32 {
-    40
+    60
 }
 
 fn default_leader_lease() -> String {
@@ -488,6 +504,7 @@ impl Default for BrokerConfig {
             per_user_pvc_prefix: default_per_user_pvc_prefix(),
             runtime_api_key: String::new(),
             claim_timeout_seconds: default_claim_timeout_seconds(),
+            draft_adoption_window_seconds: default_draft_adoption_window_seconds(),
             proxy_timeout_seconds: default_proxy_timeout_seconds(),
             idle_ttl_seconds: default_idle_ttl_seconds(),
             park_idle_seconds: default_park_idle_seconds(),
@@ -590,6 +607,8 @@ impl BrokerConfig {
             runtime_api_key: get("BROKER_RUNTIME_API_KEY").unwrap_or_default(),
             claim_timeout_seconds: env_value("BROKER_CLAIM_TIMEOUT_SECONDS", &get)?
                 .unwrap_or_else(default_claim_timeout_seconds),
+            draft_adoption_window_seconds: env_value("BROKER_DRAFT_ADOPTION_WINDOW_SECONDS", &get)?
+                .unwrap_or_else(default_draft_adoption_window_seconds),
             proxy_timeout_seconds: env_value("BROKER_PROXY_TIMEOUT_SECONDS", &get)?
                 .unwrap_or_else(default_proxy_timeout_seconds),
             idle_ttl_seconds: env_value("BROKER_IDLE_TTL_SECONDS", &get)?
@@ -815,6 +834,7 @@ mod tests {
             default_profile: Profile::Ephemeral,
             runtime_api_key: "rt-key".into(),
             claim_timeout_seconds: 30,
+            draft_adoption_window_seconds: 123,
             proxy_timeout_seconds: 99,
             idle_ttl_seconds: 90,
             park_idle_seconds: 91,
@@ -848,6 +868,10 @@ mod tests {
         assert!(json.contains("\"default_profile\":\"ephemeral\""), "{json}");
         assert!(json.contains("\"runtime_api_key\":\"rt-key\""), "{json}");
         assert!(json.contains("\"claim_timeout_seconds\":30"), "{json}");
+        assert!(
+            json.contains("\"draft_adoption_window_seconds\":123"),
+            "{json}"
+        );
         assert!(json.contains("\"s3_enabled\":true"), "{json}");
         assert!(json.contains("\"s3_bucket\":\"owui-cold\""), "{json}");
         let back: BrokerConfig = serde_json::from_str(&json).expect("deserialize");

@@ -415,6 +415,8 @@ a Helm value unset to inherit the default.
 | `broker.reapSeconds` | `BROKER_REAP_SECONDS` | `604800` (7 d) | Persistent **reap** age — with the cold tier on, reap offloads to S3 first and frees the hot tier (#142); the per-user PVC itself is kept. |
 | `broker.claimTimeoutSeconds` | `BROKER_CLAIM_TIMEOUT_SECONDS` | `60` | Wait for `Ready` (else HTTP 504). |
 | `broker.proxyTimeoutSeconds` | `BROKER_PROXY_TIMEOUT_SECONDS` | `660` | Upstream proxy timeout (> runtime `MAX_TIMEOUT` 600 s). |
+| `broker.draftAdoptionWindowSeconds` | `BROKER_DRAFT_ADOPTION_WINDOW_SECONDS` | `21600` (6 h) | Draft adoption (#157): window after draft-sandbox use within which a NEW chat sandbox moves the draft workspace into its own before readiness returns. `0` disables. |
+| `broker.rateLimit.*` | `BROKER_RATE_LIMIT_ENABLED/_PER_SECOND/_BURST` | `true` / `30` / `60` | Per-user token bucket on the gated surface (429 + `Retry-After` when empty). |
 | `broker.baseTemplate` | `BROKER_BASE_TEMPLATE` | `code-standard-v1` | Base SandboxTemplate cloned for persistent per-chat sandboxes. |
 | `sharedPvc.name` | `BROKER_SHARED_PVC` | `workspace-shared` | Shared PVC name (shared-subpath mode). |
 | `broker.persistentAccessModes` | `BROKER_PERSISTENT_ACCESS_MODES` | `ReadWriteMany` | Per-user PVC access modes, comma-separated (KIND local-path: `ReadWriteOnce`). |

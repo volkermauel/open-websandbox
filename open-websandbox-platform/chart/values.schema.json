@@ -8,7 +8,9 @@
       "type": "object",
       "additionalProperties": false,
       "description": "Vendored upstream agent-sandbox controller (apiGroup agents.x-k8s.io). Bundled into the chart so a single `helm install` brings up the whole platform. NOTE: upstream.deploy gates only the controller (Deployment/RBAC/Services); the agents.x-k8s.io CRDs live in chart/crds/ and are always applied on `helm install` regardless of this flag. The chart default (values.yaml) sets upstream.deploy=true; set it false when the controller is already installed cluster-wide (and pass --skip-crds if the CRDs are also present).",
-      "required": ["deploy"],
+      "required": [
+        "deploy"
+      ],
       "properties": {
         "deploy": {
           "type": "boolean",
@@ -26,7 +28,11 @@
     },
     "imagePullPolicy": {
       "type": "string",
-      "enum": ["Always", "Never", "IfNotPresent"],
+      "enum": [
+        "Always",
+        "Never",
+        "IfNotPresent"
+      ],
       "description": "Kubernetes imagePullPolicy. KIND uses Never (images pre-loaded); prod uses IfNotPresent."
     },
     "imageTag": {
@@ -40,25 +46,56 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name"],
+        "required": [
+          "name"
+        ],
         "properties": {
-          "name": { "type": "string", "minLength": 1 }
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
     "namespaces": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["system", "runtime"],
+      "required": [
+        "system",
+        "runtime"
+      ],
       "properties": {
-        "system": { "type": "string", "minLength": 1, "description": "Control-plane namespace (broker + router)." },
-        "runtime": { "type": "string", "minLength": 1, "description": "Sandbox namespace (SandboxTemplate, WarmPool, pods)." }
+        "system": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Control-plane namespace (broker + router)."
+        },
+        "runtime": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Sandbox namespace (SandboxTemplate, WarmPool, pods)."
+        }
       }
     },
     "broker": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sharedSecret", "warmPool", "runtimeNs", "routerUrl", "idleTtlSeconds", "parkIdleSeconds", "defaultProfile", "persistentMode", "persistentStorage", "probes", "metrics", "networkPolicy", "rateLimit", "s3"],
+      "required": [
+        "sharedSecret",
+        "warmPool",
+        "runtimeNs",
+        "routerUrl",
+        "idleTtlSeconds",
+        "parkIdleSeconds",
+        "defaultProfile",
+        "persistentMode",
+        "persistentStorage",
+        "probes",
+        "metrics",
+        "networkPolicy",
+        "rateLimit",
+        "s3"
+      ],
       "properties": {
         "replicas": {
           "type": "integer",
@@ -68,79 +105,227 @@
         "sharedSecret": {
           "type": "string",
           "description": "Shared secret for broker auth. Empty => auto-generate a random 48-char secret on first install (stable across upgrades via Helm lookup). The legacy dev placeholder is forbidden.",
-          "not": { "const": "dev-shared-secret-change-me" }
+          "not": {
+            "const": "dev-shared-secret-change-me"
+          }
         },
-        "warmPool": { "type": "string", "minLength": 1 },
-        "runtimeNs": { "type": "string", "minLength": 1 },
-        "routerUrl": { "type": "string", "minLength": 1 },
-        "idleTtlSeconds": { "type": "integer", "minimum": 0 },
-        "parkIdleSeconds": { "type": "integer", "minimum": 0 },
-        "reapSeconds": { "type": "integer", "minimum": 0, "description": "Persistent reap age in seconds (default 604800 = 7d). With the S3 cold tier enabled, reap offloads the workspace first and frees the PVC hot tier (#142)." },
-        "defaultProfile": { "type": "string", "enum": ["persistent", "ephemeral"] },
-        "persistentMode": { "type": "string", "enum": ["per-user-pvc", "shared-subpath", "empty-dir"] },
-        "persistentStorage": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" },
-        "persistentStorageClass": { "type": "string" },
+        "warmPool": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtimeNs": {
+          "type": "string",
+          "minLength": 1
+        },
+        "routerUrl": {
+          "type": "string",
+          "minLength": 1
+        },
+        "idleTtlSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "parkIdleSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reapSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Persistent reap age in seconds (default 604800 = 7d). With the S3 cold tier enabled, reap offloads the workspace first and frees the PVC hot tier (#142)."
+        },
+        "defaultProfile": {
+          "type": "string",
+          "enum": [
+            "persistent",
+            "ephemeral"
+          ]
+        },
+        "persistentMode": {
+          "type": "string",
+          "enum": [
+            "per-user-pvc",
+            "shared-subpath",
+            "empty-dir"
+          ]
+        },
+        "persistentStorage": {
+          "type": "string",
+          "pattern": "^[0-9]+([KMGT]i?)?$"
+        },
+        "persistentStorageClass": {
+          "type": "string"
+        },
         "persistentAccessModes": {
           "type": "array",
-          "items": { "type": "string", "enum": ["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"] },
+          "items": {
+            "type": "string",
+            "enum": [
+              "ReadWriteOnce",
+              "ReadWriteMany",
+              "ReadOnlyMany"
+            ]
+          },
           "minItems": 1
         },
-        "perUserPvcPrefix": { "type": "string", "minLength": 1 },
+        "perUserPvcPrefix": {
+          "type": "string",
+          "minLength": 1
+        },
         "probes": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["liveness", "readiness", "startup"],
+          "required": [
+            "liveness",
+            "readiness",
+            "startup"
+          ],
           "properties": {
-            "liveness": { "$ref": "#/definitions/httpProbe" },
-            "readiness": { "$ref": "#/definitions/httpProbe" },
-            "startup": { "$ref": "#/definitions/httpProbe" }
+            "liveness": {
+              "$ref": "#/definitions/httpProbe"
+            },
+            "readiness": {
+              "$ref": "#/definitions/httpProbe"
+            },
+            "startup": {
+              "$ref": "#/definitions/httpProbe"
+            }
           }
         },
         "metrics": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled", "port", "path"],
+          "required": [
+            "enabled",
+            "port",
+            "path"
+          ],
           "properties": {
-            "enabled": { "type": "boolean" },
-            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-            "path": { "type": "string", "pattern": "^/" }
+            "enabled": {
+              "type": "boolean"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "path": {
+              "type": "string",
+              "pattern": "^/"
+            }
           }
         },
         "s3": {
           "type": "object",
           "additionalProperties": false,
           "description": "S3 cold tier (#142): composes with ANY hot tier (per-user-pvc, shared-subpath, empty-dir). empty-dir REQUIRES it (boot fails closed otherwise). With a PVC hot tier it adds hybrid tiering: park/resume serves the PVC, reap offloads to S3 and frees the hot tier. Off by default.",
-          "required": ["enabled", "endpoint", "bucket", "prefix", "region", "credentialsSecret", "retentionDays", "compression", "sse", "periodicSyncInterval", "sizeLimit", "tmpfs"],
+          "required": [
+            "enabled",
+            "endpoint",
+            "bucket",
+            "prefix",
+            "region",
+            "credentialsSecret",
+            "retentionDays",
+            "compression",
+            "sse",
+            "periodicSyncInterval",
+            "sizeLimit",
+            "tmpfs"
+          ],
           "properties": {
-            "enabled": { "type": "boolean", "description": "Gate the whole feature (and the broker boot guard that rejects empty-dir without it)." },
-            "endpoint": { "type": "string", "description": "Bring-your-own S3-compatible URL (https://...). Empty allowed when enabled=false." },
-            "bucket": { "type": "string", "description": "Pre-existing bucket name." },
-            "prefix": { "type": "string", "pattern": "^[A-Za-z0-9._-]*$", "description": "Object-key prefix (default users)." },
-            "region": { "type": "string", "description": "S3 region (some MinIO/R2 setups ignore it)." },
-            "credentialsSecret": { "type": "string", "description": "Secret (system ns) with access-key-id + secret-access-key. Bring-your-own (chart references, does not create)." },
-            "retentionDays": { "type": "integer", "minimum": 1, "description": "Per-session lifetime (R2): object Expires = now + retentionDays." },
-            "compression": { "type": "string", "enum": ["zstd"], "description": "Compression codec (zstd only, D9)." },
-            "sse": { "type": "string", "pattern": "^(AES256|aws:kms|)$", "description": "Server-side encryption at rest (D9). AES256=SSE-S3 (default, AWS S3); empty disables SSE for stores without a KMS/SSE backend (dev MinIO)." },
-            "periodicSyncInterval": { "type": "integer", "minimum": 30, "description": "R1: snapshot running sessions every N seconds." },
-            "sizeLimit": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$", "description": "Hot-tier emptyDir sizeLimit + runtime MAX_WORKSPACE_BYTES (default 2Gi, D2/D9)." },
-            "tmpfs": { "type": "boolean", "description": "true => /workspace is tmpfs (Memory) instead of disk-backed emptyDir." },
-            "reaperPollSeconds": { "type": "integer", "minimum": 5, "description": "Reaper loop interval when s3 is enabled (lower = faster offload-on-reap; default 60)." }
+            "enabled": {
+              "type": "boolean",
+              "description": "Gate the whole feature (and the broker boot guard that rejects empty-dir without it)."
+            },
+            "endpoint": {
+              "type": "string",
+              "description": "Bring-your-own S3-compatible URL (https://...). Empty allowed when enabled=false."
+            },
+            "bucket": {
+              "type": "string",
+              "description": "Pre-existing bucket name."
+            },
+            "prefix": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._-]*$",
+              "description": "Object-key prefix (default users)."
+            },
+            "region": {
+              "type": "string",
+              "description": "S3 region (some MinIO/R2 setups ignore it)."
+            },
+            "credentialsSecret": {
+              "type": "string",
+              "description": "Secret (system ns) with access-key-id + secret-access-key. Bring-your-own (chart references, does not create)."
+            },
+            "retentionDays": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Per-session lifetime (R2): object Expires = now + retentionDays."
+            },
+            "compression": {
+              "type": "string",
+              "enum": [
+                "zstd"
+              ],
+              "description": "Compression codec (zstd only, D9)."
+            },
+            "sse": {
+              "type": "string",
+              "pattern": "^(AES256|aws:kms|)$",
+              "description": "Server-side encryption at rest (D9). AES256=SSE-S3 (default, AWS S3); empty disables SSE for stores without a KMS/SSE backend (dev MinIO)."
+            },
+            "periodicSyncInterval": {
+              "type": "integer",
+              "minimum": 30,
+              "description": "R1: snapshot running sessions every N seconds."
+            },
+            "sizeLimit": {
+              "type": "string",
+              "pattern": "^[0-9]+([KMGT]i?)?$",
+              "description": "Hot-tier emptyDir sizeLimit + runtime MAX_WORKSPACE_BYTES (default 2Gi, D2/D9)."
+            },
+            "tmpfs": {
+              "type": "boolean",
+              "description": "true => /workspace is tmpfs (Memory) instead of disk-backed emptyDir."
+            },
+            "reaperPollSeconds": {
+              "type": "integer",
+              "minimum": 5,
+              "description": "Reaper loop interval when s3 is enabled (lower = faster offload-on-reap; default 60)."
+            }
           }
-        }
-,
+        },
         "networkPolicy": {
           "type": "object",
           "additionalProperties": false,
           "description": "Broker ingress NetworkPolicy (#98 A2). Default-deny ingress so only the Open Web UI namespace(s) + optional Prometheus reach the front door validating BROKER_SHARED_SECRET. Egress is intentionally left unrestricted (follow-up).",
-          "required": ["enabled", "ingress"],
+          "required": [
+            "enabled",
+            "ingress"
+          ],
           "properties": {
-            "enabled": { "type": "boolean", "description": "Render the broker ingress NetworkPolicy. Default true (secure). KIND e2e sets false (values-kind.yaml) since it reaches the broker via port-forward." },
+            "enabled": {
+              "type": "boolean",
+              "description": "Render the broker ingress NetworkPolicy. Default true (secure). KIND e2e sets false (values-kind.yaml) since it reaches the broker via port-forward."
+            },
             "ingress": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["fromNamespaces"],
+              "required": [
+                "fromNamespaces"
+              ],
               "properties": {
-                "fromNamespaces": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "description": "Namespace names allowed to call the broker on :8080 (the Open Web UI namespace(s))." }
+                "fromNamespaces": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "description": "Namespace names allowed to call the broker on :8080 (the Open Web UI namespace(s))."
+                }
               }
             }
           }
@@ -149,30 +334,89 @@
           "type": "object",
           "additionalProperties": false,
           "description": "Per-user rate limiting (#98 A3). A token-bucket per X-User-Id caps the gated surface (sandbox create, /execute, /files/*, terminals); open probes stay unlimited.",
-          "required": ["enabled", "perSecond", "burst"],
+          "required": [
+            "enabled",
+            "perSecond",
+            "burst"
+          ],
           "properties": {
-            "enabled": { "type": "boolean", "description": "Render/enable the governor layer on the broker's gated routes." },
-            "perSecond": { "type": "integer", "minimum": 1, "description": "Token-bucket refill rate, requests/sec per user." },
-            "burst": { "type": "integer", "minimum": 1, "description": "Token-bucket capacity / max burst per user." }
+            "enabled": {
+              "type": "boolean",
+              "description": "Render/enable the governor layer on the broker's gated routes."
+            },
+            "perSecond": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Token-bucket refill rate, requests/sec per user.",
+              "default": 30
+            },
+            "burst": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Token-bucket capacity / max burst per user.",
+              "default": 60
+            }
           }
+        },
+        "draftAdoptionWindowSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 21600,
+          "description": "Seconds after draft-sandbox use within which a new chat sandbox adopts (moves) the draft workspace (#157). 0 disables."
         }
       }
     },
     "sandboxTemplate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "runtimeClassName", "runtimeRepository", "maxProcs", "terminalScrollbackBytes", "terminalDetachTtlSecs", "uid", "dns", "storage"],
+      "required": [
+        "name",
+        "runtimeClassName",
+        "runtimeRepository",
+        "maxProcs",
+        "terminalScrollbackBytes",
+        "terminalDetachTtlSecs",
+        "uid",
+        "dns",
+        "storage"
+      ],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "runtimeClassName": { "type": "string", "description": "gVisor runtime class; empty => field omitted (runc, for KIND e2e)." },
-        "runtimeRepository": { "type": "string", "minLength": 1 },
-        "maxProcs": { "type": "integer", "minimum": 1 },
-        "terminalScrollbackBytes": { "type": "integer", "minimum": 0, "description": "Per-terminal scrollback ring in bytes, replayed on WS reattach and flushed on SIGTERM (issue #129); 0 disables." },
-        "terminalDetachTtlSecs": { "type": "integer", "minimum": 1, "description": "Seconds a detached terminal survives awaiting a resume before the idle sweep reaps it." },
-        "uid": { "type": "integer", "minimum": 0, "description": "Non-root UID the sandbox runs as." },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtimeClassName": {
+          "type": "string",
+          "description": "gVisor runtime class; empty => field omitted (runc, for KIND e2e)."
+        },
+        "runtimeRepository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxProcs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "terminalScrollbackBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Per-terminal scrollback ring in bytes, replayed on WS reattach and flushed on SIGTERM (issue #129); 0 disables."
+        },
+        "terminalDetachTtlSecs": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Seconds a detached terminal survives awaiting a resume before the idle sweep reaps it."
+        },
+        "uid": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Non-root UID the sandbox runs as."
+        },
         "nodeSelector": {
           "type": "object",
-          "additionalProperties": { "type": "string" },
+          "additionalProperties": {
+            "type": "string"
+          },
           "description": "Node labels constraining where sandbox pods run (dedicated node pools)."
         },
         "tolerations": {
@@ -182,11 +426,21 @@
             "type": "object",
             "additionalProperties": true,
             "properties": {
-              "key": { "type": "string" },
-              "operator": { "type": "string" },
-              "value": { "type": "string" },
-              "effect": { "type": "string" },
-              "tolerationSeconds": { "type": "integer" }
+              "key": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              },
+              "effect": {
+                "type": "string"
+              },
+              "tolerationSeconds": {
+                "type": "integer"
+              }
             }
           }
         },
@@ -198,30 +452,79 @@
         "dns": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["policy", "nameservers", "ndots"],
+          "required": [
+            "policy",
+            "nameservers",
+            "ndots"
+          ],
           "properties": {
-            "policy": { "type": "string", "enum": ["None", "Default", "ClusterFirst", "ClusterFirstWithHostNet"] },
-            "nameservers": { "type": "array", "items": { "type": "string", "pattern": "^([0-9]{1,3}(\\.[0-9]{1,3}){3}|[0-9a-fA-F:]+)$" }, "minItems": 1 },
-            "ndots": { "type": "integer", "minimum": 0, "maximum": 65535 }
+            "policy": {
+              "type": "string",
+              "enum": [
+                "None",
+                "Default",
+                "ClusterFirst",
+                "ClusterFirstWithHostNet"
+              ]
+            },
+            "nameservers": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^([0-9]{1,3}(\\.[0-9]{1,3}){3}|[0-9a-fA-F:]+)$"
+              },
+              "minItems": 1
+            },
+            "ndots": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            }
           }
         },
         "storage": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["workspace", "home", "tmp", "packages"],
+          "required": [
+            "workspace",
+            "home",
+            "tmp",
+            "packages"
+          ],
           "properties": {
-            "workspace": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" },
-            "home": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" },
+            "workspace": {
+              "type": "string",
+              "pattern": "^[0-9]+([KMGT]i?)?$"
+            },
+            "home": {
+              "type": "string",
+              "pattern": "^[0-9]+([KMGT]i?)?$"
+            },
             "tmp": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["medium", "sizeLimit"],
+              "required": [
+                "medium",
+                "sizeLimit"
+              ],
               "properties": {
-                "medium": { "type": "string", "enum": ["Memory", ""] },
-                "sizeLimit": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" }
+                "medium": {
+                  "type": "string",
+                  "enum": [
+                    "Memory",
+                    ""
+                  ]
+                },
+                "sizeLimit": {
+                  "type": "string",
+                  "pattern": "^[0-9]+([KMGT]i?)?$"
+                }
               }
             },
-            "packages": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" }
+            "packages": {
+              "type": "string",
+              "pattern": "^[0-9]+([KMGT]i?)?$"
+            }
           }
         }
       }
@@ -229,23 +532,52 @@
     "warmPool": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["replicas", "templateName"],
+      "required": [
+        "replicas",
+        "templateName"
+      ],
       "properties": {
-        "replicas": { "type": "integer", "minimum": 0 },
-        "templateName": { "type": "string", "minLength": 1 }
+        "replicas": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "templateName": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "sharedPvc": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "size", "storageClass", "accessModes"],
+      "required": [
+        "name",
+        "size",
+        "storageClass",
+        "accessModes"
+      ],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "size": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" },
-        "storageClass": { "type": "string" },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "size": {
+          "type": "string",
+          "pattern": "^[0-9]+([KMGT]i?)?$"
+        },
+        "storageClass": {
+          "type": "string"
+        },
         "accessModes": {
           "type": "array",
-          "items": { "type": "string", "enum": ["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"] },
+          "items": {
+            "type": "string",
+            "enum": [
+              "ReadWriteOnce",
+              "ReadWriteMany",
+              "ReadOnlyMany"
+            ]
+          },
           "minItems": 1
         }
       }
@@ -253,27 +585,75 @@
     "quota": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["persistentVolumeClaims", "storage", "pods"],
+      "required": [
+        "persistentVolumeClaims",
+        "storage",
+        "pods"
+      ],
       "properties": {
-        "persistentVolumeClaims": { "type": "string", "pattern": "^[0-9]+$" },
-        "storage": { "type": "string", "pattern": "^[0-9]+([KMGT]i?)?$" },
-        "pods": { "type": "string", "pattern": "^[0-9]+$" }
+        "persistentVolumeClaims": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "storage": {
+          "type": "string",
+          "pattern": "^[0-9]+([KMGT]i?)?$"
+        },
+        "pods": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        }
       }
     },
     "networkPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["egress"],
+      "required": [
+        "egress"
+      ],
       "properties": {
         "egress": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["dnsNameservers", "dnsNameserversV6", "httpsPorts", "exceptCIDRs"],
+          "required": [
+            "dnsNameservers",
+            "dnsNameserversV6",
+            "httpsPorts",
+            "exceptCIDRs"
+          ],
           "properties": {
-            "dnsNameservers": { "type": "array", "items": { "type": "string", "pattern": "^([0-9]{1,3}(\\.[0-9]{1,3}){3}|[0-9a-fA-F:]+)$" }, "minItems": 1 },
-            "dnsNameserversV6": { "type": "array", "items": { "type": "string", "pattern": "^([0-9a-fA-F:]+)$" }, "minItems": 1 },
-            "httpsPorts": { "type": "array", "items": { "type": "integer", "minimum": 1, "maximum": 65535 }, "minItems": 1 },
-            "exceptCIDRs": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+            "dnsNameservers": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^([0-9]{1,3}(\\.[0-9]{1,3}){3}|[0-9a-fA-F:]+)$"
+              },
+              "minItems": 1
+            },
+            "dnsNameserversV6": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^([0-9a-fA-F:]+)$"
+              },
+              "minItems": 1
+            },
+            "httpsPorts": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "minItems": 1
+            },
+            "exceptCIDRs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            }
           }
         }
       }
@@ -281,13 +661,34 @@
     "router": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repository", "replicas", "kubeApiServerCidr", "kubeDnsCidr", "kubeDnsCidrIPv6"],
+      "required": [
+        "repository",
+        "replicas",
+        "kubeApiServerCidr",
+        "kubeDnsCidr",
+        "kubeDnsCidrIPv6"
+      ],
       "properties": {
-        "repository": { "type": "string", "minLength": 1 },
-        "replicas": { "type": "integer", "minimum": 1 },
-        "kubeApiServerCidr": { "type": "string", "minLength": 1 },
-        "kubeDnsCidr": { "type": "string", "minLength": 1 },
-        "kubeDnsCidrIPv6": { "type": "string", "minLength": 1 }
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kubeApiServerCidr": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kubeDnsCidr": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kubeDnsCidrIPv6": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "monitoring": {
@@ -300,11 +701,32 @@
           "additionalProperties": false,
           "description": "monitoring.coreos.com ServiceMonitor + PodMonitor (requires the prometheus-operator CRDs).",
           "properties": {
-            "enabled": { "type": "boolean", "description": "Render ServiceMonitor (broker) + PodMonitor (runtime). Off by default so CRD-less clusters install cleanly." },
-            "interval": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$", "description": "Scrape interval (Prometheus duration). Default 60s." },
-            "scrapeTimeout": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$", "description": "Scrape timeout (Prometheus duration). Must be < interval to avoid flapping. Default 30s." },
-            "scrapeNamespace": { "type": "string", "minLength": 1, "description": "Namespace allowed to ingress the runtime :8888 metrics port when monitoring is enabled. Rendered as a kubernetes.io/metadata.name=<ns> namespaceSelector (auto-set by kube >=1.21). Default 'monitoring' (kube-prometheus-stack convention)." },
-            "scrapePodLabels": { "type": "object", "description": "Optional pod label selector (matchLabels) within scrapeNamespace to restrict ingress to specific Prometheus pods. Empty {} = all pods in the namespace. Example: {\"app.kubernetes.io/name\": \"prometheus\"}.", "additionalProperties": { "type": "string" } }
+            "enabled": {
+              "type": "boolean",
+              "description": "Render ServiceMonitor (broker) + PodMonitor (runtime). Off by default so CRD-less clusters install cleanly."
+            },
+            "interval": {
+              "type": "string",
+              "pattern": "^[0-9]+(ms|s|m|h)$",
+              "description": "Scrape interval (Prometheus duration). Default 60s."
+            },
+            "scrapeTimeout": {
+              "type": "string",
+              "pattern": "^[0-9]+(ms|s|m|h)$",
+              "description": "Scrape timeout (Prometheus duration). Must be < interval to avoid flapping. Default 30s."
+            },
+            "scrapeNamespace": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Namespace allowed to ingress the runtime :8888 metrics port when monitoring is enabled. Rendered as a kubernetes.io/metadata.name=<ns> namespaceSelector (auto-set by kube >=1.21). Default 'monitoring' (kube-prometheus-stack convention)."
+            },
+            "scrapePodLabels": {
+              "type": "object",
+              "description": "Optional pod label selector (matchLabels) within scrapeNamespace to restrict ingress to specific Prometheus pods. Empty {} = all pods in the namespace. Example: {\"app.kubernetes.io/name\": \"prometheus\"}.",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
           }
         },
         "otlp": {
@@ -312,7 +734,10 @@
           "additionalProperties": false,
           "description": "OTLP endpoint for broker + runtime traces (OTEL_EXPORTER_OTLP_ENDPOINT). Empty => tracing disabled (soft no-op).",
           "properties": {
-            "endpoint": { "type": "string", "description": "OTLP/HTTP base endpoint, e.g. http://collector:4318. Empty disables tracing." }
+            "endpoint": {
+              "type": "string",
+              "description": "OTLP/HTTP base endpoint, e.g. http://collector:4318. Empty disables tracing."
+            }
           }
         }
       }
@@ -322,7 +747,10 @@
       "additionalProperties": true,
       "description": "Optional bundled opentelemetry-collector subchart (off by default). Values pass through to the upstream chart; 'enabled' gates its deployment.",
       "properties": {
-        "enabled": { "type": "boolean", "description": "Deploy the bundled opentelemetry-collector subchart and default monitoring.otlp.endpoint to it." }
+        "enabled": {
+          "type": "boolean",
+          "description": "Deploy the bundled opentelemetry-collector subchart and default monitoring.otlp.endpoint to it."
+        }
       }
     }
   },
@@ -330,11 +758,24 @@
     "httpProbe": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "periodSeconds", "failureThreshold"],
+      "required": [
+        "path",
+        "periodSeconds",
+        "failureThreshold"
+      ],
       "properties": {
-        "path": { "type": "string", "pattern": "^/" },
-        "periodSeconds": { "type": "integer", "minimum": 1 },
-        "failureThreshold": { "type": "integer", "minimum": 1 }
+        "path": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "periodSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "failureThreshold": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     }
   }

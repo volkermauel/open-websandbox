@@ -83,6 +83,7 @@ sandboxes and never orphans a session.
 | Tunable (env) | Default | Effect |
 |----------------|---------|--------|
 | `BROKER_CLAIM_TIMEOUT_SECONDS` | `60` | How long the broker waits for a fresh claim to bind before returning a 504 to Open WebUI. |
+| `BROKER_DRAFT_ADOPTION_WINDOW_SECONDS` | `21600` | Draft adoption (#157): OWUI sends no `X-Session-Id` until a new chat is persisted, so pre-message uploads land in the user-keyed draft sandbox. Within this window a NEW chat sandbox moves the draft workspace into its own (one-shot Job on the workspace PVC) before readiness returns. `0` disables. |
 | `BROKER_IDLE_TTL_SECONDS` | `120` | **Ephemeral** idle reap — claim returns to the warm pool. |
 | `BROKER_PARK_IDLE_SECONDS` | `120` | **Persistent** idle park — `operatingMode` patched to `Suspended`: Pod deleted, node freed, **PVC retained**. Cold-resume on next request is ~1–6 s. |
 | `BROKER_REAP_SECONDS` | `604800` (7 d) | **Persistent** reap — claim deleted, PVC freed. |

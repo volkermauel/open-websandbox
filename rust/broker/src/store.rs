@@ -121,6 +121,12 @@ pub trait SandboxStore: Send + Sync {
         name: &str,
         create: Option<&WorkspacePvcSpec>,
     ) -> Result<(), StoreError>;
+
+    /// Run a one-shot Job that moves `mv.from_subpath` → `mv.to_subpath` on
+    /// `mv.claim` (draft adoption, #157). `Ok(true)` = move completed;
+    /// `Ok(false)` = Job failed or timed out (adoption is best-effort — the
+    /// caller logs and continues); `Err` = apiserver error.
+    async fn move_workspace_dir(&self, mv: &WorkspaceMove) -> Result<bool, StoreError>;
 }
 
 /// Spec of the per-user workspace PVC the broker creates in `per-user-pvc`
@@ -133,6 +139,25 @@ pub struct WorkspacePvcSpec {
     pub storage: String,
     /// StorageClass name; empty ⇒ cluster default.
     pub storage_class: String,
+}
+
+/// One-shot workspace move for draft adoption (#157): `from_subpath` →
+/// `to_subpath` on `claim`, executed by a best-effort batch/v1 Job. Both
+/// subpaths are broker-derived hash paths on the same claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceMove {
+    /// DNS-safe Job name (unique per adoption attempt).
+    pub job_name: String,
+    /// Job container image (the runtime image — guaranteed present).
+    pub image: String,
+    /// PVC both subpaths live on (per-user or shared).
+    pub claim: String,
+    /// Source directory (the draft workspace subPath).
+    pub from_subpath: String,
+    /// Destination directory (the chat workspace subPath).
+    pub to_subpath: String,
+    /// Seconds to wait for Job completion before giving up (best-effort).
+    pub timeout_secs: u64,
 }
 
 /// Real Kubernetes backend: typed [`Api`]s over a [`kube::Client`].
@@ -305,6 +330,81 @@ impl SandboxStore for KubeSandboxStore {
         }
     }
 
+    async fn move_workspace_dir(&self, mv: &WorkspaceMove) -> Result<bool, StoreError> {
+        use k8s_openapi::api::batch::v1::Job;
+
+        let jobs: Api<Job> = Api::namespaced(self.client.clone(), &self.namespace);
+        let job: Job = serde_json::from_value(serde_json::json!({
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "name": mv.job_name,
+                "labels": {
+                    "app.kubernetes.io/managed-by": "owui-broker",
+                    "broker-component": "draft-adoption",
+                },
+            },
+            "spec": {
+                "backoffLimit": 0,
+                "ttlSecondsAfterFinished": 300,
+                "activeDeadlineSeconds": mv.timeout_secs,
+                "template": {
+                    "spec": {
+                        "restartPolicy": "Never",
+                        "containers": [{
+                            "name": "adopt",
+                            "image": mv.image,
+                            // Subpaths are broker-derived hash paths (no
+                            // injection surface), but they still travel via
+                            // env — the shell never interpolates them.
+                            "command": ["/bin/sh", "-ec",
+                                "mkdir -p \"$CHAT_DIR\"; find \"$DRAFT_DIR\" -mindepth 1 -maxdepth 1 ! -name '.open-websandbox' -exec mv {} \"$CHAT_DIR/\" \\; ; rmdir \"$DRAFT_DIR\" 2>/dev/null || true"],
+                            "env": [
+                                {"name": "DRAFT_DIR", "value": format!("/pvc/{}", mv.from_subpath)},
+                                {"name": "CHAT_DIR", "value": format!("/pvc/{}", mv.to_subpath)},
+                            ],
+                            "volumeMounts": [{"name": "workspace", "mountPath": "/pvc"}],
+                        }],
+                        "volumes": [{"name": "workspace",
+                            "persistentVolumeClaim": {"claimName": mv.claim}}],
+                    },
+                },
+            },
+        }))
+        .map_err(|e| StoreError::Kube(kube::Error::SerdeError(e)))?;
+
+        match jobs.create(&PostParams::default(), &job).await {
+            Ok(_) => {}
+            // A previous adoption attempt left the Job behind (broker
+            // restart mid-adoption): reuse it instead of failing.
+            Err(kube::Error::Api(e)) if e.code == 409 => {}
+            Err(err) => return Err(StoreError::classify(err)),
+        }
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(mv.timeout_secs);
+        loop {
+            if let Ok(job) = jobs.get(&mv.job_name).await {
+                let done = job
+                    .status
+                    .as_ref()
+                    .and_then(|s| match (s.succeeded, s.failed) {
+                        (Some(n), _) if n >= 1 => Some(true),
+                        (_, Some(n)) if n >= 1 => Some(false),
+                        _ => None,
+                    });
+                if let Some(ok) = done {
+                    let _ = jobs.delete(&mv.job_name, &DeleteParams::default()).await;
+                    return Ok(ok);
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = jobs.delete(&mv.job_name, &DeleteParams::default()).await;
+                return Ok(false);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+
     async fn list_sandboxes(
         &self,
         label_selector: Option<&str>,
@@ -377,6 +477,8 @@ pub mod test_fakes {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
 
+    use super::WorkspaceMove;
+
     /// In-memory [`SandboxStore`] for tests and local dev (no apiserver required).
     ///
     /// Shipped in the library so integration tests can reuse it; it is a
@@ -397,6 +499,9 @@ pub mod test_fakes {
         /// [`ensure_workspace_pvc`](SandboxStore::ensure_workspace_pvc), by name
         /// (#140).
         pvcs: Mutex<Vec<String>>,
+        /// Recorded move_workspace_dir calls (draft adoption, #157), oldest
+        /// first — lets tests assert the exact move the broker planned.
+        job_moves: Mutex<Vec<WorkspaceMove>>,
     }
 
     impl StubSandboxStore {
@@ -410,6 +515,7 @@ pub mod test_fakes {
                 auto_ready_on_create: Mutex::new(None),
                 runtime_keys: Mutex::new(HashMap::new()),
                 pvcs: Mutex::new(Vec::new()),
+                job_moves: Mutex::new(Vec::new()),
             }
         }
 
@@ -478,6 +584,12 @@ pub mod test_fakes {
         #[must_use]
         pub fn snapshot(&self) -> HashMap<String, Sandbox> {
             self.sandboxes.lock().expect("stub sandboxes").clone()
+        }
+
+        /// Recorded move_workspace_dir calls (draft adoption, #157).
+        #[must_use]
+        pub fn moves(&self) -> Vec<WorkspaceMove> {
+            self.job_moves.lock().expect("stub job_moves").clone()
         }
     }
 
@@ -599,6 +711,14 @@ pub mod test_fakes {
                 }
                 None => Err(StoreError::NotFound),
             }
+        }
+
+        async fn move_workspace_dir(&self, mv: &WorkspaceMove) -> Result<bool, StoreError> {
+            self.job_moves
+                .lock()
+                .expect("stub job_moves")
+                .push(mv.clone());
+            Ok(true)
         }
         async fn ensure_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError> {
             let mut keys = self.runtime_keys.lock().expect("stub runtime_keys");

@@ -155,6 +155,10 @@ pub async fn resolve_sandbox(
     let name = sandbox_name(user_id, session_id, profile);
     tracing::Span::current().record("sandbox", name.as_str());
 
+    // #157 draft adoption: planned in the create branch below, executed
+    // after readiness (just before `Ok(resolved)`) so the first file listing
+    // already sees the adopted files.
+    let mut draft_adoption: Option<crate::store::WorkspaceMove> = None;
     // --- get-or-create -----------------------------------------------------
     let existing = state
         .store
@@ -200,6 +204,12 @@ pub async fn resolve_sandbox(
                 })?;
             apply_persistent_volume(&mut pod_template, &claim, &sub_path)?;
         }
+        // #157: a fresh chat sandbox may adopt the user's draft workspace
+        // (pre-first-message uploads) — plan the move now, run it after the
+        // sandbox is ready. Placed before `build_sandbox` because the pod
+        // template is moved into the Sandbox below.
+        draft_adoption =
+            capture_draft_adoption(state, user_id, session_id, &name, &pod_template, profile).await;
 
         // PR-C-5 / #4: ensure the per-session runtime-key Secret exists BEFORE
         // the Sandbox is created, so the non-optional runtime-key volume is
@@ -253,6 +263,14 @@ pub async fn resolve_sandbox(
             .await
         {
             tracing::warn!(sandbox = %name, error = %e, "resume operatingMode patch failed");
+        } else {
+            // #150: restart the idle clock the moment we ask a parked sandbox
+            // to resume. last-used is otherwise only touched AFTER readiness —
+            // a slow resume with a stale clock let the leader reaper re-park
+            // the sandbox mid-boot (digest-verified: "not ready in 60s
+            // (… Suspended reason=PodTerminated … SandboxSuspended)"), and the
+            // resolve could never win the race.
+            let _ = state.store.touch_last_used(&name, now_unix()).await;
         }
     }
 
@@ -302,9 +320,100 @@ pub async fn resolve_sandbox(
             }
         }
     }
+    // #157 draft adoption: block until the draft→chat move completed so the
+    // first file listing already sees the adopted files. Best-effort — a
+    // failed move is logged + counted, never fatal (the resolve already
+    // succeeded; the fallback is today's behaviour: an empty workspace).
+    if let Some(mv) = draft_adoption {
+        match state.store.move_workspace_dir(&mv).await {
+            Ok(true) => {
+                metrics::counter!(crate::metrics::DRAFT_ADOPTIONS_TOTAL, "result" => "adopted")
+                    .increment(1);
+                tracing::info!(
+                    sandbox = %resolved.name,
+                    from = %mv.from_subpath,
+                    "draft workspace adopted into chat"
+                );
+            }
+            outcome => {
+                metrics::counter!(crate::metrics::DRAFT_ADOPTIONS_TOTAL, "result" => "failed")
+                    .increment(1);
+                tracing::warn!(
+                    sandbox = %resolved.name,
+                    outcome = ?outcome,
+                    "draft adoption failed (continuing with empty workspace)"
+                );
+            }
+        }
+    }
     Ok(resolved)
 }
 
+/// Plan the #157 draft→chat workspace move for a freshly created chat
+/// sandbox, or `None` when adoption doesn't apply: persistent profile on a
+/// PVC hot tier, S3 restore not in play (it owns persistence semantics),
+/// window enabled, and the user's draft sandbox (`sandbox_name(user, user)`
+/// — where OWUI's session-less traffic lands) was last used within the
+/// window. Pure preconditions return early so the store is only hit when
+/// everything else already lined up.
+async fn capture_draft_adoption(
+    state: &AppState,
+    user_id: &str,
+    session_id: &str,
+    chat_name: &str,
+    pod_template: &serde_json::Value,
+    profile: Profile,
+) -> Option<crate::store::WorkspaceMove> {
+    if state.config.draft_adoption_window_seconds == 0
+        || state.s3_restore.is_some()
+        || profile != Profile::Persistent
+        || !state.config.persistent_mode.is_pvc()
+    {
+        return None;
+    }
+    let draft_name = sandbox_name(user_id, user_id, Profile::Persistent);
+    if draft_name == chat_name {
+        // The caller IS the draft (session-less traffic keyed by user id).
+        return None;
+    }
+    let image = pod_template
+        .pointer("/spec/containers/0/image")?
+        .as_str()?
+        .to_string();
+    let draft = match state.store.get_sandbox(&draft_name).await {
+        Ok(Some(draft)) => draft,
+        Ok(None) => {
+            metrics::counter!(crate::metrics::DRAFT_ADOPTIONS_TOTAL, "result" => "skipped_no_draft")
+                .increment(1);
+            return None;
+        }
+        Err(_) => return None,
+    };
+    let last_used = draft
+        .metadata
+        .annotations
+        .as_ref()?
+        .get(crate::sandbox::LAST_USED_KEY)?
+        .parse::<i64>()
+        .ok()?;
+    let window = i64::try_from(state.config.draft_adoption_window_seconds).unwrap_or(i64::MAX);
+    if now_unix() - last_used > window {
+        metrics::counter!(crate::metrics::DRAFT_ADOPTIONS_TOTAL, "result" => "skipped_stale")
+            .increment(1);
+        return None;
+    }
+    // Both subpaths live on the same claim (same user).
+    let (claim, from_subpath) = workspace_layout(&state.config, user_id, user_id);
+    let (_, to_subpath) = workspace_layout(&state.config, user_id, session_id);
+    Some(crate::store::WorkspaceMove {
+        job_name: format!("draft-adopt-{chat_name}-{}", now_unix()),
+        image,
+        claim,
+        from_subpath,
+        to_subpath,
+        timeout_secs: 60,
+    })
+}
 /// Poll the store until the named Sandbox is Ready with a pod IP, or the deadline.
 ///
 /// On timeout the 503 carries a one-line digest of the sandbox's last-seen
@@ -596,5 +705,116 @@ mod tests {
             }
             other => panic!("expected ServiceUnavailable, got {other:?}"),
         }
+    }
+
+    // --- #157 draft adoption -------------------------------------------------
+
+    fn adoption_template() -> shared::SandboxTemplate {
+        shared::SandboxTemplate::new(
+            "code-standard-v1",
+            shared::SandboxTemplateSpec {
+                description: None,
+                pod_template: Some(serde_json::json!({
+                    "spec": {
+                        "containers": [{
+                            "name": "sandbox",
+                            "image": "code-standard:latest",
+                            "volumeMounts": [{"name": "workspace", "mountPath": "/workspace"}]
+                        }],
+                        "volumes": [{"name": "workspace", "emptyDir": {}}]
+                    }
+                })),
+            },
+        )
+    }
+
+    fn seeded_draft(user: &str, last_used: i64) -> Sandbox {
+        let name = sandbox_name(user, user, Profile::Persistent);
+        let mut s = Sandbox::new(name.as_str(), shared::SandboxSpec::default());
+        let mut annots = std::collections::BTreeMap::new();
+        annots.insert(
+            crate::sandbox::LAST_USED_KEY.to_string(),
+            last_used.to_string(),
+        );
+        s.metadata.annotations = Some(annots);
+        s
+    }
+
+    async fn resolve_with_stub(
+        config: shared::BrokerConfig,
+        draft: Option<Sandbox>,
+    ) -> (
+        ResolvedSandbox,
+        std::sync::Arc<crate::store::test_fakes::StubSandboxStore>,
+    ) {
+        let state = AppState::for_test(config);
+        let stub = std::sync::Arc::new(crate::store::test_fakes::StubSandboxStore::new());
+        stub.insert_template(adoption_template());
+        stub.set_auto_ready_on_create(Some("10.42.0.9".to_string()));
+        if let Some(d) = draft {
+            stub.insert_sandbox(d);
+        }
+        let state = AppState {
+            store: stub.clone(),
+            ..state
+        };
+        let resolved = resolve_sandbox(&state, "user-1", "chat-9", Profile::Persistent)
+            .await
+            .expect("resolve");
+        (resolved, stub)
+    }
+
+    #[tokio::test]
+    async fn fresh_chat_adopts_recent_draft_workspace() {
+        let (resolved, stub) = resolve_with_stub(
+            shared::BrokerConfig::default(),
+            Some(seeded_draft("user-1", now_unix())),
+        )
+        .await;
+        assert_eq!(
+            resolved.name,
+            sandbox_name("user-1", "chat-9", Profile::Persistent)
+        );
+        let moves = stub.moves();
+        assert_eq!(moves.len(), 1, "exactly one adoption move");
+        let mv = &moves[0];
+        assert_eq!(mv.claim, format!("workspace-p-{}", hex12(b"user-1")));
+        assert_eq!(
+            mv.from_subpath,
+            format!("chats/{}", hex12(b"user-1/user-1"))
+        );
+        assert_eq!(mv.to_subpath, format!("chats/{}", hex12(b"user-1/chat-9")));
+        assert_eq!(mv.image, "code-standard:latest");
+        assert!(
+            mv.job_name.starts_with("draft-adopt-owui-c-"),
+            "{}",
+            mv.job_name
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_draft_is_not_adopted() {
+        let (_, stub) = resolve_with_stub(
+            shared::BrokerConfig::default(),
+            Some(seeded_draft("user-1", now_unix() - 100_000)),
+        )
+        .await;
+        assert!(stub.moves().is_empty(), "stale draft must not move");
+    }
+
+    #[tokio::test]
+    async fn draft_adoption_disabled_by_window_zero() {
+        let config = shared::BrokerConfig {
+            draft_adoption_window_seconds: 0,
+            ..Default::default()
+        };
+        let (_, stub) = resolve_with_stub(config, Some(seeded_draft("user-1", now_unix()))).await;
+        assert!(stub.moves().is_empty(), "window=0 disables adoption");
+    }
+
+    #[tokio::test]
+    async fn no_draft_no_move() {
+        let (_, stub) = resolve_with_stub(shared::BrokerConfig::default(), None).await;
+        assert!(stub.moves().is_empty());
     }
 }
