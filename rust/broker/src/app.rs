@@ -12,7 +12,9 @@ use crate::api::{
     list_sandboxes, metrics, openapi_json, readyz,
 };
 use crate::metrics::http_metrics_layer;
-use crate::proxy::proxy_catch_all;
+use axum::extract::DefaultBodyLimit;
+
+use crate::proxy::{proxy_catch_all, MAX_FORWARD_BODY};
 use crate::rate_limit;
 use crate::state::AppState;
 use crate::terminal::terminal_ws;
@@ -51,7 +53,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/terminals/{id}", get(terminal_ws))
         // Catch-all reverse proxy: /execute, /files/*, /snapshot, /restore,
         // /api/terminals (POST), … → resolved runtime pod.
-        .route("/{*path}", any(proxy_catch_all));
+        .route("/{*path}", any(proxy_catch_all))
+        // #162: raise axum's 2 MiB default body limit so large uploads can
+        // reach the buffered forward (still capped at MAX_FORWARD_BODY).
+        .layer(DefaultBodyLimit::max(MAX_FORWARD_BODY));
     let gated = rate_limit::apply(gated, &state);
     open.merge(gated)
         // D9: record HTTP rate/latency for every served request, keyed by the

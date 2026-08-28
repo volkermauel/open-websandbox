@@ -3,6 +3,7 @@
 
 #![forbid(unsafe_code)]
 
+use axum::extract::DefaultBodyLimit;
 use axum::middleware::from_fn_with_state;
 use axum::routing::{delete, get, post, put};
 use axum::Router;
@@ -38,6 +39,10 @@ async fn ok() -> axum::http::StatusCode {
 
 /// Build the full runtime router over `state`.
 pub fn build_router(state: AppState) -> Router {
+    // #162: axum's DefaultBodyLimit (2 MiB) silently rejected uploads above
+    // 2 MiB. Raise the request-body cap to the configured upload budget —
+    // the workspace quota is still enforced at write time.
+    let max_upload_bytes = state.config.max_upload_bytes as usize;
     Router::new()
         // Open (unauthenticated) routes: GET / + the two health probes.
         .route("/", get(root))
@@ -90,5 +95,6 @@ pub fn build_router(state: AppState) -> Router {
             state.clone(),
             crate::metrics::http_metrics_layer,
         ))
+        .layer(DefaultBodyLimit::max(max_upload_bytes))
         .with_state(state)
 }

@@ -539,6 +539,11 @@
               "pattern": "^[0-9]+([KMGT]i?)?$"
             }
           }
+        },
+        "maxUploadBytes": {
+          "type": "string",
+          "description": "Multipart upload body cap rendered as runtime MAX_UPLOAD_BYTES (#162). Size string (e.g. 1Gi); axum's 2 MiB default broke uploads above 2 MiB.",
+          "default": "1Gi"
         }
       }
     },

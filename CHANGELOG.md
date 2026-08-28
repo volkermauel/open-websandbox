@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — uploads above 2 MiB (#162)
+
+- Neither the broker nor the runtime raised axum's `DefaultBodyLimit`, so its
+  built-in **2 MiB** cap rejected multipart upload bodies on both hops —
+  uploads "broke" above 2 MiB regardless of the 2 GiB workspace quota or the
+  broker's 256 MiB forward cap. The runtime now caps upload bodies at
+  `MAX_UPLOAD_BYTES` (chart `sandboxTemplate.maxUploadBytes`, default 1 GiB;
+  the workspace quota still applies at write time) and the broker's proxy
+  surface raises its limit to the existing 256 MiB forward cap.
 ### Changed — per-chat rate limits (#161)
 
 - Rate limiting re-scoped: a token bucket per **chat** (`X-User-Id`+`X-Session-Id`,
