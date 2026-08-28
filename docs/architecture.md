@@ -17,7 +17,7 @@ rationale lives in [`openspec/changes/archive/adopt-agent-sandbox/design.md`](..
 | **broker** | Rust (axum/tokio) | `agent-sandbox-system` (Deploy `owui-broker`, `:8080`) | Front door. Authenticates Open WebUI (shared bearer + `X-User-Id` / `X-Session-Id`), resolves or creates the sandbox user + session via the agent-sandbox CRDs, waits for `Ready`, reads the live Pod IP, and reverse-proxies the in-sandbox runtime. Owns the idle reaper (park / reap). Endpoints: `/api/config`, `/api/status`, `/api/terminals/{id}` (WS), `/healthz`, `/readyz`, `/metrics`; everything else (`/execute`, `/files/*`, `/ports`, …) is proxied to the runtime. ([`rust/broker/`](../rust/broker/)) |
 | **sandbox-router** | Go (self-built) | `agent-sandbox-system` (Deploy `sandbox-router`, Service `sandbox-router-svc:8080`) | Reverse proxy that dials the live sandbox Pod IP directly on `:8888`. Keeps a Pod-IP cache (it watches sandbox-owned pods cluster-wide) for the fast path and falls back to cluster DNS. Built from upstream `kubernetes-sigs/agent-sandbox`'s `sandbox-router/Dockerfile` at the pinned tag. ([`open-websandbox-platform/deploy/base/router/`](../open-websandbox-platform/deploy/base/router/)) |
 | **runtime** | Rust (axum/tokio) | each sandbox pod in `agent-sandbox-runtime` (`:8888`) | Runs **inside** each sandbox. `POST /execute`, a rich `/files/*` API (read/write/list/glob/grep/cwd/mkdir/move/replace/delete/upload/archive), `GET /ports`, and interactive PTY terminals over `POST /api/terminals` + `WS /api/terminals/{id}`. ([`rust/runtime/`](../rust/runtime/)) |
-| **agent-sandbox controller** | Go (upstream) | `agent-sandbox-system` (Deploy `agent-sandbox-controller`) | Upstream [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox) controller, pinned **v0.5.3** (image `registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.3`). Reconciles the `agents.x-k8s.io` / `extensions.agents.x-k8s.io` CRDs: `SandboxTemplate`, `SandboxWarmPool`, `SandboxClaim`, `Sandbox`. Vendored + SHA256-recorded in [`open-websandbox-platform/upstream/`](../open-websandbox-platform/upstream/). |
+| **agent-sandbox controller** | Go (upstream) | `agent-sandbox-system` (Deploy `agent-sandbox-controller`) | Upstream [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox) controller, pinned **v0.5.6** (image `registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.6`). Reconciles the `agents.x-k8s.io` / `extensions.agents.x-k8s.io` CRDs: `SandboxTemplate`, `SandboxWarmPool`, `SandboxClaim`, `Sandbox`. Vendored + SHA256-recorded in [`open-websandbox-platform/upstream/`](../open-websandbox-platform/upstream/). |
 
 We vendor the upstream manifest (SHA256-recorded) rather than `kubectl apply` a
 remote URL, so deploys are reproducible and auditable. See
@@ -31,7 +31,7 @@ flowchart LR
     subgraph SYS["namespace: agent-sandbox-system  —  control plane"]
         Broker["broker · owui-broker :8080<br/>auth, resolve/create claim,<br/>reverse-proxy, idle reaper"]
         Router["sandbox-router · sandbox-router-svc :8080<br/>Pod-IP cache (fast path)"]
-        Ctrl["agent-sandbox-controller<br/>(upstream kubernetes-sigs/agent-sandbox v0.5.3)"]
+        Ctrl["agent-sandbox-controller<br/>(upstream kubernetes-sigs/agent-sandbox v0.5.6)"]
     end
     subgraph RT["namespace: agent-sandbox-runtime  —  sandboxes"]
         Warm["SandboxWarmPool<br/>code-standard-warmpool (x2)"]

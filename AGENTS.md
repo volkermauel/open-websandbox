@@ -13,7 +13,7 @@ runs **per active chat**; a warm pool hides cold-start latency; default-deny net
 keeps sandboxes off the rest of the cluster. The control plane is a Rust/Axum
 **broker** + **runtime** plus a Go **sandbox-router** (self-built from the upstream
 [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox)
-controller, pinned **v0.5.3**), deployed via a **Helm chart**.
+controller, pinned **v0.5.6**), deployed via a **Helm chart**.
 
 > **Naming note.** Project naming is unified to `open-websandbox` (issue #3). The
 > platform directory is `open-websandbox-platform/`; the three images live at
@@ -32,7 +32,7 @@ controller, pinned **v0.5.3**), deployed via a **Helm chart**.
 | `rust/` | Rust workspace (`shared/`, `broker/`, `runtime/`; Axum). The **broker** is the front door — authenticates Open Web UI, owns sandbox lifecycle + idle reaper; the **runtime** runs inside each sandbox pod (`POST /execute`, `/files/*`, `/ports`, PTY terminals over WS). |
 | `open-websandbox-platform/chart/` | Helm chart: `templates/`, `values.yaml`, `values.schema.json`, `values-kind.yaml` (KIND e2e), `values-kind-gvisor.yaml`. |
 | `open-websandbox-platform/deploy/base/` | Base Kubernetes manifests the chart reproduces (kept byte-for-byte in sync). |
-| `open-websandbox-platform/upstream/` | Vendored upstream agent-sandbox CRDs + controller manifest (v0.5.3) + `SHA256SUMS`. |
+| `open-websandbox-platform/upstream/` | Vendored upstream agent-sandbox CRDs + controller manifest (v0.5.6) + `SHA256SUMS`. |
 | `infra/gvisor/` | Online-safe gVisor (`runsc`) install/activate playbooks + `RuntimeClass` manifests. |
 | `docs/` | Architecture, deployment, operations, and security docs. |
 | `openspec/` | OpenSpec specs + change proposals (how we plan non-trivial work). |

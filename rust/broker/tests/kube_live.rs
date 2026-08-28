@@ -17,7 +17,7 @@
 //! # R1: the KIND cluster gets its OWN kubeconfig path — never ~/.kube/config.
 //! kind create cluster --name owui-c1c2 --kubeconfig /tmp/owui-c1c2.kubeconfig
 //! KUBECONFIG=/tmp/owui-c1c2.kubeconfig \
-//!   kubectl apply -f open-websandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
+//!   kubectl apply -f open-websandbox-platform/upstream/sandbox-with-extensions-v0.5.6.yaml
 //! KUBECONFIG=/tmp/owui-c1c2.kubeconfig OWUI_KUBE_LIVE=1 \
 //!   cargo test -p broker --test kube_live -- --nocapture
 //! ```

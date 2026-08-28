@@ -9,7 +9,7 @@ name: e2e
 #             systrap needs no KVM, so this also runs locally (scripts/setup-kind-gvisor.sh).
 #             The closest analog to production gVisor isolation.
 #
-# The router is self-built from upstream agent-sandbox@v0.5.3 (its Dockerfile COPYs
+# The router is self-built from upstream agent-sandbox@v0.5.6 (its Dockerfile COPYs
 # internal/ api/ extensions/api/, so the build context is the upstream checkout).
 on:
   pull_request:
@@ -116,11 +116,11 @@ jobs:
       # Shallow-fetch upstream at the pinned tag into ./agent-sandbox so the router can be
       # self-built (no prebuilt image is published). Context = agent-sandbox/ because
       # sandbox-router/Dockerfile COPYs internal/ api/ extensions/api/.
-      - name: Checkout upstream agent-sandbox@v0.5.3 (router self-build)
+      - name: Checkout upstream agent-sandbox@v0.5.6 (router self-build)
         uses: actions/checkout@v7
         with:
           repository: kubernetes-sigs/agent-sandbox
-          ref: v0.5.3
+          ref: v0.5.6
           path: agent-sandbox
 
       - name: Self-build sandbox-router
@@ -271,11 +271,11 @@ jobs:
           cache-from: type=gha,scope=open-websandbox-runtime
           cache-to: type=gha,mode=max,scope=open-websandbox-runtime
 
-      - name: Checkout upstream agent-sandbox@v0.5.3 (router self-build)
+      - name: Checkout upstream agent-sandbox@v0.5.6 (router self-build)
         uses: actions/checkout@v7
         with:
           repository: kubernetes-sigs/agent-sandbox
-          ref: v0.5.3
+          ref: v0.5.6
           path: agent-sandbox
       - name: Self-build sandbox-router
         uses: docker/build-push-action@v7
@@ -425,11 +425,11 @@ jobs:
           cache-from: type=gha,scope=open-websandbox-runtime
           cache-to: type=gha,mode=max,scope=open-websandbox-runtime
 
-      - name: Checkout upstream agent-sandbox@v0.5.3 (router self-build)
+      - name: Checkout upstream agent-sandbox@v0.5.6 (router self-build)
         uses: actions/checkout@v7
         with:
           repository: kubernetes-sigs/agent-sandbox
-          ref: v0.5.3
+          ref: v0.5.6
           path: agent-sandbox
       - name: Self-build sandbox-router
         uses: docker/build-push-action@v7

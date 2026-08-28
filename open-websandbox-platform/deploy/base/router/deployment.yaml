@@ -52,8 +52,9 @@ spec:
         # Replace with the published image. The Go router image is
         # `sandbox-router-go` to avoid colliding with the Python router's
         # `sandbox-router` image — see sandbox-router/README.md.
-        # NOTE: upstream publishes only :latest for sandbox-router-go (no versioned tag
-        # at v0.5.3). Phase 6: self-build + pin by digest, or adopt an upstream tag.
+        # NOTE: upstream publishes NO container image for sandbox-router (no versioned
+        # tag and no :latest on registry.k8s.io at v0.5.6). Self-build from the pinned
+        # agent-sandbox source; pin by digest in production.
         image: sandbox-router-go:dev
         imagePullPolicy: Never
         args:

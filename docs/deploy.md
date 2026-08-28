@@ -43,7 +43,7 @@ for day-2 runbook steps see [`operations.md`](operations.md).
 
 The chart assumes the controller + CRDs already exist — it does **not** install
 the upstream `agent-sandbox` project (a prerequisite, like gVisor and the RWX
-StorageClass). Install the **pinned v0.5.3** manifest vendored in
+StorageClass). Install the **pinned v0.5.6** manifest vendored in
 [`open-websandbox-platform/upstream/`](../open-websandbox-platform/upstream/). It
 carries the four CRDs (`agents.x-k8s.io/Sandbox`,
 `extensions.agents.x-k8s.io/{SandboxTemplate,SandboxWarmPool,SandboxClaim}`) and
@@ -54,7 +54,7 @@ before applying:
 
 ```bash
 sha256sum -c open-websandbox-platform/upstream/SHA256SUMS
-kubectl apply -f open-websandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
+kubectl apply -f open-websandbox-platform/upstream/sandbox-with-extensions-v0.5.6.yaml
 kubectl -n agent-sandbox-system wait deploy/agent-sandbox-controller \
   --for=condition=Available --timeout=120s
 kubectl get crd | grep -E 'agents.x-k8s.io|extensions.agents.x-k8s.io'
@@ -77,8 +77,9 @@ docker build -t ghcr.io/<owner>/open-websandbox-broker:<tag> -f rust/broker/Dock
 # runtime — Rust (axum/tokio), debian-slim + shell toolchain + LibreOffice (nogui)
 docker build -t ghcr.io/<owner>/open-websandbox-runtime:<tag> -f rust/runtime/Dockerfile rust
 
-# sandbox-router — Go (self-build; upstream publishes only :latest at v0.5.3,
-# so it is self-built and pinned by digest in production)
+# sandbox-router — Go (self-build; upstream publishes NO container image for it —
+# neither versioned tags nor :latest on registry.k8s.io — so it is self-built
+# from the pinned agent-sandbox source and pinned by digest in production)
 docker build -t ghcr.io/<owner>/open-websandbox-router:<tag> <upstream-router-src>
 ```
 
@@ -182,7 +183,7 @@ runtimeClassName: gvisor              # runsc; installed cluster-wide (prereq)
 images:
   broker: open-websandbox-broker:<tag>
   runtime: open-websandbox-runtime:<tag>
-  router: open-websandbox-router:<tag>   # self-built (upstream ships only :latest)
+  router: open-websandbox-router:<tag>   # self-built (upstream ships no router image)
 
 broker:
   sharedSecret: "<openssl rand -hex 32>"   # -> Secret owui-broker-secret/shared-secret

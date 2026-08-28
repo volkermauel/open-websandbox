@@ -39,7 +39,7 @@ flowchart LR
     subgraph cp["agent-sandbox-system (control plane)"]
         Broker["broker<br/>(Rust/Axum)"]
         Router["sandbox-router<br/>(Go)"]
-        Ctrl["agent-sandbox-controller<br/>(upstream, v0.5.3)"]
+        Ctrl["agent-sandbox-controller<br/>(upstream, v0.5.6)"]
     end
     subgraph rt["agent-sandbox-runtime (sandboxes)"]
         WarmPool["SandboxWarmPool<br/>code-standard-warmpool (x2)"]

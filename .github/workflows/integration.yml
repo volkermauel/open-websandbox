@@ -83,7 +83,7 @@ jobs:
 
       - name: Apply broker CRDs (agents.x-k8s.io)
         run: |
-          kubectl apply -f open-websandbox-platform/chart/crds/upstream-agent-sandbox-v0.5.3-crds.yaml
+          kubectl apply -f open-websandbox-platform/chart/crds/upstream-agent-sandbox-v0.5.6-crds.yaml
           kubectl wait --for=condition=Established --all crd --timeout=120s
 
       - name: C1 — live K8s backend tests (OWUI_KUBE_LIVE=1)

@@ -36,7 +36,7 @@ jobs:
           echo "Rendered $(grep -c '^kind:' /tmp/rendered.yaml) documents"
 
       # STRICT mode: reject unknown/additional fields. The chart bundles the
-      # vendored agents.x-k8s.io CRDs (pinned upstream v0.5.3); their CR instances
+      # vendored agents.x-k8s.io CRDs (pinned upstream v0.5.6); their CR instances
       # (SandboxTemplate / SandboxWarmPool / SandboxClaim) have no entry in the
       # public kubernetes-json-schema catalog, so `ignore_missing_schemas` lets
       # those pass while strict-validating every built-in resource we author
