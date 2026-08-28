@@ -306,8 +306,14 @@ pub async fn resolve_sandbox(
 }
 
 /// Poll the store until the named Sandbox is Ready with a pod IP, or the deadline.
+///
+/// On timeout the 503 carries a one-line digest of the sandbox's last-seen
+/// status — the v0.5.6 controller mirrors `PodScheduled` (Unschedulable,
+/// SchedulingGated, …) into `Sandbox.status.conditions`, so the error says
+/// *why* the sandbox never came up instead of just "not ready in 60s".
 async fn wait_for_ready(state: &AppState, name: &str) -> Result<ResolvedSandbox, ApiError> {
     let deadline = Instant::now() + Duration::from_secs(state.config.claim_timeout_seconds);
+    let mut last_digest = String::from("no status reported");
     loop {
         if let Some(sbx) = state.store.get_sandbox(name).await.map_err(map_store_err)? {
             if let Some(ip) = ready_pod_ip(&sbx) {
@@ -317,14 +323,47 @@ async fn wait_for_ready(state: &AppState, name: &str) -> Result<ResolvedSandbox,
                     pod_ip: ip,
                 });
             }
+            last_digest = condition_summary(sbx.status.as_ref());
         }
         if Instant::now() >= deadline {
             return Err(ApiError::ServiceUnavailable(format!(
-                "sandbox {name} not ready in {}s",
+                "sandbox {name} not ready in {}s ({last_digest})",
                 state.config.claim_timeout_seconds
             )));
         }
         tokio::time::sleep(READY_POLL_INTERVAL).await;
+    }
+}
+
+/// One-line digest of a sandbox status for error surfaces, e.g.
+/// `phase=Pending; Ready=False reason=PodTerminating; PodScheduled=False
+/// reason=Unschedulable: 0/1 nodes are available…`. Long condition messages
+/// are clipped so the 503 stays one line.
+fn condition_summary(status: Option<&SandboxStatus>) -> String {
+    let Some(status) = status else {
+        return "no status reported".to_string();
+    };
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(phase) = &status.phase {
+        parts.push(format!("phase={phase}"));
+    }
+    if let Some(conds) = &status.conditions {
+        for c in conds {
+            let mut s = format!("{}={}", c.r#type, c.status);
+            if let Some(reason) = &c.reason {
+                s.push_str(&format!(" reason={reason}"));
+            }
+            if let Some(msg) = &c.message {
+                let clipped: String = msg.chars().take(120).collect();
+                s.push_str(&format!(": {clipped}"));
+            }
+            parts.push(s);
+        }
+    }
+    if parts.is_empty() {
+        "status reported no phase or conditions".to_string()
+    } else {
+        parts.join("; ")
     }
 }
 
@@ -470,5 +509,92 @@ mod tests {
             ..Default::default()
         });
         s
+    }
+
+    // --- not-ready 503 diagnostics (v0.5.6 mirrored conditions) ------------
+
+    fn blocked_fixture() -> Sandbox {
+        let mut s = Sandbox::new("n", shared::SandboxSpec::default());
+        s.status = Some(SandboxStatus {
+            phase: Some("Pending".into()),
+            conditions: Some(vec![
+                shared::SandboxCondition {
+                    r#type: "Ready".into(),
+                    status: "False".into(),
+                    reason: Some("PodTerminating".into()),
+                    message: None,
+                    last_transition_time: None,
+                },
+                shared::SandboxCondition {
+                    r#type: "PodScheduled".into(),
+                    status: "False".into(),
+                    reason: Some("Unschedulable".into()),
+                    message: Some(
+                        "0/1 nodes are available: 1 node(s) didn't match pod anti-affinity rules. "
+                            .repeat(4),
+                    ),
+                    last_transition_time: None,
+                },
+            ]),
+            ..Default::default()
+        });
+        s
+    }
+
+    #[test]
+    fn condition_summary_includes_phase_reasons_and_clips_messages() {
+        let s = blocked_fixture();
+        let digest = condition_summary(s.status.as_ref());
+        assert!(digest.contains("phase=Pending"), "{digest}");
+        assert!(
+            digest.contains("Ready=False reason=PodTerminating"),
+            "{digest}"
+        );
+        assert!(
+            digest.contains("PodScheduled=False reason=Unschedulable"),
+            "{digest}"
+        );
+        // Long condition messages are clipped so the 503 stays one line.
+        assert!(digest.len() < 400, "digest too long: {digest}");
+    }
+
+    #[test]
+    fn condition_summary_handles_missing_status() {
+        assert_eq!(condition_summary(None), "no status reported");
+        let bare = SandboxStatus::default();
+        assert_eq!(
+            condition_summary(Some(&bare)),
+            "status reported no phase or conditions"
+        );
+    }
+
+    #[tokio::test]
+    async fn not_ready_timeout_503_carries_condition_digest() {
+        let config = shared::BrokerConfig {
+            claim_timeout_seconds: 0,
+            ..Default::default()
+        };
+        let state = AppState::for_test(config);
+        let stub = crate::store::test_fakes::StubSandboxStore::new();
+        stub.insert_sandbox(blocked_fixture());
+        // for_test wires its own stub; rebuild the state with OUR stub so the
+        // seeded sandbox is what the poll loop sees.
+        let state = AppState {
+            store: std::sync::Arc::new(stub),
+            ..state
+        };
+        let result = wait_for_ready(&state, "n").await;
+        let err = match result {
+            Err(e) => e,
+            Ok(r) => panic!("expected ServiceUnavailable, resolved: {r:?}"),
+        };
+        match err {
+            ApiError::ServiceUnavailable(detail) => {
+                assert!(detail.contains("not ready in 0s"), "{detail}");
+                assert!(detail.contains("Unschedulable"), "{detail}");
+                assert!(detail.contains("PodTerminating"), "{detail}");
+            }
+            other => panic!("expected ServiceUnavailable, got {other:?}"),
+        }
     }
 }

@@ -141,6 +141,10 @@ spec:
         - --cluster-domain=cluster.local
         - --proxy-timeout=180s
         - --upstream-max-retries=3
+        # Cap inbound request bodies at 256 MiB, aligned with the broker's
+        # MAX_FORWARD_BODY (proxy.rs). The Go router's default is 0/unlimited
+        # and direct-to-router clients bypass the broker's own cap.
+        - --max-request-body-bytes=268435456
         - --cache-enabled=true
         ports:
         - name: proxy

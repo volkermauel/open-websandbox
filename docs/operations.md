@@ -588,7 +588,16 @@ resumes the **same shell** with the tail replayed first.
 
 Cross-node drain needs an **RWX** storage class for the persistent profile (see
 [PVC Pending](#pvc-pending-persistent-workspace)); single-node KIND's default RWO class
-works because the recreated pod lands on the same node. The whole flow is exercised
+works because the recreated pod lands on the same node.
+
+**Readiness timeouts explain themselves.** When a claim times out waiting for
+a sandbox, the broker's 503 carries the sandbox's last-seen status digest —
+`phase`, every condition with its `reason`/`message` (clipped). Since the
+upstream v0.5.6 controller mirrors the backing pod's `PodScheduled` condition,
+scheduling blockers (`Unschedulable`, `SchedulingGated`) surface directly in
+the error instead of requiring `kubectl` forensics. The sandbox-router is
+capped at 256 MiB inbound request bodies (`--max-request-body-bytes`, aligned
+with the broker's own cap). The whole flow is exercised
 end-to-end by [`tests/e2e/test_node_drain.py`](../tests/e2e/test_node_drain.py) — a
 lane (`E2E_DRAIN=1`, run in CI as the `drain` arm of the `e2e-pvc` matrix on the
 per-user PVC profile) that opens a terminal, deletes the sandbox pod, and asserts
