@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > [Quickstart](docs/quickstart.md)). Version comparison links will be added
 > once the canonical repository URL is fixed.
 
-## [Unreleased]
+## [0.1.2] - 2026-08-28
 
 ### Added — draft adoption (#157)
 
