@@ -61,7 +61,7 @@ pub const RUNTIME_PORT: u16 = 8888;
 /// Cap on a forwarded request body read into memory (256 MiB). This handler
 /// also buffers the full body; streaming the request body
 /// end-to-end is a later optimisation. 256 MiB covers realistic `/files` uploads.
-const MAX_FORWARD_BODY: usize = 256 * 1024 * 1024;
+pub(crate) const MAX_FORWARD_BODY: usize = 256 * 1024 * 1024;
 
 /// Identity the broker derives from the inbound request (OWUI → broker hop).
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -47,6 +47,27 @@ fn read_zip_entries(bytes: &[u8]) -> Vec<(String, String)> {
     out
 }
 
+// #162: axum's DefaultBodyLimit defaults to 2 MiB and silently rejected
+// larger uploads with 413 — the regression this whole change fixes. 3 MiB
+// must round-trip once the router raises the limit to MAX_UPLOAD_BYTES.
+#[tokio::test]
+async fn upload_accepts_bodies_over_two_mebibytes() {
+    let env = common::Env::new();
+    let payload: Vec<u8> = (0..3 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+    let (ct, body) = multipart("big.bin", &payload);
+    let resp = env
+        .send_typed(
+            Method::POST,
+            "/files/upload",
+            Bearer::Default,
+            None,
+            &ct,
+            body,
+        )
+        .await;
+    assert_eq!(resp.status(), 200, "3 MiB upload must not 413");
+}
+
 // --- POST /files/upload -----------------------------------------------------
 
 #[tokio::test]

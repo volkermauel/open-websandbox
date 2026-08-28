@@ -154,6 +154,9 @@ sandboxTemplate:
   runtimeClassName: gvisor         # "" => omit field (runc, for KIND e2e)
   runtimeRepository: open-websandbox-runtime
   maxProcs: 256
+  # Multipart upload body cap (#162): axum's 2 MiB DefaultBodyLimit silently
+  # broke uploads > 2 MiB. 1 GiB default; workspace quota still applies.
+  maxUploadBytes: "1Gi"
   # Terminal scrollback ring per session, bytes (issue #129): replayed to a
   # reattached WS client and flushed to the workspace on SIGTERM (node drain).
   # 0 disables capture, replay and flush.

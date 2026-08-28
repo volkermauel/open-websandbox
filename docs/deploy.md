@@ -262,6 +262,8 @@ and defaults. Two settings worth calling out:
 Runtime-side knobs (env on the sandbox pod, baked into the SandboxTemplate by
 the chart): `MAX_TIMEOUT` (600), `DEFAULT_TIMEOUT` (120), `MAX_OUTPUT_BYTES`
 (1 MiB), `MAX_PROCS` (256, `RLIMIT_NPROC`), `MAX_TERMINAL_SESSIONS` (8),
+`MAX_UPLOAD_BYTES` (1 GiB — multipart upload body cap; without it axum's 2 MiB
+default silently rejects larger uploads, #162),
 `RUNTIME_API_KEY` (optional WS auth, off by default).
 
 ## Production values presets (must-override keys)

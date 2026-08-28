@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > [Quickstart](docs/quickstart.md)). Version comparison links will be added
 > once the canonical repository URL is fixed.
 
+## [Unreleased]
+
+### Fixed — uploads above 2 MiB (#162)
+
+- Neither the broker nor the runtime raised axum's `DefaultBodyLimit`, so its
+  built-in **2 MiB** cap rejected multipart upload bodies on both hops —
+  uploads "broke" above 2 MiB regardless of the 2 GiB workspace quota or the
+  broker's 256 MiB forward cap. The runtime now caps upload bodies at
+  `MAX_UPLOAD_BYTES` (chart `sandboxTemplate.maxUploadBytes`, default 1 GiB;
+  the workspace quota still applies at write time) and the broker's proxy
+  surface raises its limit to the existing 256 MiB forward cap.
+
 ## [0.1.2] - 2026-08-28
 
 ### Added — draft adoption (#157)

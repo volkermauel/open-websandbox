@@ -104,6 +104,9 @@ spec:
           value: ""
         - name: KUBERNETES_PORT_443_TCP_PROTO
           value: ""
+        # #162: raise axum's 2 MiB default body limit for multipart uploads.
+        - name: MAX_UPLOAD_BYTES
+          value: {{ include "open-websandbox.sizeBytes" .Values.sandboxTemplate.maxUploadBytes | quote }}
         {{- if eq .Values.broker.persistentMode "empty-dir" }}
         # empty-dir hot tier (#142): cap snapshot/restore at the hot-tier sizeLimit (D9).
         - name: MAX_WORKSPACE_BYTES

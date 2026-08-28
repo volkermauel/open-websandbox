@@ -26,6 +26,9 @@ const DEFAULT_MAX_TIMEOUT: u64 = 600;
 /// Workspace size cap for snapshot/restore pre-check, in bytes (env
 /// `MAX_WORKSPACE_BYTES`, 2 GiB).
 const DEFAULT_MAX_WORKSPACE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Default: 1 GiB per upload body (#162) — generous vs. axum's 2 MiB default,
+/// still bounded well under the 2 GiB workspace quota.
+const DEFAULT_MAX_UPLOAD_BYTES: u64 = 1024 * 1024 * 1024;
 /// Max concurrent PTY terminal sessions (env `MAX_TERMINAL_SESSIONS`).
 const DEFAULT_MAX_TERMINAL_SESSIONS: u32 = 8;
 /// Shell used to run `/execute` commands (env `SHELL`).
@@ -56,6 +59,10 @@ pub struct RuntimeConfig {
     pub max_timeout: u64,
     /// Snapshot/restore size cap (bytes).
     pub max_workspace_bytes: u64,
+    /// Multipart upload body cap (bytes). axum's DefaultBodyLimit defaults to
+    /// 2 MiB, which silently broke uploads > 2 MiB (#162) — the workspace
+    /// quota is enforced separately at write time.
+    pub max_upload_bytes: u64,
     /// Max concurrent PTY terminal sessions.
     pub max_terminal_sessions: u32,
     /// Shell binary for `/execute`.
@@ -77,6 +84,7 @@ impl Default for RuntimeConfig {
             default_timeout: DEFAULT_DEFAULT_TIMEOUT,
             max_timeout: DEFAULT_MAX_TIMEOUT,
             max_workspace_bytes: DEFAULT_MAX_WORKSPACE_BYTES,
+            max_upload_bytes: DEFAULT_MAX_UPLOAD_BYTES,
             max_terminal_sessions: DEFAULT_MAX_TERMINAL_SESSIONS,
             shell: DEFAULT_SHELL.to_string(),
             runtime_key_file: PathBuf::from(DEFAULT_RUNTIME_KEY_FILE),
@@ -111,6 +119,7 @@ impl RuntimeConfig {
         cfg.default_timeout = env_t(&get, "DEFAULT_TIMEOUT", cfg.default_timeout);
         cfg.max_timeout = env_t(&get, "MAX_TIMEOUT", cfg.max_timeout);
         cfg.max_workspace_bytes = env_t(&get, "MAX_WORKSPACE_BYTES", cfg.max_workspace_bytes);
+        cfg.max_upload_bytes = env_t(&get, "MAX_UPLOAD_BYTES", cfg.max_upload_bytes);
         cfg.max_terminal_sessions = env_t(&get, "MAX_TERMINAL_SESSIONS", cfg.max_terminal_sessions);
         if let Some(v) = get("SHELL") {
             cfg.shell = v;
@@ -186,6 +195,7 @@ mod tests {
         assert_eq!(cfg.default_timeout, 120);
         assert_eq!(cfg.max_timeout, 600);
         assert_eq!(cfg.max_workspace_bytes, 2_147_483_648);
+        assert_eq!(cfg.max_upload_bytes, 1_073_741_824); // #162: 1 GiB, not axum's 2 MiB
         assert_eq!(cfg.max_terminal_sessions, 8);
         assert_eq!(cfg.shell, "/bin/bash");
         assert_eq!(
@@ -203,6 +213,7 @@ mod tests {
             ("DEFAULT_TIMEOUT", "30"),
             ("MAX_TIMEOUT", "90"),
             ("MAX_WORKSPACE_BYTES", "1000"),
+            ("MAX_UPLOAD_BYTES", "5000"),
             ("MAX_TERMINAL_SESSIONS", "4"),
             ("SHELL", "/bin/sh"),
             ("RUNTIME_KEY_FILE", "/keys/k"),
@@ -213,6 +224,7 @@ mod tests {
         assert_eq!(cfg.default_timeout, 30);
         assert_eq!(cfg.max_timeout, 90);
         assert_eq!(cfg.max_workspace_bytes, 1000);
+        assert_eq!(cfg.max_upload_bytes, 5000);
         assert_eq!(cfg.max_terminal_sessions, 4);
         assert_eq!(cfg.shell, "/bin/sh");
         assert_eq!(cfg.runtime_key_file, PathBuf::from("/keys/k"));
