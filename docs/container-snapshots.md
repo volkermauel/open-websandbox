@@ -11,7 +11,7 @@ The upstream agent-sandbox **Snapshot feature cannot be used on plain
 Kubernetes** — it is a Python-only SDK extension that drives GKE-proprietary
 `podsnapshot.gke.io` custom resources, serviced by a closed-source GKE node agent
 and control-plane controller, with snapshots stored in Cloud Storage. Nothing of
-it exists in the agent-sandbox controller (v0.5.3 through v0.5.5), so re-vendoring
+it exists in the agent-sandbox controller (v0.5.3 through v0.5.6), so re-vendoring
 buys nothing. The *capability* it provides — **memory-inclusive** sandbox state
 capture — is technically feasible in our environment, because it is built on
 gVisor `runsc` checkpoint/restore, which is open and works on plain k8s +
@@ -52,7 +52,7 @@ listening sockets, loopback and Unix-domain sockets survive.
 | **Restore into a new pod** | gVisor shim restore-from-annotation (`dev.gvisor.internal.restore.host-image-path`) is **unmerged** (PR #13326); containerd CRI path open (#12280); kubelet `/checkpoint` is forensic-only, no k8s restore API exists | ❌ **blocker** |
 | Network identity across restore | New pod IP; broker re-resolves per request (`rust/broker/src/resolve.rs`) | ✅ (WS terminals reconnect) |
 | Node/CPU/version compatibility | Homogeneous dedicated gvisor pool + uniform runsc release pin; `dev.gvisor.internal.cpufeatures` available if we ever mix CPUs | ✅ |
-| Controller version skew | v0.5.3 has no snapshot code; nothing to re-vendor | ➖ N/A |
+| Controller version skew | v0.5.3–v0.5.6 have no snapshot code; nothing to re-vendor | ➖ N/A |
 | Pod shape | Sandbox pods are single-container → whole-sandbox C/R granularity fits | ✅ |
 
 ## Risks

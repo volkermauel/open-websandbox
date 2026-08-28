@@ -12,7 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed (#153)
+
+- **Vendored upstream `agent-sandbox` v0.5.3 → v0.5.6.** CRDs unchanged except
+  the additive `SandboxWarmPool.status.observedGeneration`; controller image +
+  one RBAC rule (`events` core group) updated; the combined manifest now ships
+  as plain multi-doc (the v1/List wrapper is gone) — regeneration recipes in
+  the slice headers updated accordingly. Broker code unchanged: it reads only
+  the `Ready` condition and drives park/resume via `spec.operatingMode`, so the
+  v0.5.4 `Suspended`-condition semantics change does not apply. The self-built
+  sandbox-router (still mandatory — upstream publishes no router image) gains
+  scoped-token authz and warm-pool `X-Sandbox-Id` routing for free. Corrected
+  the stale docs note claiming upstream publishes a `:latest` router image.
 
 ## [0.1.1] - 2026-08-27
 

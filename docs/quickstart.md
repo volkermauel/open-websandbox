@@ -9,7 +9,7 @@ sandbox and a smoke test. Takes ~10 minutes once the prerequisites are in place.
 
 ## What you get
 
-- The upstream **`agent-sandbox` controller + CRDs** (v0.5.3) in `agent-sandbox-system`.
+- The upstream **`agent-sandbox` controller + CRDs** (v0.5.6) in `agent-sandbox-system`.
 - The **broker** (`owui-broker`), **sandbox-router** (`sandbox-router`), and a warm pool
   of **runtime** pods in `agent-sandbox-runtime` — all under gVisor.
 - A `SandboxTemplate` (`code-standard-v1`) and a `SandboxWarmPool`
@@ -47,7 +47,7 @@ default; the four `agents.x-k8s.io` / `extensions.agents.x-k8s.io` CRDs ship in
 `chart/crds/` and are applied before the chart's templates). There is **no separate
 manual `kubectl apply` step** — `helm install` in the next section brings up the
 whole platform, including the controller (image
-`registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.3`).
+`registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.6`).
 
 The manifest the chart renders from is vendored and SHA256-recorded in the repo.
 You can verify its integrity before installing (run from the repo root):
@@ -59,7 +59,7 @@ sha256sum -c open-websandbox-platform/upstream/SHA256SUMS
 > **Managing the controller yourself?** If the upstream controller already runs
 > cluster-wide, install with `--set upstream.deploy=false` (and add `--skip-crds` if
 > the CRDs are already present). In that case apply the vendored manifest yourself:
-> `kubectl apply -f open-websandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml`.
+> `kubectl apply -f open-websandbox-platform/upstream/sandbox-with-extensions-v0.5.6.yaml`.
 
 ## 3. Install the chart
 
@@ -81,7 +81,7 @@ sha256sum -c open-websandbox-platform/upstream/SHA256SUMS
 
 The chart ships three images — `open-websandbox-broker`, `open-websandbox-runtime`, and
 `open-websandbox-router` (the last is self-built from upstream `kubernetes-sigs/agent-sandbox`
-v0.5.3; see [`release.yml`](../.github/workflows/release.yml)). Match the install path
+v0.5.6; see [`release.yml`](../.github/workflows/release.yml)). Match the install path
 to your situation:
 
 ### Option A — build from source *(primary path until v0.1.1 is released)*
@@ -256,7 +256,7 @@ kubectl -n agent-sandbox-system logs -f deploy/owui-broker | \
 helm uninstall open-websandbox
 # Only if you applied the upstream manifest yourself (--set upstream.deploy=false);
 # otherwise 'helm uninstall' already removes the controller + CRDs it installed:
-# kubectl delete -f open-websandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml
+# kubectl delete -f open-websandbox-platform/upstream/sandbox-with-extensions-v0.5.6.yaml
 kubectl delete namespace agent-sandbox-runtime agent-sandbox-system
 ```
 

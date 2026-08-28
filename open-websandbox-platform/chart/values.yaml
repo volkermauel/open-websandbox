@@ -9,7 +9,7 @@ imagePullPolicy: Never   # prod: IfNotPresent
 # platform image is built from is fixed by its Dockerfile, NOT by this tag:
 #   open-websandbox-broker   -> rust/broker/Dockerfile   (distroless Rust binary: axum + kube-rs)
 #   open-websandbox-runtime  -> rust/runtime/Dockerfile  (debian-slim Rust binary; shells out to tar/zstd/grep)
-#   open-websandbox-router   -> Go, self-built from the vendored upstream agent-sandbox@v0.5.3
+#   open-websandbox-router   -> Go, self-built from the vendored upstream agent-sandbox@v0.5.6
 # .github/workflows/e2e.yml builds + `kind load`s all three at THIS tag and then runs the live
 # pytest tests/e2e suite against the broker (runc + gvisor matrix, plus a separate empty-dir+s3
 # job) — i.e. the Rust broker/runtime HAVE end-to-end coverage. release.yml publishes the
@@ -23,7 +23,7 @@ imageTag: v0.1.1
 # entirely when empty.
 imagePullSecrets: []
 # ---------------------------------------------------------------------------
-# Vendored upstream agent-sandbox controller (apiGroup agents.x-k8s.io, v0.5.3).
+# Vendored upstream agent-sandbox controller (apiGroup agents.x-k8s.io, v0.5.6).
 # deploy: true (default) => the chart installs the upstream controller Deployment and its
 # RBAC + Services (rendered from the verbatim, SHA-pinned manifest under
 # open-websandbox-platform/upstream/), so a single `helm install` brings up the whole
@@ -32,7 +32,7 @@ imagePullSecrets: []
 # SandboxTemplate / SandboxWarmPool instances are validated. Set deploy=false when the
 # controller is already installed cluster-wide; then also pass `helm install --skip-crds`
 # if the CRDs are already present.
-# See templates/upstream/upstream.yaml + crds/ + files/upstream-agent-sandbox-v0.5.3.yaml.
+# See templates/upstream/upstream.yaml + crds/ + files/upstream-agent-sandbox-v0.5.6.yaml.
 upstream:
   deploy: true
 

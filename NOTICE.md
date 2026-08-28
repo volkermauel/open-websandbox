@@ -12,7 +12,7 @@ license text is in [`LICENSE`](./LICENSE).
 
 | Component | License | Where |
 |-----------|---------|-------|
-| [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox) controller + CRDs (pinned **v0.5.3**) | Apache License 2.0 | `open-websandbox-platform/upstream/` (vendored, SHA256-pinned) |
+| [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox) controller + CRDs (pinned **v0.5.6**) | Apache License 2.0 | `open-websandbox-platform/upstream/` (vendored, SHA256-pinned) |
 | [gVisor (`runsc`)](https://gvisor.dev/) RuntimeClass | Apache License 2.0 | installed on cluster nodes; not distributed in this repository |
 | [LibreOffice](https://www.libreoffice.org/) (`-nogui` Debian packages) | Mozilla Public License 2.0 | installed in the runtime container image by `rust/runtime/Dockerfile`; not distributed in this repository |
 

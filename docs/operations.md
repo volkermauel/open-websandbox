@@ -499,12 +499,12 @@ is stateless and recovers claims on restart) / `deploy/sandbox-router`.
   above. Roll back by re-applying the previous tag and recycling. The broker
   keeps no session DB (stateless recovery from labelled claims), so a broker
   rollback doesn't lose user sandboxes.
-- **Upstream controller** (`agent-sandbox` v0.5.3): a new minor is a CRD
+- **Upstream controller** (`agent-sandbox` v0.5.6): a new minor is a CRD
   upgrade — read its release notes, re-vendor the new manifest into
   [`upstream/`](../open-websandbox-platform/upstream/) with a fresh `SHA256SUMS`,
   apply CRDs **before** the controller Deployment (forward-compatible CRDs
   first), then `kubectl rollout restart deploy/agent-sandbox-controller -n
-  agent-sandbox-system`. Roll back by re-applying the v0.5.3 manifest; never
+  agent-sandbox-system`. Roll back by re-applying the v0.5.6 manifest; never
   downgrade CRDs without checking the controller supports them.
 - **gVisor** (`runsc`): node-level, see [`infra/gvisor/README.md`](../infra/gvisor/README.md).
   Stage with `install-gvisor-node.sh` (inert until containerd restart), activate

@@ -1,10 +1,10 @@
 {{/*
-Vendored upstream agent-sandbox CONTROLLER (apiGroup agents.x-k8s.io), v0.5.3 —
+Vendored upstream agent-sandbox CONTROLLER (apiGroup agents.x-k8s.io), v0.5.6 —
 the NON-CRD slice (controller Deployment, RBAC, ServiceAccount, Service, webhooks).
 
-Renders the discrete YAML documents in chart/files/upstream-agent-sandbox-v0.5.3.yaml —
+Renders the discrete YAML documents in chart/files/upstream-agent-sandbox-v0.5.6.yaml —
 the non-CRD documents split (Namespace + CRDs intentionally omitted) from the verbatim,
-SHA-pinned upstream manifest at agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.3.yaml.
+SHA-pinned upstream manifest at agent-sandbox-platform/upstream/sandbox-with-extensions-v0.5.6.yaml.
 See the provenance header in that file for the source/SHA and the exact regeneration recipe.
 
 Gated by upstream.deploy (default true) so a single `helm install` brings up the whole
@@ -13,7 +13,7 @@ platform. Set upstream.deploy=false when the controller is already installed clu
 agents.x-k8s.io CRDs are already present.
 
 CRD-first ordering — the agents.x-k8s.io CustomResourceDefinitions live in chart/crds/
-(upstream-agent-sandbox-v0.5.3-crds.yaml), NOT here. Helm applies the chart's top-level
+(upstream-agent-sandbox-v0.5.6-crds.yaml), NOT here. Helm applies the chart's top-level
 crds/ directory BEFORE chart/templates/ and refreshes API discovery in between, so the
 chart's own SandboxTemplate / SandboxWarmPool instances (rendered elsewhere in templates/)
 validate against the already-installed CRDs. That discovery refresh is a property of the
@@ -27,5 +27,5 @@ upstream.deploy=true (the chart default already does). Templatizing the controll
 namespace + image for air-gapped / private-registry installs is a tracked follow-up.
 */}}
 {{- if .Values.upstream.deploy }}
-{{ .Files.Get "files/upstream-agent-sandbox-v0.5.3.yaml" }}
+{{ .Files.Get "files/upstream-agent-sandbox-v0.5.6.yaml" }}
 {{- end }}

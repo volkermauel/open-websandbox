@@ -20,7 +20,7 @@ WebSocket PTY terminal at `/api/terminals/{id}`). Three components:
 - **sandbox-router** (Go, built from upstream agent-sandbox) — authenticates + reverse-
   proxies HTTP/WebSocket to sandbox pods.
 
-It depends on the external **kubernetes-sigs/agent-sandbox** controller (v0.5.3) + its
+It depends on the external **kubernetes-sigs/agent-sandbox** controller (v0.5.6) + its
 CRDs. Sandboxes run under the **gVisor** (runsc) RuntimeClass.
 
 ## Isolation stance
