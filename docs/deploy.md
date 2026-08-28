@@ -412,6 +412,7 @@ a Helm value unset to inherit the default.
 | `broker.persistentStorageClass` | `BROKER_PERSISTENT_STORAGE_CLASS` | `""` | Per-user PVC StorageClass ("" = cluster default; prod: an RWX class such as CephFS). |
 | `broker.idleTtlSeconds` | `BROKER_IDLE_TTL_SECONDS` | `120` | Ephemeral reap age — claim deleted, sandbox returns to the warm pool. Also the reap age of `empty-dir` persistent sandboxes. |
 | `broker.parkIdleSeconds` | `BROKER_PARK_IDLE_SECONDS` | `120` | Persistent **park** age — sandbox `Suspended` (pod gone, PVC kept). Cold resume ~1–6 s. PVC hot tiers only; `empty-dir` never parks. |
+| `broker.wsTouchIntervalSeconds` | `BROKER_WS_TOUCH_INTERVAL_SECONDS` | `45` | #158: WS terminal frames refresh `broker-last-used` at most once per this interval, so an actively-used terminal is never parked mid-session. Keep well below `parkIdleSeconds`; `0` disables (old behavior). |
 | `broker.reapSeconds` | `BROKER_REAP_SECONDS` | `604800` (7 d) | Persistent **reap** age — with the cold tier on, reap offloads to S3 first and frees the hot tier (#142); the per-user PVC itself is kept. |
 | `broker.claimTimeoutSeconds` | `BROKER_CLAIM_TIMEOUT_SECONDS` | `60` | Wait for `Ready` (else HTTP 504). |
 | `broker.proxyTimeoutSeconds` | `BROKER_PROXY_TIMEOUT_SECONDS` | `660` | Upstream proxy timeout (> runtime `MAX_TIMEOUT` 600 s). |

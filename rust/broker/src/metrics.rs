@@ -55,6 +55,8 @@ pub(crate) const AUTH_FAILURES_TOTAL: &str = "open_websandbox_broker_auth_failur
 pub(crate) const IDLE_REAPS_TOTAL: &str = "open_websandbox_broker_idle_reaps_total";
 /// Frozen draft-adoption counter name (#157, by result).
 pub(crate) const DRAFT_ADOPTIONS_TOTAL: &str = "open_websandbox_broker_draft_adoptions_total";
+/// Frozen terminal WS-touch counter name (#158, by relay direction).
+pub(crate) const WS_TOUCHES_TOTAL: &str = "open_websandbox_broker_ws_touches_total";
 
 /// Broker HTTP rate/latency holder + the install point for the global
 /// recorder.
@@ -133,6 +135,13 @@ impl BrokerMetrics {
         );
         for result in ["adopted", "skipped_no_draft", "skipped_stale", "failed"] {
             metrics::counter!(DRAFT_ADOPTIONS_TOTAL, "result" => result).increment(0);
+        }
+        metrics::describe_counter!(
+            WS_TOUCHES_TOTAL,
+            "Terminal WS relay last-used refreshes (#158): broker-last-used annotations written on relayed frames, by direction."
+        );
+        for direction in ["client", "upstream"] {
+            metrics::counter!(WS_TOUCHES_TOTAL, "direction" => direction).increment(0);
         }
 
         Arc::new(Self {

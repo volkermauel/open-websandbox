@@ -194,6 +194,10 @@ spec:
           value: {{ .Values.broker.perUserPvcPrefix | quote }}
         - name: BROKER_PARK_IDLE_SECONDS
           value: {{ .Values.broker.parkIdleSeconds | quote }}
+        # #158: WS terminal traffic refreshes broker-last-used (throttled);
+        # must stay well below parkIdleSeconds or touches lose the race.
+        - name: BROKER_WS_TOUCH_INTERVAL_SECONDS
+          value: {{ .Values.broker.wsTouchIntervalSeconds | quote }}
         - name: BROKER_REAP_SECONDS
           value: {{ .Values.broker.reapSeconds | quote }}
         {{- if .Values.broker.s3.enabled }}

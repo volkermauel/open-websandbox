@@ -25,7 +25,9 @@ use axum::extract::State;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
-use broker::terminal::relay_to_upstream;
+use broker::store::test_fakes::StubSandboxStore;
+use broker::store::SandboxStore;
+use broker::terminal::{relay_to_upstream, relay_to_upstream_with_touch, SessionTouch};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::handshake::server::{
@@ -96,6 +98,25 @@ async fn relay_handler(ws: WebSocketUpgrade, State(echo_url): State<String>) -> 
     ws.on_upgrade(move |socket| {
         let url = echo_url;
         async move { relay_to_upstream(socket, &url, RELAY_KEY).await }
+    })
+}
+
+/// #158 test seam: like [`relay_handler`] but wires BOTH #158 touch
+/// directions (`client`/`upstream`) through [`SessionTouch`] so a test can
+/// assert that relayed frames refresh `broker-last-used`.
+async fn touch_relay_handler(
+    ws: WebSocketUpgrade,
+    State((echo_url, store)): State<(String, Arc<StubSandboxStore>)>,
+) -> Response {
+    ws.on_upgrade(move |socket| {
+        let url = echo_url;
+        let store = store;
+        async move {
+            let interval = Duration::from_millis(1);
+            let c = SessionTouch::new(store.clone(), "owui-c-touch".into(), interval, "client");
+            let u = SessionTouch::new(store, "owui-c-touch".into(), interval, "upstream");
+            relay_to_upstream_with_touch(socket, &url, RELAY_KEY, Some(c), Some(u)).await;
+        }
     })
 }
 
@@ -201,6 +222,79 @@ async fn relay_authenticates_the_upstream_upgrade() {
             .map(String::as_str),
         Some("Bearer relay-e2e-key"),
         "upstream upgrade carried the per-session Bearer"
+    );
+    let _ = client.close(None).await;
+}
+
+/// #158: relayed frames refresh `broker-last-used` (throttled), so an
+/// actively-used terminal is never parked mid-session by the idle reaper.
+#[tokio::test]
+async fn relay_frames_refresh_last_used() {
+    if !gated() {
+        eprintln!("skipped: set OWUI_WS_LIVE=1 to run the WS relay test");
+        return;
+    }
+
+    // Seed a fake sandbox with a distinguishable stale last-used stamp.
+    let store = Arc::new(StubSandboxStore::new());
+    let mut s = shared::Sandbox::new("owui-c-touch", shared::SandboxSpec::default());
+    let mut annots = std::collections::BTreeMap::new();
+    annots.insert("broker-last-used".to_string(), "1000".to_string());
+    s.metadata.annotations = Some(annots);
+    store.insert_sandbox(s);
+
+    // Echo upstream + an axum relay endpoint wiring BOTH touch directions.
+    let echo_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind echo");
+    let echo_addr = echo_listener.local_addr().expect("echo addr");
+    tokio::spawn(echo_server(echo_listener, Arc::new(Mutex::new(Vec::new()))));
+
+    let app = Router::new()
+        .route("/term", get(touch_relay_handler))
+        .with_state((format!("ws://{echo_addr}/api/terminals/t1"), store.clone()));
+    let relay_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind relay");
+    let relay_addr = relay_listener.local_addr().expect("relay addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(relay_listener, app).await;
+    });
+
+    let url = format!("ws://{relay_addr}/term");
+    let (mut client, _resp) = tokio_tungstenite::connect_async(&url)
+        .await
+        .expect("connect to relay");
+    client
+        .send(TungMsg::Text("touch-probe".into()))
+        .await
+        .expect("send probe");
+
+    // Wait for the echo — the frame relayed both ways means both pumps ran.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut echoed = false;
+    while Instant::now() < deadline && !echoed {
+        if let Ok(Some(Ok(TungMsg::Text(t)))) =
+            tokio::time::timeout(Duration::from_secs(1), client.next()).await
+        {
+            assert_eq!(t.as_str(), "touch-probe", "echo verbatim");
+            echoed = true;
+        }
+    }
+    assert!(echoed, "probe round-tripped through the relay");
+
+    // The annotation must have advanced past the seeded stale value.
+    let last = store
+        .get_sandbox("owui-c-touch")
+        .await
+        .expect("store ok")
+        .expect("seeded sandbox")
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|a| a.get("broker-last-used"))
+        .cloned()
+        .unwrap_or_default();
+    let parsed: i64 = last.parse().unwrap_or(-1);
+    assert!(
+        parsed > 1000,
+        "broker-last-used advanced past the stale seed (got {last})"
     );
     let _ = client.close(None).await;
 }

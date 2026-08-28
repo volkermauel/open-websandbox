@@ -363,6 +363,12 @@
           "minimum": 0,
           "default": 21600,
           "description": "Seconds after draft-sandbox use within which a new chat sandbox adopts (moves) the draft workspace (#157). 0 disables."
+        },
+        "wsTouchIntervalSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 45,
+          "description": "Throttle (seconds) for refreshing broker-last-used from relayed terminal WS frames (#158). An actively-used terminal is never parked mid-session. Keep well below parkIdleSeconds. 0 disables."
         }
       }
     },

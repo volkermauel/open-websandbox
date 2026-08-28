@@ -142,6 +142,12 @@ broker:
   # workspace before readiness returns, so files follow the chat. 0 disables.
   draftAdoptionWindowSeconds: 21600   # 6h
 
+  # WS terminal touch (#158): relayed WS frames refresh broker-last-used at
+  # most once per this interval (seconds), so an actively-used terminal is
+  # never parked mid-session. Keep well below parkIdleSeconds (default 45
+  # vs 120) or the touches lose the race against the idle reaper. 0 disables.
+  wsTouchIntervalSeconds: 45
+
 
 sandboxTemplate:
   name: code-standard-v1

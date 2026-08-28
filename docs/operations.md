@@ -607,9 +607,13 @@ chat sandbox is created and the draft was used within
 Job on the workspace PVC that moves the draft workspace into the chat's subPath
 before readiness returns — uploads follow the chat. Best-effort: a failed move
 is logged, counted in `owui_broker_draft_adoptions_total{result}`, and never
-fails the resolve. Disable with `0`. Note: a live WS terminal does NOT refresh
-`broker-last-used`; an idle-but-open terminal parks after `parkIdleSeconds`
-(known issue). The whole flow is exercised
+fails the resolve. Disable with `0`. A live WS terminal DOES refresh
+`broker-last-used` (#158): the relay touches the annotation on relayed
+frames (throttled by `broker.wsTouchIntervalSeconds`, default 45 s — well
+below `parkIdleSeconds`, `0` restores the old park-after-idle behavior),
+counted in `owui_broker_ws_touches_total{direction}`; an idle-but-CLOSED
+terminal still parks after `parkIdleSeconds` as designed. The whole flow is
+exercised
 end-to-end by [`tests/e2e/test_node_drain.py`](../tests/e2e/test_node_drain.py) — a
 lane (`E2E_DRAIN=1`, run in CI as the `drain` arm of the `e2e-pvc` matrix on the
 per-user PVC profile) that opens a terminal, deletes the sandbox pod, and asserts

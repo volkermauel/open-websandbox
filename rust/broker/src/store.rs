@@ -87,6 +87,11 @@ pub trait SandboxStore: Send + Sync {
     /// when the object is absent.
     async fn touch_last_used(&self, name: &str, now: i64) -> Result<(), StoreError>;
 
+    /// Remove one annotation key (merge-patch null; k8s preserves the rest).
+    /// Backs the #157 one-shot draft-adoption marker. Best-effort at the call
+    /// site: a failure is logged, never fatal.
+    async fn clear_annotation(&self, name: &str, key: &str) -> Result<(), StoreError>;
+
     /// Is the apiserver reachable? Backs `GET /readyz` (503 when not).
     async fn apiserver_reachable(&self) -> bool;
 
@@ -449,6 +454,18 @@ impl SandboxStore for KubeSandboxStore {
         }
     }
 
+    async fn clear_annotation(&self, name: &str, key: &str) -> Result<(), StoreError> {
+        // Merge-patch null removes exactly one key; k8s preserves the others.
+        let patch = kube::api::Patch::Merge(serde_json::json!({
+            "metadata": { "annotations": { key: null } }
+        }));
+        let params = kube::api::PatchParams::default();
+        match self.sandbox_api().patch(name, &params, &patch).await {
+            Ok(_) => Ok(()),
+            Err(err) => Err(StoreError::classify(err)),
+        }
+    }
+
     async fn apiserver_reachable(&self) -> bool {
         // Lightweight readyz probe: list sandboxes
         // (limit 1). Any error → not ready.
@@ -543,6 +560,16 @@ pub mod test_fakes {
                 .lock()
                 .expect("stub runtime_keys")
                 .insert(sandbox_name.to_string(), key.to_string());
+        }
+
+        /// Flip an EXISTING sandbox to Ready with a pod IP (simulates the
+        /// controller finishing a slow boot after a first claim attempt timed
+        /// out) — the retry-path counterpart of [`Self::set_auto_ready_on_create`].
+        pub fn set_sandbox_ready(&self, name: &str, pod_ip: &str) {
+            let mut map = self.sandboxes.lock().expect("stub sandboxes");
+            if let Some(sbx) = map.get_mut(name) {
+                sbx.status = Some(make_ready_status(pod_ip));
+            }
         }
 
         /// Insert (or replace) a sandbox, e.g. to pre-seed a get/list scenario.
@@ -707,6 +734,19 @@ pub mod test_fakes {
                 Some(sbx) => {
                     let annots = sbx.metadata.annotations.get_or_insert_with(BTreeMap::new);
                     annots.insert(LAST_USED_KEY.to_string(), now.to_string());
+                    Ok(())
+                }
+                None => Err(StoreError::NotFound),
+            }
+        }
+
+        async fn clear_annotation(&self, name: &str, key: &str) -> Result<(), StoreError> {
+            let mut map = self.sandboxes.lock().expect("stub sandboxes");
+            match map.get_mut(name) {
+                Some(sbx) => {
+                    if let Some(annots) = sbx.metadata.annotations.as_mut() {
+                        annots.remove(key);
+                    }
                     Ok(())
                 }
                 None => Err(StoreError::NotFound),
