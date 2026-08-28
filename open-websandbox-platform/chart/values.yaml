@@ -133,8 +133,9 @@ broker:
   # /readyz, /metrics) are unlimited. Set enabled: false to disable entirely.
   rateLimit:
     enabled: true
-    perSecond: 30            # token-bucket refill rate (req/s) per user
-    burst: 60                # token-bucket capacity (max burst) per user
+    perSecond: 60            # token-bucket refill rate (req/s) per CHAT (user+session)
+    burst: 120               # token-bucket capacity (max burst) per CHAT
+    userMultiplier: 5        # per-USER aggregate = per-chat budget x this (#161)
 
   # Draft adoption (#157): when OWUI assigns a new chat its id (first message),
   # uploads made BEFORE that id existed live in the user's draft sandbox. Within

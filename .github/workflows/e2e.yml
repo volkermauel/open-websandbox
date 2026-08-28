@@ -536,3 +536,134 @@ jobs:
               pytest tests/e2e/test_pvc_persistence.py -v
           fi
           kill "$PF"
+
+  # #161: rate-limit scope (per chat + per-user aggregate). Dedicated lane with
+  # deliberately TINY buckets (values-kind-rl.yaml: 5 rps / burst 10 / x3) so
+  # the per-chat 429, the sibling-chat pass-through, and the per-user aggregate
+  # 429 are all fast and deterministic. The production defaults (60/120 x5)
+  # would need >120-request bursts and sustained >300 rps — flaky over a
+  # port-forward. The test asserts value-agnostically via x-ratelimit-limit.
+  rate-limit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      KIND_CLUSTER: open-websandbox-e2e-rl
+      SYS_NS: agent-sandbox-system
+      RUNTIME_NS: agent-sandbox-runtime
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Cache KIND node image
+        id: kind-image-cache
+        uses: actions/cache@v6
+        with:
+          path: /tmp/kindest-node.tar
+          key: kindest-node-v1.31.0
+      - name: Load KIND node image from cache
+        if: steps.kind-image-cache.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/kindest-node.tar
+      - name: Pull & save KIND node image (cache miss)
+        if: steps.kind-image-cache.outputs.cache-hit != 'true'
+        run: |
+          docker pull kindest/node:v1.31.0
+          docker save kindest/node:v1.31.0 -o /tmp/kindest-node.tar
+
+      - name: Create KIND cluster (runc)
+        uses: helm/kind-action@v1
+        with:
+          version: v0.27.0
+          cluster_name: ${{ env.KIND_CLUSTER }}
+          node_image: kindest/node:v1.31.0
+          wait: 60s
+
+      - uses: azure/setup-kubectl@v5
+      - uses: azure/setup-helm@v5
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build platform image (broker)
+        uses: docker/build-push-action@v7
+        with:
+          context: rust
+          file: rust/broker/Dockerfile
+          load: true
+          provenance: false
+          tags: open-websandbox-broker:v0.1.1
+          cache-from: type=gha,scope=open-websandbox-broker
+          cache-to: type=gha,mode=max,scope=open-websandbox-broker
+      - name: Build platform image (runtime)
+        uses: docker/build-push-action@v7
+        with:
+          context: rust
+          file: rust/runtime/Dockerfile
+          load: true
+          provenance: false
+          tags: open-websandbox-runtime:v0.1.1
+          cache-from: type=gha,scope=open-websandbox-runtime
+          cache-to: type=gha,mode=max,scope=open-websandbox-runtime
+
+      - name: Checkout upstream agent-sandbox@v0.5.6 (router self-build)
+        uses: actions/checkout@v7
+        with:
+          repository: kubernetes-sigs/agent-sandbox
+          ref: v0.5.6
+          path: agent-sandbox
+      - name: Self-build sandbox-router
+        uses: docker/build-push-action@v7
+        with:
+          context: agent-sandbox
+          file: agent-sandbox/sandbox-router/Dockerfile
+          load: true
+          provenance: false
+          tags: open-websandbox-router:v0.1.1
+          cache-from: type=gha,scope=open-websandbox-router
+          cache-to: type=gha,mode=max,scope=open-websandbox-router
+
+      - name: Load images into KIND
+        run: |
+          for img in open-websandbox-broker:v0.1.1 open-websandbox-runtime:v0.1.1 open-websandbox-router:v0.1.1; do
+            kind load docker-image "$img" --name "$KIND_CLUSTER"
+          done
+
+      - name: Deploy namespaces + CRDs
+        run: |
+          kubectl create namespace "$SYS_NS" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace "$RUNTIME_NS" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f open-websandbox-platform/chart/crds/
+          kubectl wait --for=condition=Established --all crd --timeout=120s || true
+
+      - name: Helm install (rate-limit profile)
+        run: |
+          helm install open-websandbox open-websandbox-platform/chart/ \
+            -f open-websandbox-platform/chart/values-kind.yaml \
+            -f open-websandbox-platform/chart/values-kind-rl.yaml \
+            -n "$SYS_NS"
+          kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
+
+      - name: Diagnostics (on failure)
+        if: failure()
+        run: |
+          echo "=== broker pods ==="
+          kubectl -n "$SYS_NS" get pods -o wide || true
+          echo "=== broker logs ==="
+          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=200 || true
+          kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
+
+      - name: Install test deps
+        run: pip install -r requirements-test.txt
+
+      - name: Run rate-limit e2e
+        run: |
+          set -euo pipefail
+          kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 &
+          PF=$!
+          for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
+          SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
+            -o jsonpath='{.data.shared-secret}' | base64 -d)"
+          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" \
+            pytest tests/e2e/test_rate_limit.py -v
+          kill "$PF"

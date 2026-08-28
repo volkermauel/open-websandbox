@@ -227,13 +227,15 @@ spec:
         - name: BROKER_REAPER_POLL_SECONDS
           value: {{ .Values.broker.s3.reaperPollSeconds | quote }}
         {{- end }}
-        # #98 A3: per-user rate limiting on the gated surface.
+        # #161: per-chat (user+session) + per-user (x multiplier) rate limiting.
         - name: BROKER_RATE_LIMIT_ENABLED
           value: {{ .Values.broker.rateLimit.enabled | quote }}
         - name: BROKER_RATE_LIMIT_PER_SECOND
           value: {{ .Values.broker.rateLimit.perSecond | quote }}
         - name: BROKER_RATE_LIMIT_BURST
           value: {{ .Values.broker.rateLimit.burst | quote }}
+        - name: BROKER_RATE_LIMIT_USER_MULTIPLIER
+          value: {{ .Values.broker.rateLimit.userMultiplier | quote }}
         # Draft adoption (#157): window in which a new chat adopts the user's
         # draft workspace (pre-first-message uploads). 0 disables.
         - name: BROKER_DRAFT_ADOPTION_WINDOW_SECONDS
