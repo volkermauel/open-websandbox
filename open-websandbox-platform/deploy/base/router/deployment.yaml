@@ -66,6 +66,10 @@ spec:
         # Retry budget for upstream dial failures; see README "Behavior on
         # missing sandboxes".
         - --upstream-max-retries=3
+        # Cap inbound request bodies at 256 MiB, aligned with the broker's
+        # MAX_FORWARD_BODY (proxy.rs). The Go router's default is 0/unlimited
+        # and direct-to-router clients bypass the broker's own cap.
+        - --max-request-body-bytes=268435456
         # KEP-NNNN: enable the Pod-IP cache so requests carrying
         # X-Sandbox-UID dial the live PodIP and bypass DNS. Requires
         # the ClusterRole granted in rbac.yaml. Set to false (and skip

@@ -12,6 +12,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — v0.5.6 adoption (#155)
+
+- **Readiness-timeout diagnostics**: the broker's `503 sandbox … not ready in
+  60s` now carries a one-line digest of the sandbox's last-seen status
+  conditions (`phase=Pending; Ready=False reason=PodTerminating;
+  PodScheduled=False reason=Unschedulable: …`). The v0.5.6 controller mirrors
+  the backing pod's `PodScheduled` condition into `Sandbox.status.conditions`,
+  so scheduling blockers (and suspension reasons) are finally visible at the
+  API surface that users hit.
+- **Router request-body cap**: the self-built sandbox-router now runs with
+  `--max-request-body-bytes=268435456` (256 MiB, aligned with the broker's
+  `MAX_FORWARD_BODY`). The Go router's default is 0/unlimited and
+  direct-to-router clients bypass the broker's own cap.
+- Evaluated, deferred: `--authz-mode=tokenreview`/`scoped-token` on the router
+  (no token-presenting clients yet — Open Web UI would need to mint tokens;
+  the NetworkPolicy remains the compensating control) and the v0.5.6
+  warm-pool readiness-grace controller flags (would deviate from the
+  verbatim-vendored controller manifest).
+
 ### Changed (#153)
 
 - **Vendored upstream `agent-sandbox` v0.5.3 → v0.5.6.** CRDs unchanged except
