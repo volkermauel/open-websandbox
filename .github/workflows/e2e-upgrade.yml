@@ -30,6 +30,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Derive e2e image tag from the chart (single source of truth)
+        run: |
+          TAG="$(grep -E '^imageTag:' open-websandbox-platform/chart/values.yaml | awk '{print $2}' | tr -d '"')"
+          echo "E2E_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "e2e images will be tagged $TAG (chart values.yaml imageTag)"
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -73,7 +78,7 @@ jobs:
           file: rust/broker/Dockerfile
           load: true
           provenance: false
-          tags: open-websandbox-broker:v0.1.1
+          tags: open-websandbox-broker:${{ env.E2E_TAG }}
           cache-from: type=gha,scope=open-websandbox-broker
           cache-to: type=gha,mode=max,scope=open-websandbox-broker
 
@@ -84,7 +89,7 @@ jobs:
           file: rust/runtime/Dockerfile
           load: true
           provenance: false
-          tags: open-websandbox-runtime:v0.1.1
+          tags: open-websandbox-runtime:${{ env.E2E_TAG }}
           cache-from: type=gha,scope=open-websandbox-runtime
           cache-to: type=gha,mode=max,scope=open-websandbox-runtime
 
@@ -102,7 +107,7 @@ jobs:
           file: agent-sandbox/sandbox-router/Dockerfile
           load: true
           provenance: false
-          tags: open-websandbox-router:v0.1.1
+          tags: open-websandbox-router:${{ env.E2E_TAG }}
           cache-from: type=gha,scope=open-websandbox-router
           cache-to: type=gha,mode=max,scope=open-websandbox-router
 
@@ -112,13 +117,13 @@ jobs:
       - name: Retag images as the upgrade target (e2e-b)
         run: |
           for img in broker runtime router; do
-            docker tag "open-websandbox-$img:v0.1.1" "open-websandbox-$img:e2e-b"
+            docker tag "open-websandbox-$img:"$E2E_TAG"" "open-websandbox-$img:e2e-b"
           done
 
       - name: Load images into KIND
         run: |
           for img in \
-            open-websandbox-broker:v0.1.1 open-websandbox-runtime:v0.1.1 open-websandbox-router:v0.1.1 \
+            open-websandbox-broker:"$E2E_TAG" open-websandbox-runtime:"$E2E_TAG" open-websandbox-router:"$E2E_TAG" \
             open-websandbox-broker:e2e-b open-websandbox-runtime:e2e-b open-websandbox-router:e2e-b; do
             kind load docker-image "$img" --name "$KIND_CLUSTER"
           done
@@ -145,7 +150,7 @@ jobs:
           SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
             -o jsonpath='{.data.shared-secret}' | base64 -d)"
           BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" E2E_UPGRADE=1 \
-            E2E_IMAGE_A=open-websandbox-runtime:v0.1.1 \
+            E2E_IMAGE_A=open-websandbox-runtime:"$E2E_TAG" \
             E2E_IMAGE_B=open-websandbox-runtime:e2e-b \
             pytest tests/e2e/test_upgrade_rollback.py -v
           kill "$PF"
