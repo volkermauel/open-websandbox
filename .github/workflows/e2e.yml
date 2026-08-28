@@ -669,6 +669,6 @@ jobs:
           for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
           SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
             -o jsonpath='{.data.shared-secret}' | base64 -d)"
-          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" \
+          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" E2E_RATE_LIMIT=1 \
             pytest tests/e2e/test_rate_limit.py -v
           kill "$PF"

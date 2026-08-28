@@ -31,9 +31,13 @@ from conftest import (  # noqa: E402
     headers_for,
 )
 
+# E2E_RATE_LIMIT gates the test to the dedicated rate-limit lane: it needs the
+# TINY buckets of values-kind-rl.yaml to be fast and deterministic. The default
+# matrix lanes (pytest tests/e2e, 60/120 buckets) must NOT run it — a 60-request
+# hammer can never empty a 120-burst bucket.
 pytestmark = pytest.mark.skipif(
-    not os.getenv("KUBECONFIG") or not BROKER_URL,
-    reason="needs a live broker (KIND lane exports KUBECONFIG + BROKER_URL)",
+    not os.getenv("E2E_RATE_LIMIT"),
+    reason="rate-limit lane only (E2E_RATE_LIMIT=1; needs values-kind-rl.yaml buckets)",
 )
 
 
