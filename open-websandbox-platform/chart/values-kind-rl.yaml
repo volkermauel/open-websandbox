@@ -1,0 +1,23 @@
+# KIND/runc profile for the rate-limit e2e lane (issue #161).
+#
+# Overlay for values-kind.yaml: deliberately TINY buckets so the rate-limit
+# e2e (tests/e2e/test_rate_limit.py) can trip them quickly and
+# deterministically. per-chat 5 rps / burst 10, per-user aggregate x3
+# (15/30). Production defaults (60/120 x5) are far too generous for a fast
+# test — the test asserts value-agnostically against the x-ratelimit-limit
+# headers, so only the RATIOS matter. 2 rps/burst 5 per chat, x3 aggregate
+# (6/15): four hammering threads (admitted ~2/s each = 8/s) outpace the 6/s
+# user refill, so the aggregate 429 appears within seconds even through a
+# port-forward.
+sandboxTemplate:
+  runtimeClassName: ""            # runc (KIND can't nest gVisor)
+  maxProcs: 100000               # KIND shared-kernel NPROC (values-kind.yaml)
+router:
+  kubeApiServerCidr: "10.96.0.1/32"   # KIND service CIDR (kubeadm default)
+  kubeDnsCidr: "10.96.0.10/32"
+broker:
+  rateLimit:
+    enabled: true
+    perSecond: 2                  # per chat — tiny for a fast test
+    burst: 5
+    userMultiplier: 3             # per-user aggregate = 6/15

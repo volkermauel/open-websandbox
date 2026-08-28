@@ -304,22 +304,31 @@ pub struct BrokerConfig {
     #[serde(default = "default_reaper_poll_seconds")]
     pub reaper_poll_seconds: u64,
 
-    /// Per-user rate limiting (env `BROKER_RATE_LIMIT_ENABLED`, default `true`).
-    /// When enabled, a token-bucket per `X-User-Id` caps create / execute / file /
-    /// terminal traffic on the broker's gated routes (`429` + `Retry-After` when the
-    /// bucket is empty); open probes (`/healthz`, `/readyz`, `/metrics`) stay unlimited.
+    /// Per-chat + per-user rate limiting (#161; originally per-user #98 A3).
+    /// When enabled, two stacked token-buckets cap create / execute / file /
+    /// terminal traffic on the broker's gated routes (`429` + `Retry-After` when
+    /// empty); open probes (`/healthz`, `/readyz`, `/metrics`) stay unlimited.
     #[serde(default = "default_rate_limit_enabled")]
     pub rate_limit_enabled: bool,
 
-    /// Token-bucket refill rate, requests per second per user (env
-    /// `BROKER_RATE_LIMIT_PER_SECOND`, default `20`).
+    /// Token-bucket refill rate, requests per second **per chat** (`X-User-Id` +
+    /// `X-Session-Id`; env `BROKER_RATE_LIMIT_PER_SECOND`, default `60`).
     #[serde(default = "default_rate_limit_per_second")]
     pub rate_limit_per_second: u32,
 
-    /// Token-bucket capacity / burst size per user (env
-    /// `BROKER_RATE_LIMIT_BURST`, default `40`).
+    /// Token-bucket capacity / burst size **per chat** (env
+    /// `BROKER_RATE_LIMIT_BURST`, default `120`).
     #[serde(default = "default_rate_limit_burst")]
     pub rate_limit_burst: u32,
+
+    /// Per-user aggregate multiplier (#161): the outer bucket keyed on
+    /// `X-User-Id` alone gets `per_second * multiplier` refill and
+    /// `burst * multiplier` capacity, bounding a user's total across all their
+    /// chats while one busy chat no longer starves siblings (env
+    /// `BROKER_RATE_LIMIT_USER_MULTIPLIER`, default `5`; `1` = aggregate equals
+    /// the per-chat budget).
+    #[serde(default = "default_rate_limit_user_multiplier")]
+    pub rate_limit_user_multiplier: u32,
 
     /// Namespace holding the broker leader-election `Lease` (env
     /// `BROKER_LEADER_NAMESPACE`). Defaults to [`Self::runtime_ns`] when unset.
@@ -448,14 +457,21 @@ const fn default_reaper_poll_seconds() -> u64 {
 const fn default_rate_limit_enabled() -> bool {
     true
 }
-/// Default: 30 requests/sec/user (#98 A3; raised from 20 — OWUI's FileNav
-/// polls /files per open pane and a chat + terminal easily saturates 20/s).
+/// Default: 60 requests/sec **per chat** (#161; raised and re-scoped from
+/// 30/user — FileNav polling per open pane plus a terminal easily saturates a
+/// shared per-user bucket and 429s the user's *other* chats).
 const fn default_rate_limit_per_second() -> u32 {
-    30
-}
-/// Default: burst of 60/user (#98 A3; raised alongside perSecond).
-const fn default_rate_limit_burst() -> u32 {
     60
+}
+/// Default: burst of 120 per chat (#161; raised alongside perSecond).
+const fn default_rate_limit_burst() -> u32 {
+    120
+}
+/// Default: user aggregate = 5x the per-chat budget (#161) — a user running
+/// several chats gets up to 5 chat-budgets in total, keeping the #98
+/// noisy-neighbour bound while chats stay independent.
+const fn default_rate_limit_user_multiplier() -> u32 {
+    5
 }
 
 fn default_leader_lease() -> String {
@@ -528,6 +544,7 @@ impl Default for BrokerConfig {
             rate_limit_enabled: default_rate_limit_enabled(),
             rate_limit_per_second: default_rate_limit_per_second(),
             rate_limit_burst: default_rate_limit_burst(),
+            rate_limit_user_multiplier: default_rate_limit_user_multiplier(),
             leader_namespace: default_runtime_ns(),
             leader_lease: default_leader_lease(),
             leader_duration_seconds: default_leader_duration_seconds(),
@@ -641,6 +658,8 @@ impl BrokerConfig {
                 .unwrap_or_else(default_rate_limit_per_second),
             rate_limit_burst: env_value("BROKER_RATE_LIMIT_BURST", &get)?
                 .unwrap_or_else(default_rate_limit_burst),
+            rate_limit_user_multiplier: env_value("BROKER_RATE_LIMIT_USER_MULTIPLIER", &get)?
+                .unwrap_or_else(default_rate_limit_user_multiplier),
             leader_namespace,
             leader_lease: get("BROKER_LEADER_LEASE").unwrap_or_else(default_leader_lease),
             leader_duration_seconds: env_value("BROKER_LEADER_DURATION_SECONDS", &get)?
@@ -874,6 +893,7 @@ mod tests {
             rate_limit_enabled: true,
             rate_limit_per_second: 7,
             rate_limit_burst: 14,
+            rate_limit_user_multiplier: 9,
             persistent_mode: PersistentMode::EmptyDir,
             persistent_storage: "5Gi".into(),
             persistent_storage_class: "cephfs".into(),
@@ -893,6 +913,7 @@ mod tests {
         assert!(json.contains("\"park_idle_seconds\":91"), "{json}");
         assert!(json.contains("\"ws_touch_interval_seconds\":47"), "{json}");
         assert!(json.contains("\"s3_bucket\":\"owui-cold\""), "{json}");
+        assert!(json.contains("\"rate_limit_user_multiplier\":9"), "{json}");
         let back: BrokerConfig = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, cfg);
     }
