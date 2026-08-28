@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MAX_UPLOAD_BYTES` (chart `sandboxTemplate.maxUploadBytes`, default 1 GiB;
   the workspace quota still applies at write time) and the broker's proxy
   surface raises its limit to the existing 256 MiB forward cap.
+### Changed — per-chat rate limits (#161)
+
+- Rate limiting re-scoped: a token bucket per **chat** (`X-User-Id`+`X-Session-Id`,
+  `BROKER_RATE_LIMIT_PER_SECOND`/`_BURST`, defaults raised 30/60 → **60/120**) plus a
+  per-**user** aggregate bucket at per-chat × `BROKER_RATE_LIMIT_USER_MULTIPLIER`
+  (default `5` → 300/600). One busy chat (FileNav polling) no longer 429s the user's
+  other chats, while the per-user noisy-neighbour bound from #98 is preserved. The
+  tripping layer is identifiable by `x-ratelimit-limit` (60 = chat, 300 = user).
 
 ## [0.1.2] - 2026-08-28
 

@@ -419,7 +419,7 @@ a Helm value unset to inherit the default.
 | `broker.claimTimeoutSeconds` | `BROKER_CLAIM_TIMEOUT_SECONDS` | `60` | Wait for `Ready` (else HTTP 504). |
 | `broker.proxyTimeoutSeconds` | `BROKER_PROXY_TIMEOUT_SECONDS` | `660` | Upstream proxy timeout (> runtime `MAX_TIMEOUT` 600 s). |
 | `broker.draftAdoptionWindowSeconds` | `BROKER_DRAFT_ADOPTION_WINDOW_SECONDS` | `21600` (6 h) | Draft adoption (#157): window after draft-sandbox use within which a NEW chat sandbox moves the draft workspace into its own before readiness returns. `0` disables. |
-| `broker.rateLimit.*` | `BROKER_RATE_LIMIT_ENABLED/_PER_SECOND/_BURST` | `true` / `30` / `60` | Per-user token bucket on the gated surface (429 + `Retry-After` when empty). |
+| `broker.rateLimit.*` | `BROKER_RATE_LIMIT_ENABLED/_PER_SECOND/_BURST/_USER_MULTIPLIER` | `true` / `60` / `120` / `5` | Two stacked token buckets (#161): per **chat** (`X-User-Id`+`X-Session-Id`, 60 rps / burst 120) plus a per-**user** aggregate (per-chat budget x5 = 300/600) on the gated surface (429 when empty; a 429 with `x-ratelimit-*` headers = that chat's bucket, without = the user aggregate). |
 | `broker.baseTemplate` | `BROKER_BASE_TEMPLATE` | `code-standard-v1` | Base SandboxTemplate cloned for persistent per-chat sandboxes. |
 | `sharedPvc.name` | `BROKER_SHARED_PVC` | `workspace-shared` | Shared PVC name (shared-subpath mode). |
 | `broker.persistentAccessModes` | `BROKER_PERSISTENT_ACCESS_MODES` | `ReadWriteMany` | Per-user PVC access modes, comma-separated (KIND local-path: `ReadWriteOnce`). |

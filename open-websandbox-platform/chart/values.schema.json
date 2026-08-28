@@ -333,28 +333,35 @@
         "rateLimit": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Per-user rate limiting (#98 A3). A token-bucket per X-User-Id caps the gated surface (sandbox create, /execute, /files/*, terminals); open probes stay unlimited.",
+          "description": "Rate limiting (#161): a per-chat token-bucket (X-User-Id + X-Session-Id) plus a per-user aggregate bucket (X-User-Id, per-chat budget x userMultiplier) cap the gated surface (sandbox create, /execute, /files/*, terminals); open probes stay unlimited.",
           "required": [
             "enabled",
             "perSecond",
-            "burst"
+            "burst",
+            "userMultiplier"
           ],
           "properties": {
             "enabled": {
               "type": "boolean",
-              "description": "Render/enable the governor layer on the broker's gated routes."
+              "description": "Render/enable the governor layers on the broker's gated routes."
             },
             "perSecond": {
               "type": "integer",
               "minimum": 1,
-              "description": "Token-bucket refill rate, requests/sec per user.",
-              "default": 30
+              "description": "Token-bucket refill rate, requests/sec per chat (user+session).",
+              "default": 60
             },
             "burst": {
               "type": "integer",
               "minimum": 1,
-              "description": "Token-bucket capacity / max burst per user.",
-              "default": 60
+              "description": "Token-bucket capacity / max burst per chat (user+session).",
+              "default": 120
+            },
+            "userMultiplier": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Per-user aggregate = per-chat budget x this multiplier (e.g. 60/120 x5 = 300/600 per user). 1 = aggregate equals the per-chat budget.",
+              "default": 5
             }
           }
         },
