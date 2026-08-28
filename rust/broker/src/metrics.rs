@@ -53,6 +53,8 @@ pub(crate) const RUNTIME_HOP_ERRORS_TOTAL: &str = "open_websandbox_broker_runtim
 pub(crate) const AUTH_FAILURES_TOTAL: &str = "open_websandbox_broker_auth_failures_total";
 /// Frozen idle-reap counter name (leader reaper deletes, by reason).
 pub(crate) const IDLE_REAPS_TOTAL: &str = "open_websandbox_broker_idle_reaps_total";
+/// Frozen draft-adoption counter name (#157, by result).
+pub(crate) const DRAFT_ADOPTIONS_TOTAL: &str = "open_websandbox_broker_draft_adoptions_total";
 
 /// Broker HTTP rate/latency holder + the install point for the global
 /// recorder.
@@ -124,6 +126,13 @@ impl BrokerMetrics {
         );
         for reason in ["ephemeral_idle", "cold_tier_idle", "persistent_reap_ttl"] {
             metrics::counter!(IDLE_REAPS_TOTAL, "reason" => reason).increment(0);
+        }
+        metrics::describe_counter!(
+            DRAFT_ADOPTIONS_TOTAL,
+            "Draft-workspace adoptions (#157): pre-first-message uploads moved from the user draft sandbox into a new chat's workspace, by result."
+        );
+        for result in ["adopted", "skipped_no_draft", "skipped_stale", "failed"] {
+            metrics::counter!(DRAFT_ADOPTIONS_TOTAL, "result" => result).increment(0);
         }
 
         Arc::new(Self {

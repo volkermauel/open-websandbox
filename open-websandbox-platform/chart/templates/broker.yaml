@@ -61,6 +61,11 @@ rules:
 - apiGroups: [""]
   resources: ["persistentvolumeclaims"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Draft adoption (#157): one-shot Jobs move the draft workspace into a new
+# chat's subPath on the workspace PVC.
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "delete"]
 # Per-session runtime API keys (issue #4): the broker mints one per sandbox, persists
 # it to Secret owui-runtime-key-<sandbox> in the runtime namespace, reads it per hop
 # (stateless), rotates it (patch) on resume, deletes it on reap, and — issue #51 —
@@ -225,6 +230,10 @@ spec:
           value: {{ .Values.broker.rateLimit.perSecond | quote }}
         - name: BROKER_RATE_LIMIT_BURST
           value: {{ .Values.broker.rateLimit.burst | quote }}
+        # Draft adoption (#157): window in which a new chat adopts the user's
+        # draft workspace (pre-first-message uploads). 0 disables.
+        - name: BROKER_DRAFT_ADOPTION_WINDOW_SECONDS
+          value: {{ .Values.broker.draftAdoptionWindowSeconds | quote }}
         {{- if $otlp }}
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: {{ $otlp | quote }}

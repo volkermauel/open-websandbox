@@ -597,7 +597,19 @@ upstream v0.5.6 controller mirrors the backing pod's `PodScheduled` condition,
 scheduling blockers (`Unschedulable`, `SchedulingGated`) surface directly in
 the error instead of requiring `kubectl` forensics. The sandbox-router is
 capped at 256 MiB inbound request bodies (`--max-request-body-bytes`, aligned
-with the broker's own cap). The whole flow is exercised
+with the broker's own cap).
+
+**Draft adoption (#157).** Open Web UI assigns a chat its id only on the first
+message; terminal/file traffic before that carries no `X-Session-Id` and lands
+in the user-keyed *draft* sandbox (`owui-c-<sha256(user/user)>`). When a new
+chat sandbox is created and the draft was used within
+`broker.draftAdoptionWindowSeconds` (default 6 h), the broker runs a one-shot
+Job on the workspace PVC that moves the draft workspace into the chat's subPath
+before readiness returns — uploads follow the chat. Best-effort: a failed move
+is logged, counted in `owui_broker_draft_adoptions_total{result}`, and never
+fails the resolve. Disable with `0`. Note: a live WS terminal does NOT refresh
+`broker-last-used`; an idle-but-open terminal parks after `parkIdleSeconds`
+(known issue). The whole flow is exercised
 end-to-end by [`tests/e2e/test_node_drain.py`](../tests/e2e/test_node_drain.py) — a
 lane (`E2E_DRAIN=1`, run in CI as the `drain` arm of the `e2e-pvc` matrix on the
 per-user PVC profile) that opens a terminal, deletes the sandbox pod, and asserts
