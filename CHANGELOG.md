@@ -30,6 +30,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OWUI's FileNav polls `/files` per open pane and a chat + terminal saturates
   the old budget. Set `broker.rateLimit.perSecond`/`burst` to override.
 
+### Fixed — WS terminal sessions no longer park mid-use (#158)
+
+- Only HTTP resolves refreshed `broker-last-used`, so an actively-used
+  terminal (even one being typed in) parked after `parkIdleSeconds` (120 s)
+  and the pod delete killed the relay mid-session — production trace:
+  relay started 09:03:58, last HTTP touch 09:06:12, parked 09:08:31
+  (`idle=139s`). The relay now refreshes the annotation on relayed frames in
+  BOTH directions (user typing AND command output the user is watching),
+  throttled by `BROKER_WS_TOUCH_INTERVAL_SECONDS` (default 45 s, well under
+  the 120 s park idle; `0` restores the old behavior). Counted in
+  `owui_broker_ws_touches_total{direction}`; the broker warns at boot when
+  the interval ≥ `parkIdleSeconds` (touches could never win the race).
+  Includes the #150-family fix shipped alongside: resume now restarts the
+  idle clock at patch time, so a slow resume can't be re-parked mid-boot.
+  Verified by unit tests, a gated echo-server integration test, and the new
+  `tests/e2e/test_ws_touch.py` lane test.
+
 ### Added — v0.5.6 adoption (#155)
 
 - **Readiness-timeout diagnostics**: the broker's `503 sandbox … not ready in

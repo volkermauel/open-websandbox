@@ -104,6 +104,7 @@ spec:
         - {name: BROKER_SHARED_PVC, value: "workspace-shared"}   # shared-subpath mode
         - {name: BROKER_PER_USER_PVC_PREFIX, value: "workspace-p-"}
         - {name: BROKER_PARK_IDLE_SECONDS, value: "120"}         # persistent suspend (cold-start 1-6s); pairs with IDLE_TTL
+        - {name: BROKER_WS_TOUCH_INTERVAL_SECONDS, value: "45"}   # #158: WS terminal frames refresh broker-last-used (0=off)
         - {name: BROKER_DRAFT_ADOPTION_WINDOW_SECONDS, value: "21600"}  # #157: new chats adopt the draft workspace (6h; 0=off)
         - {name: BROKER_REAP_SECONDS, value: "604800"}             # persistent reap age (offload+purge with s3, #142)
         startupProbe:   {httpGet: {path: /healthz, port: http}, periodSeconds: 5, failureThreshold: 30}

@@ -20,7 +20,8 @@
 
 #![forbid(unsafe_code)]
 
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::extract::ws::{Message as AxumMsg, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
@@ -36,8 +37,9 @@ use crate::error::ApiError;
 use crate::proxy::{profile_from_header, RUNTIME_PORT};
 use crate::resolve::resolve_sandbox;
 
-use crate::metrics::AUTH_FAILURES_TOTAL;
+use crate::metrics::{AUTH_FAILURES_TOTAL, WS_TOUCHES_TOTAL};
 use crate::state::AppState;
+use crate::store::SandboxStore;
 
 /// How long to wait for the OWUI first-message auth before closing (10s).
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -233,7 +235,39 @@ async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, s
         "ws://{}:{RUNTIME_PORT}/api/terminals/{session_id}",
         resolved.pod_ip
     );
-    relay_to_upstream(client, &upstream_url, &runtime_api_key).await;
+    // #158: WS traffic refreshes the idle clock so the reaper cannot park an
+    // actively-used terminal mid-session (previously only HTTP resolves
+    // touched broker-last-used — the reaper parked an open, typed-in terminal
+    // after park_idle_seconds and the pod delete killed the relay). Each
+    // pump owns an independent throttle → at most ~2 annotation writes per
+    // ws_touch_interval_seconds per session.
+    let ws_interval = Duration::from_secs(state.config.ws_touch_interval_seconds);
+    let (client_touch, upstream_touch) = if ws_interval.is_zero() {
+        (None, None)
+    } else {
+        (
+            Some(SessionTouch::new(
+                state.store.clone(),
+                resolved.name.clone(),
+                ws_interval,
+                "client",
+            )),
+            Some(SessionTouch::new(
+                state.store.clone(),
+                resolved.name.clone(),
+                ws_interval,
+                "upstream",
+            )),
+        )
+    };
+    relay_to_upstream_with_touch(
+        client,
+        &upstream_url,
+        &runtime_api_key,
+        client_touch,
+        upstream_touch,
+    )
+    .await;
 }
 
 /// Close the client socket with `1011` + reason (shared failure path).
@@ -244,6 +278,74 @@ async fn close_1011(client: &mut WebSocket, reason: &str) {
             reason: reason.into(),
         })))
         .await;
+}
+
+/// Current unix time in whole seconds (idle-clock granularity).
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// #158: throttled `broker-last-used` refresher owned by one relay pump.
+///
+/// Only HTTP resolves refreshed the idle clock, so a long-lived terminal WS
+/// session (even one being actively typed in) parked after
+/// `park_idle_seconds` and the pod delete killed the relay mid-session. Each
+/// pump (client→upstream and upstream→client) holds one of these and calls
+/// [`SessionTouch::note_activity`] on every relayed frame; at most one
+/// annotation write per `min_interval` escapes the throttle (the first frame
+/// always touches). Best-effort: a failed write is logged and never breaks
+/// the relay — worst case the reaper parks on a stale timestamp, which is
+/// exactly the pre-#158 behavior.
+pub struct SessionTouch {
+    store: Arc<dyn SandboxStore>,
+    sandbox: String,
+    min_interval: Duration,
+    last: Option<Instant>,
+    direction: &'static str,
+}
+
+impl SessionTouch {
+    /// Build a throttled touch for `sandbox` (`direction` only labels the
+    /// `owui_broker_ws_touches_total` counter). A `min_interval` of zero
+    /// disables touching entirely (`BROKER_WS_TOUCH_INTERVAL_SECONDS=0`).
+    pub fn new(
+        store: Arc<dyn SandboxStore>,
+        sandbox: String,
+        min_interval: Duration,
+        direction: &'static str,
+    ) -> Self {
+        Self {
+            store,
+            sandbox,
+            min_interval,
+            last: None,
+            direction,
+        }
+    }
+
+    /// Refresh `broker-last-used` if the throttle window has elapsed.
+    pub async fn note_activity(&mut self) {
+        if self.min_interval.is_zero() {
+            return;
+        }
+        let now = Instant::now();
+        if let Some(last) = self.last {
+            if now.duration_since(last) < self.min_interval {
+                return;
+            }
+        }
+        self.last = Some(now);
+        match self.store.touch_last_used(&self.sandbox, now_unix()).await {
+            Ok(()) => {
+                metrics::counter!(WS_TOUCHES_TOTAL, "direction" => self.direction).increment(1);
+            }
+            Err(e) => {
+                tracing::warn!(sandbox = %self.sandbox, error = %e, "ws touch last-used failed");
+            }
+        }
+    }
 }
 
 /// Connect the upstream runtime terminal WS (`upstream_url`) — authenticated
@@ -257,7 +359,22 @@ async fn close_1011(client: &mut WebSocket, reason: &str) {
 /// needs an [`AppState`] plus a resolved sandbox pod, which is heavier than a
 /// test wires up, but this connect + pump path is fully exercisable against a
 /// local in-process echo server (see `tests/ws_relay.rs`).
-pub async fn relay_to_upstream(mut client: WebSocket, upstream_url: &str, runtime_api_key: &str) {
+pub async fn relay_to_upstream(client: WebSocket, upstream_url: &str, runtime_api_key: &str) {
+    // #158: no idle-clock refresh (back-compat seam for callers/tests); the
+    // relay wires touches via [`relay_to_upstream_with_touch`].
+    relay_to_upstream_with_touch(client, upstream_url, runtime_api_key, None, None).await;
+}
+
+/// [`relay_to_upstream`] plus optional #158 idle-clock refreshers: each pump
+/// calls [`SessionTouch::note_activity`] on every relayed frame (throttled,
+/// best-effort), so an actively-used terminal is never parked mid-session.
+pub async fn relay_to_upstream_with_touch(
+    mut client: WebSocket,
+    upstream_url: &str,
+    runtime_api_key: &str,
+    client_touch: Option<SessionTouch>,
+    upstream_touch: Option<SessionTouch>,
+) {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
     let mut request = match upstream_url.into_client_request() {
@@ -299,16 +416,25 @@ pub async fn relay_to_upstream(mut client: WebSocket, upstream_url: &str, runtim
     let (mut client_sink, mut client_stream) = client.split();
 
     let mut c2u = tokio::spawn(async move {
+        let mut touch = client_touch;
         while let Some(msg) = client_stream.next().await {
             match msg {
-                Ok(m) => match to_upstream(m) {
-                    Some(u) => {
-                        if up_sink.send(u).await.is_err() {
-                            break;
-                        }
+                Ok(m) => {
+                    // #158: relayed frames are session activity — refresh the
+                    // idle clock (throttled; best-effort) so the reaper cannot
+                    // park an actively-used terminal mid-session.
+                    if let Some(t) = touch.as_mut() {
+                        t.note_activity().await;
                     }
-                    None => break, // client closed
-                },
+                    match to_upstream(m) {
+                        Some(u) => {
+                            if up_sink.send(u).await.is_err() {
+                                break;
+                            }
+                        }
+                        None => break, // client closed
+                    }
+                }
                 Err(_) => break,
             }
         }
@@ -316,16 +442,24 @@ pub async fn relay_to_upstream(mut client: WebSocket, upstream_url: &str, runtim
         // its finally-block PTY cleanup.
     });
     let mut u2c = tokio::spawn(async move {
+        let mut touch = upstream_touch;
         while let Some(msg) = up_stream.next().await {
             match msg {
-                Ok(m) => match to_client(m) {
-                    Some(c) => {
-                        if client_sink.send(c).await.is_err() {
-                            break;
-                        }
+                Ok(m) => {
+                    // #158: upstream output the user is watching is activity too
+                    // (a long-running command's stream keeps the session alive).
+                    if let Some(t) = touch.as_mut() {
+                        t.note_activity().await;
                     }
-                    None => break, // upstream closed
-                },
+                    match to_client(m) {
+                        Some(c) => {
+                            if client_sink.send(c).await.is_err() {
+                                break;
+                            }
+                        }
+                        None => break, // upstream closed
+                    }
+                }
                 Err(_) => break,
             }
         }
@@ -550,5 +684,70 @@ mod tests {
         let dn = to_client(TungMsg::Binary(vec![9].into())).unwrap();
         assert!(matches!(dn, AxumMsg::Binary(_)));
         assert_eq!(to_client(TungMsg::Close(None)), None);
+    }
+
+    async fn seeded_store() -> Arc<crate::store::test_fakes::StubSandboxStore> {
+        use crate::store::test_fakes::StubSandboxStore;
+        let store = Arc::new(StubSandboxStore::new());
+        let mut s = shared::Sandbox::new("owui-c-touch", shared::SandboxSpec::default());
+        let mut annots = std::collections::BTreeMap::new();
+        annots.insert("broker-last-used".to_string(), "1000".to_string());
+        s.metadata.annotations = Some(annots);
+        store.insert_sandbox(s);
+        store
+    }
+
+    async fn last_used(store: &crate::store::test_fakes::StubSandboxStore) -> i64 {
+        store
+            .get_sandbox("owui-c-touch")
+            .await
+            .expect("store ok")
+            .expect("seeded sandbox")
+            .metadata
+            .annotations
+            .as_ref()
+            .and_then(|a| a.get("broker-last-used"))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(-1)
+    }
+
+    #[tokio::test]
+    async fn touch_first_frame_writes_then_throttles() {
+        let store = seeded_store().await;
+        let mut t = SessionTouch::new(
+            store.clone(),
+            "owui-c-touch".into(),
+            Duration::from_millis(80),
+            "client",
+        );
+        assert_eq!(last_used(&store).await, 1000);
+
+        t.note_activity().await; // first frame always touches
+        let first = last_used(&store).await;
+        assert!(first >= now_unix() - 5, "unexpected timestamp {first}");
+
+        t.note_activity().await; // inside the 80 ms window → no write
+        assert_eq!(last_used(&store).await, first);
+
+        tokio::time::sleep(Duration::from_millis(90)).await;
+        t.note_activity().await; // window elapsed → refreshes again
+        assert!(
+            last_used(&store).await >= first,
+            "expected a later timestamp after the window"
+        );
+    }
+
+    #[tokio::test]
+    async fn touch_disabled_writes_nothing() {
+        let store = seeded_store().await;
+        let mut t = SessionTouch::new(
+            store.clone(),
+            "owui-c-touch".into(),
+            Duration::ZERO,
+            "upstream",
+        );
+        t.note_activity().await;
+        t.note_activity().await;
+        assert_eq!(last_used(&store).await, 1000);
     }
 }

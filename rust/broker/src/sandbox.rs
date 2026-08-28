@@ -31,6 +31,11 @@ pub const PROFILE_LABEL_KEY: &str = "broker-profile";
 /// Annotation key carrying the epoch-seconds "last used" timestamp the reaper
 /// parks/reaps against.
 pub const LAST_USED_KEY: &str = "broker-last-used";
+/// #157: pending draft-adoption marker (value = draft sandbox name). Stamped
+/// on a NEW chat sandbox when an adoption is planned; the move runs after
+/// readiness and the marker is cleared — surviving claim retries that time
+/// out before the sandbox is ready.
+pub const DRAFT_ADOPT_PENDING_KEY: &str = "broker-draft-adopt-pending";
 /// Annotation carrying the owning user id (S3 offload reads this).
 pub const USER_KEY: &str = "broker-user";
 /// Annotation carrying the owning session/chat id (S3 offload reads this).

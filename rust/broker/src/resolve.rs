@@ -239,6 +239,20 @@ pub async fn resolve_sandbox(
                 );
             }
         }
+
+        // #157: persist the adoption intent on the Sandbox itself — a claim
+        // attempt can time out before readiness (slow first boot) and the
+        // in-memory plan dies with it; the pending marker lets any LATER
+        // resolve of this chat rebuild and run the move (one-shot: cleared
+        // once the move ran).
+        if draft_adoption.is_some() {
+            if let Some(annots) = sandbox.metadata.annotations.as_mut() {
+                annots.insert(
+                    crate::sandbox::DRAFT_ADOPT_PENDING_KEY.to_string(),
+                    sandbox_name(user_id, user_id, Profile::Persistent),
+                );
+            }
+        }
         match state.store.create_sandbox(sandbox).await {
             Ok(_) => {
                 // D9: a new sandbox was actually created (resolve path).
@@ -324,7 +338,15 @@ pub async fn resolve_sandbox(
     // first file listing already sees the adopted files. Best-effort — a
     // failed move is logged + counted, never fatal (the resolve already
     // succeeded; the fallback is today's behaviour: an empty workspace).
-    if let Some(mv) = draft_adoption {
+    // The plan comes from THIS resolve's create branch, or — when an earlier
+    // attempt timed out before readiness — from the pending marker stamped
+    // on the Sandbox (retry-proof; e2e-verified live: a chat whose first
+    // claim 503'd used to silently lose the adoption).
+    let adoption_move = match draft_adoption {
+        Some(mv) => Some(mv),
+        None => resume_draft_adoption(state, user_id, session_id, &resolved.name).await,
+    };
+    if let Some(mv) = adoption_move {
         match state.store.move_workspace_dir(&mv).await {
             Ok(true) => {
                 metrics::counter!(crate::metrics::DRAFT_ADOPTIONS_TOTAL, "result" => "adopted")
@@ -344,6 +366,15 @@ pub async fn resolve_sandbox(
                     "draft adoption failed (continuing with empty workspace)"
                 );
             }
+        }
+        // One-shot marker regardless of outcome: a failed move falls back to
+        // the documented empty-workspace behaviour instead of retrying forever.
+        if let Err(e) = state
+            .store
+            .clear_annotation(&resolved.name, crate::sandbox::DRAFT_ADOPT_PENDING_KEY)
+            .await
+        {
+            tracing::debug!(sandbox = %resolved.name, error = %e, "pending-marker clear failed");
         }
     }
     Ok(resolved)
@@ -402,6 +433,71 @@ async fn capture_draft_adoption(
             .increment(1);
         return None;
     }
+    // Both subpaths live on the same claim (same user).
+    let (claim, from_subpath) = workspace_layout(&state.config, user_id, user_id);
+    let (_, to_subpath) = workspace_layout(&state.config, user_id, session_id);
+    Some(crate::store::WorkspaceMove {
+        job_name: format!("draft-adopt-{chat_name}-{}", now_unix()),
+        image,
+        claim,
+        from_subpath,
+        to_subpath,
+        timeout_secs: 60,
+    })
+}
+
+/// #157 retry path: an earlier resolve planned an adoption (pending marker
+/// stamped on the chat Sandbox) but timed out before readiness — the
+/// in-memory `WorkspaceMove` died with that attempt. Any LATER resolve of the
+/// same chat rebuilds the move from the marker so the adoption survives
+/// claim retries. Same validation as [`capture_draft_adoption`]: the draft
+/// must still exist and be fresh within the window.
+async fn resume_draft_adoption(
+    state: &AppState,
+    user_id: &str,
+    session_id: &str,
+    chat_name: &str,
+) -> Option<crate::store::WorkspaceMove> {
+    if state.config.draft_adoption_window_seconds == 0
+        || state.s3_restore.is_some()
+        || !state.config.persistent_mode.is_pvc()
+    {
+        return None;
+    }
+    // Only sandboxes that still carry the one-shot marker adopt.
+    let chat = state.store.get_sandbox(chat_name).await.ok()??;
+    let pending_draft = chat
+        .metadata
+        .annotations
+        .as_ref()?
+        .get(crate::sandbox::DRAFT_ADOPT_PENDING_KEY)?
+        .clone();
+    // Re-validate the draft exactly like the capture path.
+    let draft = state.store.get_sandbox(&pending_draft).await.ok()??;
+    let last_used = draft
+        .metadata
+        .annotations
+        .as_ref()?
+        .get(crate::sandbox::LAST_USED_KEY)?
+        .parse::<i64>()
+        .ok()?;
+    let window = i64::try_from(state.config.draft_adoption_window_seconds).unwrap_or(i64::MAX);
+    if now_unix() - last_used > window {
+        metrics::counter!(crate::metrics::DRAFT_ADOPTIONS_TOTAL, "result" => "skipped_stale")
+            .increment(1);
+        return None;
+    }
+    // Image: the same base template the create branch cloned.
+    let template = state
+        .store
+        .get_template(&state.config.base_template)
+        .await
+        .ok()??;
+    let pod_template = extract_pod_template(&template).ok()?;
+    let image = pod_template
+        .pointer("/spec/containers/0/image")?
+        .as_str()?
+        .to_string();
     // Both subpaths live on the same claim (same user).
     let (claim, from_subpath) = workspace_layout(&state.config, user_id, user_id);
     let (_, to_subpath) = workspace_layout(&state.config, user_id, session_id);
@@ -479,6 +575,7 @@ fn condition_summary(status: Option<&SandboxStatus>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::SandboxStore as _;
     use shared::SandboxStatus;
 
     // --- name derivation (deterministic scheme) -----------------------------
@@ -762,6 +859,83 @@ mod tests {
             .await
             .expect("resolve");
         (resolved, stub)
+    }
+
+    /// #157 retry path: the first claim attempt timed out before readiness
+    /// (slow first boot — e2e-verified live) and the in-memory plan died with
+    /// it. The pending marker stamped at create time lets the SECOND resolve
+    /// rebuild and run the move, then clears the marker (no re-run later).
+    #[tokio::test]
+    async fn adoption_survives_claim_retry_after_timeout() {
+        // claim_timeout 0 → instant 503 on attempt 1 (never ready in time).
+        let state = AppState::for_test(shared::BrokerConfig {
+            claim_timeout_seconds: 0,
+            ..shared::BrokerConfig::default()
+        });
+        let stub = std::sync::Arc::new(crate::store::test_fakes::StubSandboxStore::new());
+        stub.insert_template(adoption_template());
+        stub.insert_sandbox(seeded_draft("user-1", now_unix()));
+        let state = AppState {
+            store: stub.clone(),
+            ..state
+        };
+
+        // Attempt 1: create + plan + stamp the marker, then time out (503).
+        let err = resolve_sandbox(&state, "user-1", "chat-9", Profile::Persistent)
+            .await
+            .expect_err("first attempt must time out before readiness");
+        assert!(matches!(err, ApiError::ServiceUnavailable(_)), "{err:?}");
+        let chat_name = sandbox_name("user-1", "chat-9", Profile::Persistent);
+        let chat = stub
+            .get_sandbox(&chat_name)
+            .await
+            .expect("store ok")
+            .expect("chat sandbox created");
+        assert_eq!(
+            chat.metadata
+                .annotations
+                .as_ref()
+                .and_then(|a| a.get(crate::sandbox::DRAFT_ADOPT_PENDING_KEY)),
+            Some(&sandbox_name("user-1", "user-1", Profile::Persistent)),
+            "pending marker stamped at create time"
+        );
+        assert!(stub.moves().is_empty(), "no move before readiness");
+
+        // Attempt 2: the sandbox boots — the marker rebuilds the move.
+        stub.set_sandbox_ready(&chat_name, "10.42.0.9");
+        let resolved = resolve_sandbox(&state, "user-1", "chat-9", Profile::Persistent)
+            .await
+            .expect("retry resolve");
+        assert_eq!(resolved.name, chat_name);
+        let moves = stub.moves();
+        assert_eq!(moves.len(), 1, "adoption ran on the retry");
+        assert!(
+            moves[0]
+                .job_name
+                .starts_with(&format!("draft-adopt-{chat_name}")),
+            "job name carries the chat: {}",
+            moves[0].job_name
+        );
+
+        // The one-shot marker is cleared — a later resolve never re-runs.
+        let chat_after = stub
+            .get_sandbox(&chat_name)
+            .await
+            .expect("store ok")
+            .expect("chat sandbox");
+        assert!(
+            chat_after
+                .metadata
+                .annotations
+                .as_ref()
+                .and_then(|a| a.get(crate::sandbox::DRAFT_ADOPT_PENDING_KEY))
+                .is_none(),
+            "marker cleared after the move ran"
+        );
+        resolve_sandbox(&state, "user-1", "chat-9", Profile::Persistent)
+            .await
+            .expect("third resolve");
+        assert_eq!(stub.moves().len(), 1, "no re-run without the marker");
     }
 
     #[tokio::test]

@@ -281,6 +281,16 @@ pub struct BrokerConfig {
     #[serde(default = "default_park_idle_seconds")]
     pub park_idle_seconds: u64,
 
+    /// #158: throttle for refreshing `broker-last-used` from the terminal WS
+    /// relay (env `BROKER_WS_TOUCH_INTERVAL_SECONDS`, default `45`, `0`
+    /// disables). WS traffic never refreshed the annotation, so an
+    /// actively-used terminal parked after [`Self::park_idle_seconds`] and the
+    /// pod delete killed the relay mid-session. Must stay well below
+    /// `park_idle_seconds` or the touches can never win the race against the
+    /// reaper (the broker warns at boot when misconfigured).
+    #[serde(default = "default_ws_touch_interval_seconds")]
+    pub ws_touch_interval_seconds: u64,
+
     /// Idle seconds after which a **persistent** Sandbox is fully reaped — the
     /// `Sandbox` object (and its released PVC claim) is deleted (env
     /// `BROKER_REAP_SECONDS`, default `604_800` = 7 days). Always greater than
@@ -422,6 +432,10 @@ const fn default_park_idle_seconds() -> u64 {
     120
 }
 
+const fn default_ws_touch_interval_seconds() -> u64 {
+    45
+}
+
 const fn default_reap_seconds() -> u64 {
     7 * 24 * 3600 // 7 days
 }
@@ -508,6 +522,7 @@ impl Default for BrokerConfig {
             proxy_timeout_seconds: default_proxy_timeout_seconds(),
             idle_ttl_seconds: default_idle_ttl_seconds(),
             park_idle_seconds: default_park_idle_seconds(),
+            ws_touch_interval_seconds: default_ws_touch_interval_seconds(),
             reap_seconds: default_reap_seconds(),
             reaper_poll_seconds: default_reaper_poll_seconds(),
             rate_limit_enabled: default_rate_limit_enabled(),
@@ -615,6 +630,8 @@ impl BrokerConfig {
                 .unwrap_or_else(default_idle_ttl_seconds),
             park_idle_seconds: env_value("BROKER_PARK_IDLE_SECONDS", &get)?
                 .unwrap_or_else(default_park_idle_seconds),
+            ws_touch_interval_seconds: env_value("BROKER_WS_TOUCH_INTERVAL_SECONDS", &get)?
+                .unwrap_or_else(default_ws_touch_interval_seconds),
             reap_seconds: env_value("BROKER_REAP_SECONDS", &get)?
                 .unwrap_or_else(default_reap_seconds),
             reaper_poll_seconds: env_value("BROKER_REAPER_POLL_SECONDS", &get)?
@@ -838,6 +855,7 @@ mod tests {
             proxy_timeout_seconds: 99,
             idle_ttl_seconds: 90,
             park_idle_seconds: 91,
+            ws_touch_interval_seconds: 47,
             reap_seconds: 99_999,
             reaper_poll_seconds: 5,
             leader_namespace: "lead-ns".into(),
@@ -872,7 +890,8 @@ mod tests {
             json.contains("\"draft_adoption_window_seconds\":123"),
             "{json}"
         );
-        assert!(json.contains("\"s3_enabled\":true"), "{json}");
+        assert!(json.contains("\"park_idle_seconds\":91"), "{json}");
+        assert!(json.contains("\"ws_touch_interval_seconds\":47"), "{json}");
         assert!(json.contains("\"s3_bucket\":\"owui-cold\""), "{json}");
         let back: BrokerConfig = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, cfg);

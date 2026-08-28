@@ -73,6 +73,17 @@ async fn main() -> ExitCode {
         "broker booting"
     );
 
+    // #158: the WS-touch throttle must beat the park idle, or the relay's
+    // refreshes can never outrun the reaper.
+    if cfg.ws_touch_interval_seconds != 0 && cfg.ws_touch_interval_seconds >= cfg.park_idle_seconds
+    {
+        tracing::warn!(
+            ws_touch_interval_seconds = cfg.ws_touch_interval_seconds,
+            park_idle_seconds = cfg.park_idle_seconds,
+            "BROKER_WS_TOUCH_INTERVAL_SECONDS >= BROKER_PARK_IDLE_SECONDS — WS terminal touches can never outrun the idle reaper; lower the interval (or disable with 0 to run pre-#158 behavior)"
+        );
+    }
+
     // cfg_arc backs the background tasks (the request path gets its own clone
     // inside AppState); store is shared by the request path + the reaper.
     let cfg_arc = Arc::new(cfg.clone());
