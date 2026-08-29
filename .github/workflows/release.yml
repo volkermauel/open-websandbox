@@ -30,153 +30,115 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  build-broker:
-    # Tag-only: image build/publish/sign belongs to releases, not PRs.
+  build-images:
+    # Native per-arch builds (issue #175): arm64 compiles on real
+    # ubuntu-24.04-arm runners instead of qemu emulation (~3-5x faster for
+    # rustc). Each arch pushes a <tag>-<arch> image; release-images merges
+    # them into the final multi-arch manifest list.
+    name: build open-websandbox-${{ matrix.image }} (${{ matrix.arch }})
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - image: broker
+            context: rust
+            dockerfile: rust/broker/Dockerfile
+            buildargs: ''
+          - image: runtime
+            context: rust
+            dockerfile: rust/runtime/Dockerfile
+            buildargs: ''
+          - image: router
+            context: agent-sandbox
+            dockerfile: agent-sandbox/sandbox-router/Dockerfile
+            buildargs: 'VERSION=v0.5.6'
+            upstream: true
     steps:
       - uses: actions/checkout@v7
-      - uses: docker/setup-qemu-action@v3   # multi-arch builds (amd64 + arm64)
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-broker
-          tags: |
-            type=ref,event=tag
-            type=sha,format=short
-      - id: build
-        uses: docker/build-push-action@v7
-        with:
-          context: rust
-          file: rust/broker/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit
-          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit,mode=max,scope=buildkit' || '' }}
-      # Supply-chain (issue #25): keyless cosign sign + per-image syft SBOM.
-      # cosign signs the immutable digest and pushes the signature as an OCI
-      # ref-tag (<repo>:sha256-<digest>.sig). The SBOM (SPDX-JSON) is uploaded
-      # as a workflow artifact and attached to the GitHub Release by chart-release.
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
-      - name: Sign image (keyless, sigstore / GitHub OIDC)
-        env:
-          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-broker
-        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
-      - name: Generate image SBOM (syft)
-        uses: anchore/sbom-action@v0
-        with:
-          image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-broker@${{ steps.build.outputs.digest }}
-          format: spdx-json
-          output-file: open-websandbox-broker-${{ github.ref_name }}.spdx.json
-          artifact-name: open-websandbox-broker-sbom
-          upload-artifact: true
-
-  build-runtime:
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-qemu-action@v3   # multi-arch builds (amd64 + arm64)
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-runtime
-          tags: |
-            type=ref,event=tag
-            type=sha,format=short
-      - id: build
-        uses: docker/build-push-action@v7
-        with:
-          context: rust
-          file: rust/runtime/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit
-          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit,mode=max,scope=buildkit' || '' }}
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
-      - name: Sign image (keyless, sigstore / GitHub OIDC)
-        env:
-          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-runtime
-        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
-      - name: Generate image SBOM (syft)
-        uses: anchore/sbom-action@v0
-        with:
-          image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-runtime@${{ steps.build.outputs.digest }}
-          format: spdx-json
-          output-file: open-websandbox-runtime-${{ github.ref_name }}.spdx.json
-          artifact-name: open-websandbox-runtime-sbom
-          upload-artifact: true
-
-  build-router:
-    # Self-build from upstream agent-sandbox (pinned tag).
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
       - name: Checkout upstream agent-sandbox@v0.5.6
+        if: matrix.upstream
         uses: actions/checkout@v7
         with:
           repository: kubernetes-sigs/agent-sandbox
           ref: v0.5.6
           path: agent-sandbox
-      - uses: docker/setup-qemu-action@v3   # multi-arch builds (amd64 + arm64)
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-router
-          tags: |
-            type=ref,event=tag
-            type=sha,format=short
-            type=raw,value=agent-sandbox-v0.5.6
       - id: build
         uses: docker/build-push-action@v7
         with:
-          context: agent-sandbox
-          file: agent-sandbox/sandbox-router/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit
-          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit,mode=max,scope=buildkit' || '' }}
-          build-args: |
-            VERSION=v0.5.6
+          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-${{ matrix.image }}:${{ github.ref_name }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/${{ matrix.image }}:buildkit
+          cache-to: type=registry,ref=ghcr.io/volkermauel/cache/${{ matrix.image }}:buildkit,mode=max,scope=buildkit
+          build-args: ${{ matrix.buildargs }}
+
+  release-images:
+    # Merge the per-arch images into the final multi-arch manifest list
+    # (<tag>, sha-<short>, router: agent-sandbox-v0.5.6), then sign the
+    # manifest digest and generate the SBOM from it (keyless cosign, syft —
+    # same supply-chain contract as before, now on the merged list).
+    name: merge+sign+sbom open-websandbox-${{ matrix.image }}
+    needs: [build-images]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [broker, runtime, router]
+    steps:
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Merge arch images into multi-arch manifest list
+        id: merge
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-${{ matrix.image }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          SHA_TAG="sha-${GITHUB_SHA::7}"
+          EXTRA_TAGS=()
+          if [ "${{ matrix.image }}" = "router" ]; then
+            EXTRA_TAGS+=(-t "${IMAGE}:agent-sandbox-v0.5.6")
+          fi
+          docker buildx imagetools create \
+            -t "${IMAGE}:${TAG}" \
+            -t "${IMAGE}:${SHA_TAG}" \
+            "${EXTRA_TAGS[@]}" \
+            "${IMAGE}:${TAG}-amd64" \
+            "${IMAGE}:${TAG}-arm64" | tee merge.out
+          DIGEST="$(grep -oE 'sha256:[0-9a-f]{64}' merge.out | head -n1)"
+          test -n "${DIGEST}" || { echo "no digest in imagetools output"; exit 1; }
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
       - name: Sign image (keyless, sigstore / GitHub OIDC)
         env:
-          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-router
-        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-${{ matrix.image }}
+        run: cosign sign --yes "${IMAGE}@${{ steps.merge.outputs.digest }}"
       - name: Generate image SBOM (syft)
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-router@${{ steps.build.outputs.digest }}
+          image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-${{ matrix.image }}@${{ steps.merge.outputs.digest }}
           format: spdx-json
-          output-file: open-websandbox-router-${{ github.ref_name }}.spdx.json
-          artifact-name: open-websandbox-router-sbom
+          output-file: open-websandbox-${{ matrix.image }}-${{ github.ref_name }}.spdx.json
+          artifact-name: open-websandbox-${{ matrix.image }}-sbom
           upload-artifact: true
 
   trivy-release:
@@ -184,7 +146,7 @@ jobs:
     # CVEs. REPORT-ONLY (continue-on-error + exit-code 0) per maintainer decision:
     # surfacing only, does not gate a release. Scans the images built above.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-broker, build-runtime, build-router]
+    needs: [release-images]
     name: trivy image (release, report-only)
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -274,7 +236,7 @@ jobs:
 
   chart-release:
     # Publish the Helm chart to OCI and cut a GitHub Release; tags only.
-    needs: [build-broker, build-runtime, build-router]
+    needs: [release-images]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
