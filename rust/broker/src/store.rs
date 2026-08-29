@@ -146,6 +146,20 @@ pub struct WorkspacePvcSpec {
     pub storage_class: String,
 }
 
+/// Pod uid/gid/fsGroup mirrored from the SandboxTemplate's pod
+/// securityContext, so the one-shot adoption Job writes into the
+/// same-ownership PVC subPaths (`None` => omit the field; the Job then
+/// runs with the image defaults).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PodOwnership {
+    /// Pod `runAsUser` (None => omit; image default).
+    pub run_as_user: Option<i64>,
+    /// Pod `runAsGroup` (None => omit; image default).
+    pub run_as_group: Option<i64>,
+    /// Pod `fsGroup`, keeping group-write into the PVC (None => omit).
+    pub fs_group: Option<i64>,
+}
+
 /// One-shot workspace move for draft adoption (#157): `from_subpath` →
 /// `to_subpath` on `claim`, executed by a best-effort batch/v1 Job. Both
 /// subpaths are broker-derived hash paths on the same claim.
@@ -163,6 +177,10 @@ pub struct WorkspaceMove {
     pub to_subpath: String,
     /// Seconds to wait for Job completion before giving up (best-effort).
     pub timeout_secs: u64,
+    /// Pod uid/gid/fsGroup mirrored from the SandboxTemplate (see
+    /// [`PodOwnership`]); the Job keeps writing into the sandbox pods'
+    /// PVC subPaths.
+    pub ownership: PodOwnership,
 }
 
 /// Real Kubernetes backend: typed [`Api`]s over a [`kube::Client`].
@@ -339,44 +357,8 @@ impl SandboxStore for KubeSandboxStore {
         use k8s_openapi::api::batch::v1::Job;
 
         let jobs: Api<Job> = Api::namespaced(self.client.clone(), &self.namespace);
-        let job: Job = serde_json::from_value(serde_json::json!({
-            "apiVersion": "batch/v1",
-            "kind": "Job",
-            "metadata": {
-                "name": mv.job_name,
-                "labels": {
-                    "app.kubernetes.io/managed-by": "owui-broker",
-                    "broker-component": "draft-adoption",
-                },
-            },
-            "spec": {
-                "backoffLimit": 0,
-                "ttlSecondsAfterFinished": 300,
-                "activeDeadlineSeconds": mv.timeout_secs,
-                "template": {
-                    "spec": {
-                        "restartPolicy": "Never",
-                        "containers": [{
-                            "name": "adopt",
-                            "image": mv.image,
-                            // Subpaths are broker-derived hash paths (no
-                            // injection surface), but they still travel via
-                            // env — the shell never interpolates them.
-                            "command": ["/bin/sh", "-ec",
-                                "mkdir -p \"$CHAT_DIR\"; find \"$DRAFT_DIR\" -mindepth 1 -maxdepth 1 ! -name '.open-websandbox' -exec mv {} \"$CHAT_DIR/\" \\; ; rmdir \"$DRAFT_DIR\" 2>/dev/null || true"],
-                            "env": [
-                                {"name": "DRAFT_DIR", "value": format!("/pvc/{}", mv.from_subpath)},
-                                {"name": "CHAT_DIR", "value": format!("/pvc/{}", mv.to_subpath)},
-                            ],
-                            "volumeMounts": [{"name": "workspace", "mountPath": "/pvc"}],
-                        }],
-                        "volumes": [{"name": "workspace",
-                            "persistentVolumeClaim": {"claimName": mv.claim}}],
-                    },
-                },
-            },
-        }))
-        .map_err(|e| StoreError::Kube(kube::Error::SerdeError(e)))?;
+        let job: Job = serde_json::from_value(adopt_job_spec(mv))
+            .map_err(|e| StoreError::Kube(kube::Error::SerdeError(e)))?;
 
         match jobs.create(&PostParams::default(), &job).await {
             Ok(_) => {}
@@ -819,5 +801,149 @@ pub mod test_fakes {
             ready: Some(true),
             message: None,
         }
+    }
+}
+
+/// Build the one-shot draft-adoption Job manifest (#157).
+///
+/// PodSecurity `restricted:latest` compliant — the runtime namespace may
+/// enforce it, and the previous manifest (no securityContext at all) was
+/// Forbidden on every attempt: the Job never started, the broker logged
+/// "draft adoption failed" on each resolve, and the deadline expired into
+/// DeadlineExceeded. The pod now pins `runAsNonRoot` + `seccompProfile`
+/// and mirrors the template's `runAsUser`/`runAsGroup`/`fsGroup` so the
+/// mover keeps writing into the sandbox pods' PVC subPaths; the container
+/// drops all capabilities without privilege escalation. The Job touches no
+/// Kubernetes API, so its service-account token is not mounted.
+fn adopt_job_spec(mv: &WorkspaceMove) -> serde_json::Value {
+    let mut pod_sc = serde_json::json!({
+        "seccompProfile": {"type": "RuntimeDefault"},
+    });
+    // A mirrored uid of 0 means the Job runs as root: pairing it with
+    // `runAsNonRoot` is unsatisfiable and the pod could never start, even
+    // on unrestricted sites — so the pin only applies to non-root uids.
+    if mv.ownership.run_as_user != Some(0) {
+        pod_sc["runAsNonRoot"] = serde_json::Value::Bool(true);
+    }
+    for (key, val) in [
+        ("runAsUser", mv.ownership.run_as_user),
+        ("runAsGroup", mv.ownership.run_as_group),
+        ("fsGroup", mv.ownership.fs_group),
+    ] {
+        if let Some(v) = val {
+            pod_sc[key] = v.into();
+        }
+    }
+    serde_json::json!({
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+            "name": mv.job_name,
+            "labels": {
+                "app.kubernetes.io/managed-by": "owui-broker",
+                "broker-component": "draft-adoption",
+            },
+        },
+        "spec": {
+            "backoffLimit": 0,
+            "ttlSecondsAfterFinished": 300,
+            "activeDeadlineSeconds": mv.timeout_secs,
+            "template": {
+                "spec": {
+                    "restartPolicy": "Never",
+                    "automountServiceAccountToken": false,
+                    "securityContext": pod_sc,
+                    "containers": [{
+                        "name": "adopt",
+                        "image": mv.image,
+                        // Subpaths are broker-derived hash paths (no
+                        // injection surface), but they still travel via
+                        // env — the shell never interpolates them.
+                        "command": ["/bin/sh", "-ec",
+                            "mkdir -p \"$CHAT_DIR\"; find \"$DRAFT_DIR\" -mindepth 1 -maxdepth 1 ! -name '.open-websandbox' -exec mv {} \"$CHAT_DIR/\" \\; ; rmdir \"$DRAFT_DIR\" 2>/dev/null || true"],
+                        "env": [
+                            {"name": "DRAFT_DIR", "value": format!("/pvc/{}", mv.from_subpath)},
+                            {"name": "CHAT_DIR", "value": format!("/pvc/{}", mv.to_subpath)},
+                        ],
+                        "volumeMounts": [{"name": "workspace", "mountPath": "/pvc"}],
+                        "securityContext": {
+                            "allowPrivilegeEscalation": false,
+                            "capabilities": {"drop": ["ALL"]},
+                        },
+                    }],
+                    "volumes": [{"name": "workspace",
+                        "persistentVolumeClaim": {"claimName": mv.claim}}],
+                },
+            },
+        },
+    })
+}
+
+#[cfg(test)]
+mod adopt_job_spec_tests {
+    use super::*;
+
+    fn mv() -> WorkspaceMove {
+        WorkspaceMove {
+            job_name: "draft-adopt-owui-c-test-1".into(),
+            image: "runtime:latest".into(),
+            claim: "workspace-p-test".into(),
+            from_subpath: "chats/aa".into(),
+            to_subpath: "chats/bb".into(),
+            timeout_secs: 60,
+            ownership: PodOwnership {
+                run_as_user: Some(1000),
+                run_as_group: Some(1000),
+                fs_group: Some(1000),
+            },
+        }
+    }
+
+    /// PodSecurity `restricted:latest` admission: every field the profile
+    /// mandates must be present, or the Job is Forbidden (the FailedCreate
+    /// loop observed on enforcing clusters).
+    #[test]
+    fn job_is_restricted_compliant() {
+        let j = adopt_job_spec(&mv());
+        let pod = &j["spec"]["template"]["spec"];
+        assert_eq!(pod["automountServiceAccountToken"], false);
+        assert_eq!(pod["securityContext"]["runAsNonRoot"], true);
+        assert_eq!(
+            pod["securityContext"]["seccompProfile"]["type"],
+            "RuntimeDefault"
+        );
+        let c = &pod["containers"][0]["securityContext"];
+        assert_eq!(c["allowPrivilegeEscalation"], false);
+        assert_eq!(c["capabilities"]["drop"][0], "ALL");
+    }
+
+    #[test]
+    fn mirrors_template_ownership_and_omits_when_absent() {
+        let j = adopt_job_spec(&mv());
+        let sc = &j["spec"]["template"]["spec"]["securityContext"];
+        assert_eq!(sc["runAsUser"], 1000);
+        assert_eq!(sc["runAsGroup"], 1000);
+        assert_eq!(sc["fsGroup"], 1000);
+
+        let mut m = mv();
+        m.ownership = PodOwnership::default();
+        let sc = &adopt_job_spec(&m)["spec"]["template"]["spec"]["securityContext"];
+        assert!(sc.get("runAsUser").is_none());
+        assert!(sc.get("runAsGroup").is_none());
+        assert!(sc.get("fsGroup").is_none());
+        // Restricted-compliance fields survive the Option-less path.
+        assert_eq!(sc["runAsNonRoot"], true);
+    }
+
+    /// A template that (against the chart default) runs as uid 0 must not
+    /// get `runAsNonRoot: true` — the pair is unsatisfiable and the Job
+    /// could never start, even on unrestricted sites.
+    #[test]
+    fn root_uid_skips_run_as_non_root() {
+        let mut m = mv();
+        m.ownership.run_as_user = Some(0);
+        let sc = &adopt_job_spec(&m)["spec"]["template"]["spec"]["securityContext"];
+        assert_eq!(sc["runAsUser"], 0);
+        assert!(sc.get("runAsNonRoot").is_none());
     }
 }
