@@ -19,7 +19,7 @@
 # Resolve + compile the dependency graph ONCE into a reusable layer so source-only
 # changes rebuild in seconds. Cargo's fingerprinting makes this a no-op when
 # Cargo.lock is unchanged across builds.
-FROM rust:1.97-bookworm AS deps
+FROM rust:1.98-bookworm AS deps
 WORKDIR /ws
 # Copy the lockfile + every manifest first so a source edit does not invalidate the
 # deps cache. (Cargo needs the workspace root + member manifests + lock to plan.)
@@ -38,7 +38,7 @@ RUN mkdir -p shared/src broker/src runtime/src \
  && cargo build --release -p broker
 
 # --- Stage 2: build the real broker binary -----------------------------------
-FROM rust:1.97-bookworm AS builder
+FROM rust:1.98-bookworm AS builder
 WORKDIR /ws
 # Re-apply the deps layer, then overlay the real sources and rebuild. Touching the
 # broker sources recompiles only `broker` (deps + shared are cached from stage 1).
