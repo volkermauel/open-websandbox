@@ -283,6 +283,12 @@ Common causes:
   [`infra/gvisor/activate-gvisor-node.sh`](../infra/gvisor/activate-gvisor-node.sh)
   on that node and verify with
   [`manifests/gvisor-verify.yaml`](../infra/gvisor/manifests/gvisor-verify.yaml).
+- **`sudo` fails with "effective uid is not 0" inside gVisor sandboxes** — the node's
+  runsc lacks `allow_suid` (gVisor mounts container filesystems `nosuid` by default;
+  see [#5299](https://github.com/google/gvisor/issues/5299)). Re-run
+  [`infra/gvisor/install-gvisor-node.sh`](../infra/gvisor/install-gvisor-node.sh)
+  (writes `/etc/runsc/config.toml` and wires it via containerd `options.ConfigPath`)
+  and restart containerd on that node.
 - **ResourceQuota exhausted** (pods/cpu/storage) — see
   [Capacity limits](#capacity-limits). Persistent sandboxes also need a free
   PVC slot and `requests.storage` headroom.

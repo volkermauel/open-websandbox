@@ -122,7 +122,15 @@ Imports/prefixes opt in explicitly (`PYTHONPATH=…`, `npm prefix`), per command
 
 `/etc/sudoers.d/sandbox` grants passwordless sudo for **exactly** the apt-get verbs
 `update, install, remove, purge, upgrade, full-upgrade, clean, autoremove` — nothing else.
-Every invocation (allowed or denied) is logged to `/var/log/sudo.log` inside the sandbox.
+Every invocation (allowed or denied) is logged to `/var/log/sudo.log` inside the sandbox
+(world-readable).
+
+> **gVisor nodes**: setuid elevation requires runsc's `allow_suid` setting
+> ([gVisor #5299](https://github.com/google/gvisor/issues/5299) — runsc mounts container
+> filesystems `nosuid` by default). [`infra/gvisor/install-gvisor-node.sh`](../infra/gvisor/install-gvisor-node.sh)
+> and [`infra/kind/install-runsc.sh`](../infra/kind/install-runsc.sh) write
+> `/etc/runsc/config.toml` with `allow_suid = true` and wire it into containerd via
+> `options.ConfigPath` — re-run them if `sudo` fails with "effective uid is not 0".
 `npm`, `pip`, and friends stay user-mode by design. The security posture — why running
 apt maintainer scripts as root inside the sandbox is acceptable, and the
 `readOnlyRootFilesystem` implication — is on the [security model](security.md) page.

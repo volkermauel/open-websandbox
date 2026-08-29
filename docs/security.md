@@ -55,7 +55,9 @@ Why this is acceptable: **apt maintainer scripts run as root, but only inside th
 sandbox's own containment** —
 
 - **gVisor (`runsc`)**: the root the scripts get is a userspace-kernel guest root, not the
-  host's.
+  host's. runsc runs with `allow_suid` (setuid emulation enabled — gVisor [#5299](https://github.com/google/gvisor/issues/5299);
+  without it the setuid `sudo` binary cannot elevate at all): the elevation is emulated
+  inside the sentry and never confers host privileges.
 - **Default-deny egress**: apt itself can only reach public-internet DNS/HTTP(S); the
   same NetworkPolicy blocks RFC1918, link-local (incl. cloud IMDS), the API server, and
   peer sandboxes — no postinst script can probe or phone the cluster.
