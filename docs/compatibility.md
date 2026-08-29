@@ -23,7 +23,7 @@ itself.
 |---|---|---|---|
 | `POST /execute` | 0.1.0 | ✅ | Synchronous result (no `GET /execute/{id}` polling) |
 | `GET /health` | 0.1.0 | ✅ | Ours is `GET /healthz` |
-| `GET /files/cwd` · `POST /files/cwd` | 0.2.7 | ✅ | |
+| `GET /files/cwd` · `POST /files/cwd` | 0.2.7 | ✅ | GET adds `root` for FileNav (#179) |
 | `GET /files/list` | 0.2.0 | ✅ | + per-entry & top-level `writable` (0.11.35) |
 | `GET /files/read` | 0.2.0 | ✅ | `start_line`/`end_line` (0.2.7); images raw; other binaries **415** |
 | `POST /files/write` | 0.2.0 | ✅ | |

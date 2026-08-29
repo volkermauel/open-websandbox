@@ -1,7 +1,8 @@
 //! Contract tests for the open-terminal v0.12.3 stage-1 compatibility surface
 //! (#164): `GET /files/serve/{path}`, `GET /api/config`, `/files/list`
 //! writability flags (0.11.35), `/files/read` line ranges + binary 415
-//! (0.2.7), `GET /files/search` (0.11.36), `GET /files/matches` (0.12.0).
+//! (0.2.7), `GET /files/search` (0.11.36), `GET /files/matches` (0.12.0),
+//! `GET /files/cwd` `root` for FileNav (#179).
 
 #![forbid(unsafe_code)]
 
@@ -105,6 +106,25 @@ async fn serve_requires_auth_and_a_real_file() {
         )
         .await;
     assert_eq!(status(&escape), StatusCode::BAD_REQUEST);
+}
+
+// --- GET /files/cwd `root` (FileNav parity, #179) -----------------------------
+
+#[tokio::test]
+async fn cwd_carries_file_nav_root() {
+    let env = Env::new();
+    let resp = env
+        .send(Method::GET, "/files/cwd", Bearer::Default, None, None)
+        .await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let doc: Value = json(resp).await;
+    // OWUI FileNav roots its tree at `root ?? "/"`; an absent root made it
+    // list `/`, which the safe-path jail answers 400 (#179).
+    assert!(doc.get("root").is_some(), "root key must be present");
+    let base = env.workdir.to_str().unwrap();
+    assert_eq!(doc["root"], base);
+    assert_eq!(doc["cwd"], base);
+    assert_eq!(doc["home"], base);
 }
 
 // --- /files/list writability (0.11.35) ----------------------------------------
