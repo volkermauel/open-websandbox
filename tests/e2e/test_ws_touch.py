@@ -59,10 +59,19 @@ def _run(cmd: list[str], timeout: float = 60) -> str:
     return r.stdout
 
 
+# Profile parity with the broker's resolve.rs `sandbox_name`: PVC lanes
+# (E2E_PVC=1) claim persistent sandboxes (`owui-c-` + `user/session`), the
+# default matrix lanes claim ephemeral ones (`owui-` + `user|session`).
+PERSISTENT = bool(os.getenv("E2E_PVC"))
+
+
 def _sandbox_name(user_id: str, session: str) -> str:
-    """Mirror the broker's `sandbox_name` for the persistent profile."""
-    digest = hashlib.sha256(f"{user_id}/{session}".encode()).hexdigest()[:12]
-    return f"owui-c-{digest}"
+    """Mirror the broker's `sandbox_name` for the lane's profile."""
+    if PERSISTENT:
+        digest = hashlib.sha256(f"{user_id}/{session}".encode()).hexdigest()[:12]
+        return f"owui-c-{digest}"
+    digest = hashlib.sha256(f"{user_id}|{session}".encode()).hexdigest()[:12]
+    return f"owui-{digest}"
 
 
 def _last_used(sandbox: str) -> int:
@@ -108,7 +117,9 @@ def test_ws_frames_refresh_last_used():
             url,
             additional_headers={
                 **headers_for(TEST_USER, session),
-                "X-Persistence": "persistent",
+                # Only the persistent profile understands the header; sending
+                # it in an ephemeral lane would resolve a different sandbox.
+                **({"X-Persistence": "persistent"} if PERSISTENT else {}),
             },
             open_timeout=20,
             close_timeout=5,
