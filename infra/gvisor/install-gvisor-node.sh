@@ -54,8 +54,10 @@ fi
 
 # --- 2. runsc config ----------------------------------------------------------
 mkdir -p "$(dirname "$RUNSC_CFG")"
-printf 'platform = "%s"\nallow_suid = true\n' "$RUNSC_PLATFORM" > "$RUNSC_CFG"
-echo "    wrote $RUNSC_CFG (platform=$RUNSC_PLATFORM, allow_suid=true for the workbench sudo-apt surface)"
+# runsc flags go under [runsc_config] as STRING values — this file is the
+# containerd-shim-runsc-v1 config (options.ConfigPath), not a bare runsc config.
+printf '[runsc_config]\n  platform = "%s"\n  allow_suid = "true"\n' "$RUNSC_PLATFORM" > "$RUNSC_CFG"
+echo "    wrote $RUNSC_CFG (shim config: platform=$RUNSC_PLATFORM, allow_suid=true for the workbench sudo-apt surface)"
 
 # --- 3. inject runsc handler into the containerd TEMPLATE (idempotent) --------
 #   MicroK8s renders containerd.toml from containerd-template.toml on daemon
