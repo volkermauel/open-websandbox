@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-29
+
 ### Added — open-terminal v0.12.3 compatibility, stage 2 (#169)
 
 - `GET /system` (upstream 0.11.27): the LLM system prompt Open Web UI feeds
