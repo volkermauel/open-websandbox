@@ -19,9 +19,13 @@ on:
 permissions:
   contents: read
 
+
 jobs:
   upgrade-rollback:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # buildx registry build cache (ghcr.io/volkermauel/cache/*)
     timeout-minutes: 30
     env:
       KIND_CLUSTER: open-websandbox-e2e-upgrade
@@ -67,8 +71,14 @@ jobs:
       - uses: azure/setup-kubectl@v5
       - uses: azure/setup-helm@v5
       - uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR (build cache)
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Same tags/scopes as e2e.yml so the gha layer cache is shared — this
+      # Same cache refs as e2e.yml so the registry layer cache is shared — this
       # lane only adds a second tag (upgrade target B) for the SAME images:
       # the test proves the MECHANICS (retention + revert), not a version skew.
       - name: Build platform image (broker)
@@ -79,8 +89,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-broker:${{ env.E2E_TAG }}
-          cache-from: type=gha,scope=open-websandbox-broker
-          cache-to: type=gha,mode=max,scope=open-websandbox-broker
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit,mode=max,scope=buildkit' || '' }}
 
       - name: Build platform image (runtime)
         uses: docker/build-push-action@v7
@@ -90,8 +100,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-runtime:${{ env.E2E_TAG }}
-          cache-from: type=gha,scope=open-websandbox-runtime
-          cache-to: type=gha,mode=max,scope=open-websandbox-runtime
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit,mode=max,scope=buildkit' || '' }}
 
       - name: Checkout upstream agent-sandbox@v0.5.6 (router self-build)
         uses: actions/checkout@v7
@@ -108,8 +118,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-router:${{ env.E2E_TAG }}
-          cache-from: type=gha,scope=open-websandbox-router
-          cache-to: type=gha,mode=max,scope=open-websandbox-router
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit,mode=max,scope=buildkit' || '' }}
 
       # `helm upgrade --set imageTag=e2e-b` retags ALL platform images, so
       # every image needs an :e2e-b ref on the node (identical layers — the

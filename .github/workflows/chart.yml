@@ -14,6 +14,11 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Cancel superseded runs of the same PR: only the newest SHA can merge.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     name: helm lint + kubeconform (strict, k8s 1.30)

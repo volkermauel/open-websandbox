@@ -1,0 +1,74 @@
+# Weekly prune of the GHCR buildx build cache (issue #172).
+#
+# The workflows moved their buildx layer cache from the built-in gha backend (10 GB
+# cap, per-branch eviction thrash) to GHCR images ghcr.io/volkermauel/cache/
+# {broker,runtime,router}:buildkit. Every cache-to push overwrites the :buildkit
+# tag and leaves the previous package version dangling, and GHCR never garbage
+# collects those by itself — so this job deletes package VERSIONS whose
+# updated_at is older than 14 days.
+#
+# Idempotent: re-running deletes nothing extra. The newest version of each
+# package is always kept, even if it is older than the cutoff (deleting the only
+# remaining version would just force a cold rebuild on the next push).
+name: cache-prune
+
+on:
+  schedule:
+    - cron: "0 3 * * 0" # Sundays 03:00 UTC — off-peak for the shared runners
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write # DELETE package versions via the REST API
+
+jobs:
+  prune:
+    name: Prune stale GHCR build-cache versions (>14 days)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete cache versions older than 14 days
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cutoff="$(date -u -d '14 days ago' +%Y-%m-%dT%H:%M:%SZ)"
+          echo "Cutoff: $cutoff — deleting versions updated before that (newest per package always kept)."
+          total=0
+          for image in broker runtime router; do
+            enc="cache%2F${image}"
+            echo "=== ghcr.io/volkermauel/cache/${image} ==="
+            # The package may not exist yet if no workflow has ever pushed the
+            # cache; that is fine, not an error.
+            if ! gh api "/user/packages/container/${enc}/versions" \
+                 --paginate --slurp > "/tmp/${image}.json"; then
+              echo "  package not found or not readable — nothing to prune"
+              continue
+            fi
+            # Flatten the paginated result into one object per line.
+            jq -c '.[][]' "/tmp/${image}.json" > "/tmp/${image}.ndjson"
+            count="$(wc -l < "/tmp/${image}.ndjson")"
+            # GH returns updated_at as ISO-8601 UTC, so lexicographic sort ==
+            # chronological sort.
+            newest_id="$(jq -s 'sort_by(.updated_at) | last | .id // empty' \
+              "/tmp/${image}.ndjson")"
+            echo "  ${count} version(s); always keeping newest (id=${newest_id:-none})"
+            deleted=0
+            while IFS= read -r v; do
+              id="$(jq -r '.id' <<<"$v")"
+              updated="$(jq -r '.updated_at' <<<"$v")"
+              tags="$(jq -r '(.metadata.container.tags // []) | join(",")' <<<"$v")"
+              if [ "$id" = "$newest_id" ]; then
+                echo "  keep   id=${id} updated=${updated} tags=[${tags}] (newest)"
+              elif [ "$updated" \< "$cutoff" ]; then
+                echo "  delete id=${id} updated=${updated} tags=[${tags}]"
+                gh api -X DELETE "/user/packages/container/${enc}/versions/${id}"
+                deleted=$((deleted + 1))
+              else
+                echo "  keep   id=${id} updated=${updated} tags=[${tags}] (newer than cutoff)"
+              fi
+            done < "/tmp/${image}.ndjson"
+            echo "  deleted ${deleted} of ${count} version(s)"
+            total=$((total + deleted))
+          done
+          echo "Done. Total versions deleted: ${total}"

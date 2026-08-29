@@ -19,9 +19,20 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Cancel superseded runs of the same PR (or branch): only the newest SHA can
+  # merge, so older pushes running to completion are pure waste (issue #172).
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   e2e:
     runs-on: ubuntu-latest
+    permissions:
+      # Job-level: buildx registry build-cache push needs packages:write.
+      # Fork PRs are downgraded to read-only by GitHub; cache-to is gated off there.
+      contents: read
+      packages: write
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -92,9 +103,20 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+      # GHCR login for the buildx registry build cache (pull always; push on
+      # same-repo events — see the cache-to gate in the build steps below).
+      - name: Log in to GHCR (build cache)
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build via buildx with a GitHub Actions (type=gha) layer cache, shared
-      # across matrix legs and with the release.yml builds by scope name.
+      # Build via buildx with a GHCR registry (type=registry) layer cache, shared
+      # across matrix legs, branches, and the release.yml builds. Unlike the old
+      # gha cache there is no 10GB Actions-cache cap, so PR branches stop
+      # evicting main's blobs (the +10-15m cold-start pain). Fork PRs: cache-to
+      # is gated off below (read-only token); cache-from stays on.
       # provenance:false keeps a plain single-platform image that `kind load` accepts.
       - name: Build platform image (broker)
         uses: docker/build-push-action@v7
@@ -104,8 +126,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-broker:${{ env.E2E_TAG }}
-          cache-from: type=gha,scope=open-websandbox-broker
-          cache-to: type=gha,mode=max,scope=open-websandbox-broker
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit,mode=max,scope=buildkit' || '' }}
 
       - name: Build platform image (runtime)
         uses: docker/build-push-action@v7
@@ -115,8 +137,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-runtime:${{ env.E2E_TAG }}
-          cache-from: type=gha,scope=open-websandbox-runtime
-          cache-to: type=gha,mode=max,scope=open-websandbox-runtime
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit,mode=max,scope=buildkit' || '' }}
 
       # Shallow-fetch upstream at the pinned tag into ./agent-sandbox so the router can be
       # self-built (no prebuilt image is published). Context = agent-sandbox/ because
@@ -136,8 +158,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-router:${{ env.E2E_TAG }}
-          cache-from: type=gha,scope=open-websandbox-router
-          cache-to: type=gha,mode=max,scope=open-websandbox-router
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit,mode=max,scope=buildkit' || '' }}
 
       - name: Load images into KIND
         run: |
@@ -160,15 +182,10 @@ jobs:
           helm install open-websandbox open-websandbox-platform/chart/ \
             -f "$VALUES_FILE" -n "$SYS_NS"
           kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
-          # Wait for the warm pool: >=1 Sandbox in RUNTIME_NS reaches Ready=True.
-          # (WarmPool has only ReadyReplicas, no Ready *condition*, so wait on Sandboxes.)
-          echo "Waiting for warm pool (Ready Sandbox)…"
-          for i in $(seq 1 60); do
-            if kubectl -n "$RUNTIME_NS" get sandbox -o \
-                'go-template={{range .items}}{{range .status.conditions}}{{if eq .type "Ready"}}{{.status}}{{"\n"}}{{end}}{{end}}{{end}}' \
-                2>/dev/null | grep -q True; then break; fi
-            sleep 5
-          done
+          # No warm-pool wait: values.yaml sets warmPool.replicas: 0 (issue #4) and
+          # no values-kind*.yaml overlay overrides it, so no warm Sandbox can ever
+          # turn Ready — the old 60x5s poll here was a guaranteed 5m dead wait
+          # (issue #172). Re-add a wait only if a lane enables the pool.
         env:
           # runc → values-kind.yaml; gvisor → values-kind-gvisor.yaml
           VALUES_FILE: open-websandbox-platform/chart/values-kind${{ matrix.runtime == 'gvisor' && '-gvisor' || '' }}.yaml
@@ -218,6 +235,9 @@ jobs:
   # matrix, so default e2e behavior is unchanged (broker.s3.enabled defaults OFF).
   e2e-s3:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # buildx registry build cache (ghcr.io/volkermauel/cache/*)
     timeout-minutes: 35
     env:
       KIND_CLUSTER: open-websandbox-e2e-s3
@@ -262,6 +282,12 @@ jobs:
       - uses: azure/setup-kubectl@v5
       - uses: azure/setup-helm@v5
       - uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR (build cache)
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build platform image (broker)
         uses: docker/build-push-action@v7
@@ -271,8 +297,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-broker:${{ env.E2E_TAG }}
-          cache-from: type=gha,scope=open-websandbox-broker
-          cache-to: type=gha,mode=max,scope=open-websandbox-broker
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit,mode=max,scope=buildkit' || '' }}
       - name: Build platform image (runtime)
         uses: docker/build-push-action@v7
         with:
@@ -281,8 +307,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-runtime:${{ env.E2E_TAG }}
-          cache-from: type=gha,scope=open-websandbox-runtime
-          cache-to: type=gha,mode=max,scope=open-websandbox-runtime
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit,mode=max,scope=buildkit' || '' }}
 
       - name: Checkout upstream agent-sandbox@v0.5.6 (router self-build)
         uses: actions/checkout@v7
@@ -298,8 +324,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-router:${{ env.E2E_TAG }}
-          cache-from: type=gha,scope=open-websandbox-router
-          cache-to: type=gha,mode=max,scope=open-websandbox-router
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit,mode=max,scope=buildkit' || '' }}
 
       - name: Load images into KIND
         run: |
@@ -373,6 +399,9 @@ jobs:
   # (a chat can only see/delete its own directory), cross-user isolation.
   e2e-pvc:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # buildx registry build cache (ghcr.io/volkermauel/cache/*)
     timeout-minutes: 35
     strategy:
       fail-fast: false
@@ -421,6 +450,12 @@ jobs:
       - uses: azure/setup-kubectl@v5
       - uses: azure/setup-helm@v5
       - uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR (build cache)
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build platform image (broker)
         uses: docker/build-push-action@v7
@@ -430,8 +465,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-broker:${{ env.E2E_TAG }}
-          cache-from: type=gha,scope=open-websandbox-broker
-          cache-to: type=gha,mode=max,scope=open-websandbox-broker
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit,mode=max,scope=buildkit' || '' }}
       - name: Build platform image (runtime)
         uses: docker/build-push-action@v7
         with:
@@ -440,8 +475,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-runtime:${{ env.E2E_TAG }}
-          cache-from: type=gha,scope=open-websandbox-runtime
-          cache-to: type=gha,mode=max,scope=open-websandbox-runtime
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit,mode=max,scope=buildkit' || '' }}
 
       - name: Checkout upstream agent-sandbox@v0.5.6 (router self-build)
         uses: actions/checkout@v7
@@ -457,8 +492,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-router:${{ env.E2E_TAG }}
-          cache-from: type=gha,scope=open-websandbox-router
-          cache-to: type=gha,mode=max,scope=open-websandbox-router
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit,mode=max,scope=buildkit' || '' }}
 
       - name: Load images into KIND
         run: |
@@ -563,6 +598,9 @@ jobs:
   # port-forward. The test asserts value-agnostically via x-ratelimit-limit.
   rate-limit:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # buildx registry build cache (ghcr.io/volkermauel/cache/*)
     timeout-minutes: 20
     env:
       KIND_CLUSTER: open-websandbox-e2e-rl
@@ -607,6 +645,12 @@ jobs:
       - uses: azure/setup-kubectl@v5
       - uses: azure/setup-helm@v5
       - uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR (build cache)
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build platform image (broker)
         uses: docker/build-push-action@v7
@@ -616,8 +660,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-broker:${{ env.E2E_TAG }}
-          cache-from: type=gha,scope=open-websandbox-broker
-          cache-to: type=gha,mode=max,scope=open-websandbox-broker
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit,mode=max,scope=buildkit' || '' }}
       - name: Build platform image (runtime)
         uses: docker/build-push-action@v7
         with:
@@ -626,8 +670,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-runtime:${{ env.E2E_TAG }}
-          cache-from: type=gha,scope=open-websandbox-runtime
-          cache-to: type=gha,mode=max,scope=open-websandbox-runtime
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit,mode=max,scope=buildkit' || '' }}
 
       - name: Checkout upstream agent-sandbox@v0.5.6 (router self-build)
         uses: actions/checkout@v7
@@ -643,8 +687,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-router:${{ env.E2E_TAG }}
-          cache-from: type=gha,scope=open-websandbox-router
-          cache-to: type=gha,mode=max,scope=open-websandbox-router
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit,mode=max,scope=buildkit' || '' }}
 
       - name: Load images into KIND
         run: |

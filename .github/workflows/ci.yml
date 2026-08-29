@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Cancel superseded runs of the same PR: only the newest SHA can merge.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint-test:
     runs-on: ubuntu-latest
