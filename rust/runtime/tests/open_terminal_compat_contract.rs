@@ -43,8 +43,9 @@ async fn api_config_is_unauthenticated_feature_discovery() {
     let doc: Value = json(resp).await;
     assert_eq!(
         doc,
+        // `system` flipped true in stage 2 (#169): GET /system now exists.
         serde_json::json!({
-            "features": {"terminal": true, "notebooks": false, "system": false}
+            "features": {"terminal": true, "notebooks": false, "system": true}
         })
     );
 }

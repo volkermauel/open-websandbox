@@ -36,6 +36,14 @@ pub enum ApiError {
     /// 415 — non-image binary file on `/files/read` (open-terminal 0.2.7 parity).
     #[error("{0}")]
     UnsupportedMediaType(String),
+    /// 502 — proxied upstream connection refused / transport failure
+    /// (`/proxy/{port}`, upstream httpx `ConnectError` parity).
+    #[error("{0}")]
+    BadGateway(String),
+    /// 504 — proxied upstream timeout (`/proxy/{port}`, upstream httpx
+    /// `TimeoutException` parity).
+    #[error("{0}")]
+    GatewayTimeout(String),
     /// 500 — internal filesystem/list failure.
     #[error("{0}")]
     Internal(String),
@@ -54,6 +62,8 @@ impl ApiError {
             ApiError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             ApiError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             ApiError::UnsupportedMediaType(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            ApiError::BadGateway(_) => StatusCode::BAD_GATEWAY,
+            ApiError::GatewayTimeout(_) => StatusCode::GATEWAY_TIMEOUT,
             ApiError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
         }

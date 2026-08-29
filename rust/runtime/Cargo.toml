@@ -38,6 +38,10 @@ axum = { version = "0.8", features = ["ws", "multipart"] }
 # from a producer task).
 http-body-util = { version = "0.1", features = ["channel"] }
 mime_guess = "2"
+# Shared localhost HTTP client for `/proxy/{port}` (open-terminal 0.9.0 surface).
+# `default-features = false`: no TLS stack — localhost HTTP only, mirroring
+# upstream httpx usage; keeps the audited tree free of extra crypto deps.
+reqwest = { version = "0.12", default-features = false }
 metrics.workspace = true
 regex = "1"
 nix = { version = "0.31", features = ["resource", "signal", "process", "fs", "user"] }

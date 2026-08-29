@@ -11,25 +11,6 @@ use crate::error::ApiError;
 use crate::safe_path::safe_path;
 use crate::state::AppState;
 
-// --- /ports -----------------------------------------------------------------
-
-/// `GET /ports` — report host ports (always empty under the restricted runtime).
-#[utoipa::path(
-    get,
-    path = "/ports",
-    tag = "ports",
-    security(("brokerBearer" = [])),
-    responses(
-        (status = 200, description = "Host ports (restricted runtime → always empty)", body = serde_json::Value),
-        (status = 401, body = shared::ErrorResponse)
-    )
-)]
-pub async fn list_ports(_auth: Authed) -> Json<serde_json::Value> {
-    // Restricted runtime: no host-port introspection. Surface an empty list so the
-    // UI ports panel renders cleanly (matches open-terminal's restricted fallback).
-    Json(serde_json::json!({ "ports": [] }))
-}
-
 // --- /download/{*file_path} -------------------------------------------------
 
 /// Download a workspace-relative file as a byte attachment.

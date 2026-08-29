@@ -43,6 +43,37 @@ impl Env {
         Self::build(1_048_576, max_workspace_bytes)
     }
 
+    /// Env whose `RuntimeConfig` is patched by `f` after the test defaults are
+    /// applied (stage-2 surface: `OPEN_TERMINAL_INFO` / prompt-override tests).
+    pub fn with_config(f: impl FnOnce(&mut RuntimeConfig)) -> Self {
+        let tmp = TempDir::new().expect("tmp dir");
+        let workdir = tmp.path().join("workspace");
+        std::fs::create_dir_all(&workdir).expect("mkdir workdir");
+        let key_path = tmp.path().join("api-key");
+        std::fs::write(&key_path, STRONG_KEY).expect("write key");
+        let mut config = RuntimeConfig {
+            workdir: workdir.clone(),
+            max_output_bytes: 1_048_576,
+            max_workspace_bytes: 2 * 1024 * 1024 * 1024,
+            runtime_key_file: key_path.clone(),
+            shell: "/bin/sh".to_string(),
+            ..RuntimeConfig::default()
+        };
+        f(&mut config);
+        let bearer = STRONG_KEY.to_string();
+        let key_store = SessionKeyStore::new(&key_path);
+        let state = AppState::new(config, key_store);
+        let router = build_router(state);
+        Self {
+            workdir,
+            key_path,
+            bearer,
+            max_output_bytes: 1_048_576,
+            router,
+            _tmp: tmp,
+        }
+    }
+
     fn build(max_output_bytes: usize, max_workspace_bytes: u64) -> Self {
         let tmp = TempDir::new().expect("tmp dir");
         let workdir = tmp.path().join("workspace");
