@@ -383,21 +383,21 @@ jobs:
             pytest tests/e2e/test_s3_tiered.py -v
           kill "$PF"
 
-  # PVC hot-tier e2e (issue #140) + hybrid tiering (#142): runc-only matrix.
-  # per-user-pvc  — broker-created per-user PVC (local-path RWO) + per-chat subPath.
-  # shared-subpath — chart-rendered workspace-shared PVC + per-user/per-chat subPath.
-  # pvc-s3        — #142 hybrid: per-user-pvc hot tier × MinIO cold tier. Proves
-  #                 tiering is hot-tier independent (park-resume = hot hit, no S3
-  #                 clobber; reap = offload + PVC purge + cold restore).
-  # pvc-s3-shared — #144: the same hybrid proof on the shared-PVC hot tier.
-  # drain         — #146: pod-eviction resilience (E2E_DRAIN=1). The test never
-  #                 drains a node — it deletes the sandbox pod (same blast
-  #                 radius), which single-node KIND serves fine (RWO local-path
-  #                 rebinds on the same node); real kubectl drain needs
-  #                 multi-node + RWX and stays future work.
+  # Hybrid PVC×S3 tiering e2e (issues #142/#144): runc-only matrix over the two
+  # SLOW (~10 m pytest each) lanes. They stay on dedicated parallel runners —
+  # serializing them on one shared cluster would trade +16 m wall-clock for
+  # −4.6 runner-min (design A, rejected in #177's investigation) — while the four
+  # FAST PVC-family modes share one sequential cluster in e2e-pvc-fast below.
+  # pvc-s3        — #142 hybrid: per-user-pvc hot tier (broker-created
+  #                 workspace-p-<sha256(user)[:12]> local-path RWO) × MinIO
+  #                 cold tier. Proves tiering is hot-tier independent
+  #                 (park-resume = hot hit, no S3 clobber; reap = offload +
+  #                 PVC purge + cold restore).
+  # pvc-s3-shared — #144: the same hybrid proof on the shared-PVC hot tier
+  #                 (chart-rendered workspace-shared PVC + per-chat subPath).
   # All lanes prove: persistence across Sandbox deletion, cross-chat isolation
   # (a chat can only see/delete its own directory), cross-user isolation.
-  e2e-pvc:
+  e2e-pvc-s3:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -406,9 +406,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [per-user-pvc, shared-subpath, pvc-s3, pvc-s3-shared, drain]
+        mode: [pvc-s3, pvc-s3-shared]
     env:
-      KIND_CLUSTER: open-websandbox-e2e-pvc
+      KIND_CLUSTER: open-websandbox-e2e-pvc-s3
       SYS_NS: agent-sandbox-system
       RUNTIME_NS: agent-sandbox-runtime
     steps:
@@ -590,20 +590,47 @@ jobs:
           fi
           kill "$PF"
 
-  # #161: rate-limit scope (per chat + per-user aggregate). Dedicated lane with
-  # deliberately TINY buckets (values-kind-rl.yaml: 5 rps / burst 10 / x3) so
-  # the per-chat 429, the sibling-chat pass-through, and the per-user aggregate
-  # 429 are all fast and deterministic. The production defaults (60/120 x5)
-  # would need >120-request bursts and sustained >300 rps — flaky over a
-  # port-forward. The test asserts value-agnostically via x-ratelimit-limit.
-  rate-limit:
+  # FAST PVC-family lanes on ONE shared KIND cluster (issue #177, design B+ of
+  # the #175 investigation): the fixed cost — cluster create, broker/runtime/
+  # router builds, kind load — is paid once and the four fast modes run
+  # sequentially on the same cluster:
+  #   per-user-pvc → shared-subpath → rate-limit → drain
+  # (drain LAST: it deletes a sandbox pod with a 30s grace period, so no later
+  # mode can trip over the eviction). The two ~10-min S3 suites stay on their
+  # own parallel runners (e2e-pvc-s3 above).
+  #
+  # Sharing is made safe by a full reset between modes:
+  #   helm uninstall owui || true
+  #   kubectl delete ns agent-sandbox-system agent-sandbox-runtime \
+  #     --wait --ignore-not-found=true
+  # Those two namespaces hold EVERYTHING mode-local: the chart release and its
+  # objects (broker, router, upstream controller, workspace-shared PVC,
+  # owui-broker-secret — regenerated per install), the broker-created
+  # workspace-p-* PVCs and owui-c-* Sandbox CRs (no Helm ownership — they
+  # survive a bare helm uninstall), ResourceQuota/NetworkPolicy leftovers.
+  # Namespace deletion is the only provably-clean reset; do not weaken it.
+  # Cluster-scoped agents.x-k8s.io CRDs survive the reset and are reused
+  # as-is; the next cycle's helm install recreates both namespaces and
+  # re-ships the upstream controller (chart upstream.deploy=true default —
+  # never apply chart/upstream manifests by hand).
+  #
+  # Port-forward + broker secret are re-established PER mode: a port-forward
+  # pins to ONE broker pod, so a stale forward from the previous install
+  # 401s against the regenerated secret (the #164 verification detour). Each
+  # run step kills any orphaned listener (fuser) before starting a fresh
+  # detached forward and reads owui-broker-secret anew.
+  #
+  # One job = one failure domain: a failed mode aborts the remaining modes —
+  # accepted per #177 (the fast suites are historically stable; expected
+  # ~8 m warm vs ~11 m across four separate runners).
+  e2e-pvc-fast:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write   # buildx registry build cache (ghcr.io/volkermauel/cache/*)
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
-      KIND_CLUSTER: open-websandbox-e2e-rl
+      KIND_CLUSTER: open-websandbox-e2e-pvc-fast
       SYS_NS: agent-sandbox-system
       RUNTIME_NS: agent-sandbox-runtime
     steps:
@@ -696,6 +723,10 @@ jobs:
             kind load docker-image "$img" --name "$KIND_CLUSTER"
           done
 
+      # Once: first-install namespaces + cluster-scoped CRDs. The CRDs survive
+      # every per-mode namespace reset below, so re-applying them per cycle is
+      # unnecessary (and helm would skip them anyway — crds/ install only
+      # applies missing CRDs).
       - name: Deploy namespaces + CRDs
         run: |
           kubectl create namespace "$SYS_NS" --dry-run=client -o yaml | kubectl apply -f -
@@ -703,34 +734,213 @@ jobs:
           kubectl apply -f open-websandbox-platform/chart/crds/
           kubectl wait --for=condition=Established --all crd --timeout=120s || true
 
-      - name: Helm install (rate-limit profile)
+      - name: Install test deps
+        run: pip install -r requirements-test.txt
+
+      # ---- mode 1/4: per-user-pvc (values-kind-pvc.yaml) ----------------------
+      - name: Helm install (per-user-pvc profile)
         run: |
-          helm install open-websandbox open-websandbox-platform/chart/ \
-            -f open-websandbox-platform/chart/values-kind.yaml \
-            -f open-websandbox-platform/chart/values-kind-rl.yaml \
-            -n "$SYS_NS"
+          # Recreate the namespaces deleted by the previous mode's reset
+          # (idempotent no-op on this first cycle). --create-namespace only
+          # covers the release namespace and the chart renders no Namespace
+          # objects, so the runtime namespace must exist before helm installs
+          # the SandboxTemplate/policies into it.
+          kubectl create namespace "$SYS_NS" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace "$RUNTIME_NS" --dry-run=client -o yaml | kubectl apply -f -
+          helm install owui open-websandbox-platform/chart/ \
+            -f open-websandbox-platform/chart/values-kind-pvc.yaml \
+            -n "$SYS_NS" --create-namespace
           kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
 
-      - name: Diagnostics (on failure)
+      - name: Diagnostics (per-user-pvc, on failure)
         if: failure()
         run: |
           echo "=== broker pods ==="
           kubectl -n "$SYS_NS" get pods -o wide || true
           echo "=== broker logs ==="
           kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=200 || true
+          echo "=== PVCs ==="
+          kubectl -n "$RUNTIME_NS" get pvc -o wide || true
+          echo "=== runtime sandboxes ==="
+          kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
+          echo "=== runtime pod logs (last 6 by age) ==="
+          for p in $(kubectl -n "$RUNTIME_NS" get pods --sort-by=.metadata.creationTimestamp -o name | tail -6); do
+            echo "--- $p ---"
+            kubectl -n "$RUNTIME_NS" logs "$p" --tail=80 || true
+          done
           kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
 
-      - name: Install test deps
-        run: pip install -r requirements-test.txt
-
-      - name: Run rate-limit e2e
+      - name: Run PVC e2e suite (per-user-pvc)
         run: |
           set -euo pipefail
-          kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 &
+          # Kill any port-forward orphaned by a failed earlier mode, then start
+          # a fresh one: the forward pins to ONE broker pod, and this cycle's
+          # install replaced both the pod and its secret (#164 detour).
+          fuser -k 8889/tcp || true
+          nohup kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 >/tmp/broker-pf.log 2>&1 &
+          PF=$!
+          # Wait for the port-forward to accept connections.
+          for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
+          # Read the REAL broker shared secret (regenerated by every install
+          # in this shared-cluster job).
+          SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
+            -o jsonpath='{.data.shared-secret}' | base64 -d)"
+          KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}" \
+          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" \
+          E2E_PVC=1 E2E_PVC_MODE=per-user-pvc \
+            pytest tests/e2e/test_pvc_persistence.py -v
+          kill "$PF"
+
+      - name: Reset cluster for next mode (after per-user-pvc)
+        run: |
+          helm uninstall owui -n "$SYS_NS" --ignore-not-found || true
+          kubectl delete ns "$SYS_NS" "$RUNTIME_NS" --wait --ignore-not-found=true
+
+      # ---- mode 2/4: shared-subpath (values-kind-pvc-shared.yaml) -------------
+      - name: Helm install (shared-subpath profile)
+        run: |
+          kubectl create namespace "$SYS_NS" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace "$RUNTIME_NS" --dry-run=client -o yaml | kubectl apply -f -
+          helm install owui open-websandbox-platform/chart/ \
+            -f open-websandbox-platform/chart/values-kind-pvc-shared.yaml \
+            -n "$SYS_NS" --create-namespace
+          kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
+
+      - name: Diagnostics (shared-subpath, on failure)
+        if: failure()
+        run: |
+          echo "=== broker pods ==="
+          kubectl -n "$SYS_NS" get pods -o wide || true
+          echo "=== broker logs ==="
+          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=200 || true
+          echo "=== PVCs ==="
+          kubectl -n "$RUNTIME_NS" get pvc -o wide || true
+          echo "=== runtime sandboxes ==="
+          kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
+          echo "=== runtime pod logs (last 6 by age) ==="
+          for p in $(kubectl -n "$RUNTIME_NS" get pods --sort-by=.metadata.creationTimestamp -o name | tail -6); do
+            echo "--- $p ---"
+            kubectl -n "$RUNTIME_NS" logs "$p" --tail=80 || true
+          done
+          kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
+
+      - name: Run PVC e2e suite (shared-subpath)
+        run: |
+          set -euo pipefail
+          fuser -k 8889/tcp || true
+          nohup kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 >/tmp/broker-pf.log 2>&1 &
           PF=$!
           for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
           SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
             -o jsonpath='{.data.shared-secret}' | base64 -d)"
+          KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}" \
+          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" \
+          E2E_PVC=1 E2E_PVC_MODE=shared-subpath \
+            pytest tests/e2e/test_pvc_persistence.py -v
+          kill "$PF"
+
+      - name: Reset cluster for next mode (after shared-subpath)
+        run: |
+          helm uninstall owui -n "$SYS_NS" --ignore-not-found || true
+          kubectl delete ns "$SYS_NS" "$RUNTIME_NS" --wait --ignore-not-found=true
+
+      # ---- mode 3/4: rate-limit (values-kind.yaml + values-kind-rl.yaml) -----
+      # #161: rate-limit scope (per chat + per-user aggregate). Deliberately
+      # TINY buckets (values-kind-rl.yaml: 5 rps / burst 10 / x3) so the
+      # per-chat 429, the sibling-chat pass-through, and the per-user
+      # aggregate 429 are all fast and deterministic.
+      - name: Helm install (rate-limit profile)
+        run: |
+          kubectl create namespace "$SYS_NS" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace "$RUNTIME_NS" --dry-run=client -o yaml | kubectl apply -f -
+          helm install owui open-websandbox-platform/chart/ \
+            -f open-websandbox-platform/chart/values-kind.yaml \
+            -f open-websandbox-platform/chart/values-kind-rl.yaml \
+            -n "$SYS_NS" --create-namespace
+          kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
+
+      - name: Diagnostics (rate-limit, on failure)
+        if: failure()
+        run: |
+          echo "=== broker pods ==="
+          kubectl -n "$SYS_NS" get pods -o wide || true
+          echo "=== broker logs ==="
+          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=200 || true
+          echo "=== PVCs ==="
+          kubectl -n "$RUNTIME_NS" get pvc -o wide || true
+          echo "=== runtime sandboxes ==="
+          kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
+          echo "=== runtime pod logs (last 6 by age) ==="
+          for p in $(kubectl -n "$RUNTIME_NS" get pods --sort-by=.metadata.creationTimestamp -o name | tail -6); do
+            echo "--- $p ---"
+            kubectl -n "$RUNTIME_NS" logs "$p" --tail=80 || true
+          done
+          kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
+
+      - name: Run rate-limit e2e
+        run: |
+          set -euo pipefail
+          fuser -k 8889/tcp || true
+          nohup kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 >/tmp/broker-pf.log 2>&1 &
+          PF=$!
+          for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
+          SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
+            -o jsonpath='{.data.shared-secret}' | base64 -d)"
+          KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}" \
           BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" E2E_RATE_LIMIT=1 \
             pytest tests/e2e/test_rate_limit.py -v
           kill "$PF"
+
+      - name: Reset cluster for next mode (after rate-limit)
+        run: |
+          helm uninstall owui -n "$SYS_NS" --ignore-not-found || true
+          kubectl delete ns "$SYS_NS" "$RUNTIME_NS" --wait --ignore-not-found=true
+
+      # ---- mode 4/4: drain (values-kind-pvc.yaml) — LAST: deletes a pod -------
+      - name: Helm install (drain profile)
+        run: |
+          kubectl create namespace "$SYS_NS" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace "$RUNTIME_NS" --dry-run=client -o yaml | kubectl apply -f -
+          helm install owui open-websandbox-platform/chart/ \
+            -f open-websandbox-platform/chart/values-kind-pvc.yaml \
+            -n "$SYS_NS" --create-namespace
+          kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
+
+      - name: Diagnostics (drain, on failure)
+        if: failure()
+        run: |
+          echo "=== broker pods ==="
+          kubectl -n "$SYS_NS" get pods -o wide || true
+          echo "=== broker logs ==="
+          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=200 || true
+          echo "=== PVCs ==="
+          kubectl -n "$RUNTIME_NS" get pvc -o wide || true
+          echo "=== runtime sandboxes ==="
+          kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
+          echo "=== runtime pod logs (last 6 by age) ==="
+          for p in $(kubectl -n "$RUNTIME_NS" get pods --sort-by=.metadata.creationTimestamp -o name | tail -6); do
+            echo "--- $p ---"
+            kubectl -n "$RUNTIME_NS" logs "$p" --tail=80 || true
+          done
+          kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
+
+      - name: Run drain e2e suite
+        run: |
+          set -euo pipefail
+          fuser -k 8889/tcp || true
+          nohup kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 >/tmp/broker-pf.log 2>&1 &
+          PF=$!
+          for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
+          SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
+            -o jsonpath='{.data.shared-secret}' | base64 -d)"
+          # #146: pod-eviction resilience on the per-user PVC profile. The live
+          # WS dies with the pod; reconnect re-resolves the recreated pod,
+          # replays the SIGTERM-flushed scrollback, and the marker file
+          # survives on the PVC.
+          KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}" \
+          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" \
+          E2E_DRAIN=1 \
+            pytest tests/e2e/test_node_drain.py -v
+          kill "$PF"
+          # No reset after the final mode: the runner (and its cluster) is
+          # torn down with the job.
