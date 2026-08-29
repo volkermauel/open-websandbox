@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-08-29
+
 ### Fixed — draft adoption on PodSecurity-restricted clusters (#182)
 
 - The broker's one-shot adoption Jobs (`draft-adopt-*`) are now PodSecurity

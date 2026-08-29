@@ -6,8 +6,8 @@ description: >
   shared PVC). Also bundles the vendored upstream agent-sandbox controller + the
   agents.x-k8s.io CRDs (toggleable via upstream.deploy) for one-command install.
 type: application
-version: 0.2.3
-appVersion: "0.1.4"
+version: 0.2.4
+appVersion: "0.1.5"
 keywords:
   - open-webui
   - sandbox
