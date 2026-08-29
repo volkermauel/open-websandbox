@@ -16,6 +16,11 @@ router:
   kubeDnsCidr: "10.96.0.10/32"
 broker:
   defaultProfile: ephemeral       # smoke the core path; per-user PVC is a separate (live) test
+  # Faster idle reaping: shared 4-vCPU runners peak at ~11 concurrent sandbox
+  # pods mid-suite; reclaiming after 45s keeps the population low enough that
+  # kube-scheduler never starves behind a burst of claims (#174 stall).
+  idleTtlSeconds: 45
+  parkIdleSeconds: 45
   networkPolicy:
     enabled: false                 # KIND e2e reaches the broker via port-forward (localhost); skip ingress default-deny
 sharedPvc:
