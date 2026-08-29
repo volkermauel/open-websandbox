@@ -11,6 +11,8 @@ containerdConfigPatches:
   - |-
     [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
       runtime_type = "io.containerd.runsc.v1"
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc.options]
+        ConfigPath = "/etc/runsc/config.toml"
 nodes:
   - role: control-plane
     extraMounts:
@@ -21,3 +23,7 @@ nodes:
       # gvisor-bin/ must sit next to runsc inside the node (post-2026-07 layout).
       - hostPath: /usr/local/bin/gvisor-bin
         containerPath: /usr/local/bin/gvisor-bin
+      # runsc config (allow_suid for the workbench sudo surface) — wired into
+      # containerd via options.ConfigPath above.
+      - hostPath: /etc/runsc/config.toml
+        containerPath: /etc/runsc/config.toml

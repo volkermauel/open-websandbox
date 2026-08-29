@@ -16,9 +16,20 @@
 //! — no python3 anywhere in that dep tree), and a system prompt must not
 //! claim an interpreter the model cannot run. With python3 present the
 //! rendered prompt is byte-for-byte upstream.
+//!
+//! Workbench extension (openspec/changes/2026-08-29-workbench-toolchain,
+//! documented divergence in docs/compatibility.md): when
+//! `SANDBOX_TOOLS_MANIFEST` points at a readable file, TWO sections are
+//! appended after template expansion — `## Available toolchain (base image)`
+//! (the file's content) and `## Workspace conventions` (built in Rust from
+//! the CONFIGURED workspace root, never a hardcoded path — the manifest file
+//! is static at build time while WORKDIR varies per deployment). With the
+//! knob unset/empty or the file missing, the prompt stays byte-for-byte
+//! upstream (the pinned unit test below is the proof).
 
 #![forbid(unsafe_code)]
 
+use std::path::Path;
 use std::sync::OnceLock;
 
 use axum::extract::State;
@@ -197,20 +208,90 @@ pub fn expand_template(template: &str, g: &Grounding) -> String {
 
 /// Build the full system prompt: the operator template (expanded) when
 /// `OPEN_TERMINAL_SYSTEM_PROMPT` is set, else the upstream-verbatim default.
+///
+/// When `tools_manifest` is set (workbench knob `SANDBOX_TOOLS_MANIFEST`),
+/// the toolchain + workspace-conventions sections are appended AFTER the
+/// (default or operator-overridden) prompt; the private `append_sections` helper does the appending.
 #[must_use]
-pub async fn system_prompt(shell: &str, template: &str, info: &str) -> String {
+pub async fn system_prompt(
+    shell: &str,
+    template: &str,
+    info: &str,
+    workdir: &Path,
+    tools_manifest: Option<&Path>,
+) -> String {
     let mut g = grounding_from_env(shell);
     g.python_version = probe_python_version().await;
-    if !template.is_empty() {
-        return expand_template(template, &g);
+    let mut prompt = if template.is_empty() {
+        render_default_prompt(&g, info)
+    } else {
+        expand_template(template, &g)
+    };
+    append_sections(&mut prompt, workdir, tools_manifest);
+    prompt
+}
+
+/// Append the workbench sections to an already-rendered prompt.
+///
+/// Gated on the single `SANDBOX_TOOLS_MANIFEST` knob: `None` (or an
+/// unreadable/empty file — warned, never fatal) leaves the prompt exactly as
+/// rendered, so the upstream-verbatim pin holds when the feature is off.
+/// The conventions section is built from the CONFIGURED `workdir` (the same
+/// `RuntimeConfig::workdir` every file op resolves against) — no hardcoded
+/// workspace path exists here, and a non-default `WORKDIR` must change the
+/// rendered paths (pinned by unit test).
+fn append_sections(prompt: &mut String, workdir: &Path, tools_manifest: Option<&Path>) {
+    let Some(path) = tools_manifest else { return };
+    match std::fs::read_to_string(path) {
+        Ok(text) if !text.trim().is_empty() => {
+            prompt.push_str("\n\n## Available toolchain (base image)\n\n");
+            prompt.push_str(text.trim_end());
+            prompt.push_str("\n\n");
+            prompt.push_str(&workspace_conventions(workdir));
+        }
+        Ok(_) => {
+            tracing::warn!(path = %path.display(), "tools manifest empty; /system prompt stays as rendered");
+        }
+        Err(e) => tracing::warn!(
+            path = %path.display(),
+            error = %e,
+            "cannot read tools manifest; /system prompt stays as rendered"
+        ),
     }
-    render_default_prompt(&g, info)
+}
+
+/// The config-driven `## Workspace conventions` section. Paths come from
+/// `workdir` via `Path::join` (root `/` stays correct); `/packages` recipes
+/// are mount locations, not workspace paths, so they are literal.
+#[must_use]
+pub(crate) fn workspace_conventions(workdir: &Path) -> String {
+    let tmp = workdir.join("tmp");
+    let venv = workdir.join(".venv");
+    let workdir_disp = workdir.display();
+    let tmp_disp = tmp.display();
+    let venv_disp = venv.display();
+    format!(
+        "## Workspace conventions\n\n\
+         - Scratch/intermediate files belong in {tmp_disp} — create it if missing (`mkdir -p {tmp_disp}`); keep the workspace root for deliverables.\n\
+         - `/tmp` is tmpfs and wiped on pod restart; the workspace root (`{workdir_disp}`) persists across sessions.\n\
+         - Persistent Python env: `python3 -m venv {venv_disp}` (survives pod restarts).\n\
+         - Session-local Python deps: `pip install --target /packages/py <pkg>`, then `PYTHONPATH=/packages/py` for the session.\n\
+         - npm user prefix: `npm config set prefix /packages/npm`.\n\
+         - `sudo apt-get install <pkg>` writes the ephemeral rootfs — reinstall after a pod restart."
+    )
 }
 
 /// `GET /system` — `{"prompt": <text>}` (upstream 0.11.27; auth-protected).
 pub async fn get_system(_auth: Authed, State(state): State<AppState>) -> Json<serde_json::Value> {
     let cfg = &state.config;
-    let prompt = system_prompt(&cfg.shell, &cfg.system_prompt, &cfg.info).await;
+    let prompt = system_prompt(
+        &cfg.shell,
+        &cfg.system_prompt,
+        &cfg.info,
+        &cfg.workdir,
+        cfg.tools_manifest.as_deref(),
+    )
+    .await;
     Json(json!({ "prompt": prompt }))
 }
 
@@ -322,5 +403,108 @@ mod tests {
         let mut g = synthetic();
         g.python_version = None;
         assert_eq!(expand_template("{{python_version}}", &g), "unknown");
+    }
+
+    // --- workbench toolchain append (SANDBOX_TOOLS_MANIFEST knob) -------------
+
+    /// Minimal stand-in manifest file (no tempfile dep in the runtime crate).
+    fn write_manifest(content: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("owsb-system-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("mkdir temp dir");
+        let path = dir.join("sandbox-capabilities.md");
+        std::fs::write(&path, content).expect("write manifest");
+        path
+    }
+
+    #[test]
+    fn manifest_appends_toolchain_and_conventions_sections() {
+        let manifest =
+            write_manifest("- Python and data — python3 3.11.2, pip: pandas 2.2.3, openpyxl 3.1.5");
+        let mut prompt = render_default_prompt(&synthetic(), "");
+        append_sections(
+            &mut prompt,
+            std::path::Path::new("/workspace"),
+            Some(&manifest),
+        );
+
+        let toolchain = prompt
+            .find("## Available toolchain (base image)")
+            .expect("toolchain section");
+        let conventions = prompt
+            .find("## Workspace conventions")
+            .expect("conventions section");
+        assert!(
+            toolchain < conventions,
+            "conventions come after the toolchain section"
+        );
+        assert!(prompt.contains("pandas 2.2.3"));
+        // The upstream-verbatim body is still the prefix, untouched.
+        assert!(prompt.starts_with("You have access to a computer running Linux"));
+    }
+
+    #[test]
+    fn knob_off_or_missing_file_keeps_prompt_byte_for_byte() {
+        let base = render_default_prompt(&synthetic(), "");
+
+        // Knob off (None): no sections at all.
+        let mut off = base.clone();
+        append_sections(&mut off, std::path::Path::new("/workspace"), None);
+        assert_eq!(off, base, "disabled knob must not change the prompt");
+
+        // Knob on but the file is missing: warn + skip, still unchanged.
+        let mut missing = base.clone();
+        append_sections(
+            &mut missing,
+            std::path::Path::new("/workspace"),
+            Some(std::path::Path::new("/nonexistent/sandbox-capabilities.md")),
+        );
+        assert_eq!(missing, base, "missing manifest must not change the prompt");
+    }
+
+    #[test]
+    fn override_prompt_also_gets_the_sections() {
+        let g = synthetic();
+        let mut prompt = expand_template("Custom host={{hostname}} template.", &g);
+        let manifest = write_manifest("- Archives — gzip 1.12");
+        append_sections(
+            &mut prompt,
+            std::path::Path::new("/workspace"),
+            Some(&manifest),
+        );
+        assert!(prompt.starts_with("Custom host=sandbox-7f9a template."));
+        assert!(prompt.contains("## Available toolchain (base image)"));
+        assert!(prompt.contains("## Workspace conventions"));
+    }
+
+    #[test]
+    fn conventions_are_built_from_the_configured_workdir() {
+        let c = workspace_conventions(std::path::Path::new("/data/ws"));
+        assert!(
+            c.contains("/data/ws/tmp"),
+            "scratch dir must follow WORKDIR: {c}"
+        );
+        assert!(
+            c.contains("/data/ws/.venv"),
+            "venv path must follow WORKDIR: {c}"
+        );
+        assert!(
+            !c.contains("/workspace"),
+            "no hardcoded default workspace root may appear: {c}"
+        );
+
+        // Default config renders the default root; root `/` stays sane.
+        let d = workspace_conventions(std::path::Path::new("/workspace"));
+        assert!(d.contains("/workspace/tmp"));
+        let root = workspace_conventions(std::path::Path::new("/"));
+        assert!(root.contains("/tmp —"));
+    }
+
+    #[test]
+    fn conventions_listed_only_via_the_knob() {
+        let base = render_default_prompt(&synthetic(), "");
+        let mut off = base.clone();
+        append_sections(&mut off, std::path::Path::new("/workspace"), None);
+        assert!(!off.contains("## Workspace conventions"));
+        assert!(!off.contains("## Available toolchain"));
     }
 }

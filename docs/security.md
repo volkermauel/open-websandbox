@@ -43,6 +43,44 @@ scope for v0.1.0). See `openspec/changes/archive/adopt-agent-sandbox/design.md` 
   execution), `/packages` (not at the front of `PATH` ⇒ no planted-binary shadowing), `/tmp`
   (tmpfs, wiped), the rootfs.
 
+## sudo-apt posture (workbench image)
+
+The [workbench toolchain](toolchain.md) image gives the sandbox user passwordless
+sudo for exactly the apt-get verbs (`update, install, remove, purge, upgrade,
+full-upgrade, clean, autoremove` — `/etc/sudoers.d/sandbox`, `visudo -c`-checked at
+build). Every invocation, allowed or denied, is appended to `/var/log/sudo.log` inside
+the sandbox. Nothing else gets sudo; `npm`/`pip` stay user-mode by design.
+
+Why this is acceptable: **apt maintainer scripts run as root, but only inside the
+sandbox's own containment** —
+
+- **gVisor (`runsc`)**: the root the scripts get is a userspace-kernel guest root, not the
+  host's. runsc runs with `allow-suid` (setuid emulation enabled — gVisor [#5299](https://github.com/google/gvisor/issues/5299);
+  without it the setuid `sudo` binary cannot elevate at all): the elevation is emulated
+  inside the sentry and never confers host privileges.
+- **Default-deny egress**: apt itself can only reach public-internet DNS/HTTP(S); the
+  same NetworkPolicy blocks RFC1918, link-local (incl. cloud IMDS), the API server, and
+  peer sandboxes — no postinst script can probe or phone the cluster.
+- **Ephemeral rootfs**: whatever the scripts write to the rootfs dies with the pod;
+  nothing persists into the next session except `/workspace`.
+- **No host mounts, no service-account token, caps dropped**: the sandbox has no
+  Kubernetes identity and no privileged device to reach for.
+
+This is the reason the **runtime container now sets `readOnlyRootFilesystem: false` and
+`allowPrivilegeEscalation: true`** (both were the restricted defaults): `apt-get install`
+must write `/usr`, `/etc`, and `/var/lib/dpkg` in the sandbox's own rootfs, and the setuid
+`sudo` binary needs to escape the no-new-privileges regime that
+`allowPrivilegeEscalation: false` imposes. The runtime container therefore leaves the
+*restricted* Pod Security profile on these two axes (the runtime namespace sets no enforce
+labels); broker and router stay fully restricted. The container keeps `drop: ["ALL"]`
+plus the container-default capability set minus `NET_RAW` (`AUDIT_WRITE`, `CHOWN`,
+`DAC_OVERRIDE`, `FOWNER`, `FSETID`, `KILL`, `MKNOD`, `NET_BIND_SERVICE`, `SETFCAP`,
+`SETGID`, `SETPCAP`, `SETUID`, `SYS_CHROOT`): an entirely empty bounding set would strip
+the setuid `sudo` binary of every capability at `exec`, and `apt`'s maintainer scripts
+(chown/setuid on installed files, service starts) need the working set anyway. Everything the runtime
+itself serves still runs as uid 1000; only the whitelisted apt verbs execute as root,
+and only within the pod's own filesystem.
+
 ## Residual risks (v0.1.0)
 
 - **Shared host kernel** — gVisor is a userspace kernel, but the host kernel is still shared
@@ -54,6 +92,12 @@ scope for v0.1.0). See `openspec/changes/archive/adopt-agent-sandbox/design.md` 
   A future domain-allowlisting proxy (Phase 4) tightens this; for now it's an accepted
   channel (HTTPS is already a larger exfil surface).
 - **NetworkPolicy is L3/L4 only** — no L7 (content) inspection.
+- **apt maintainer scripts as root (workbench image)** — `sudo apt-get install` runs
+  distribution maintainer scripts as root *inside the sandbox* (gVisor + default-deny
+  egress + ephemeral rootfs, see [sudo-apt posture](#sudo-apt-posture-workbench-image)).
+  A hostile package *chosen by the tenant* could still wreck that tenant's own pod —
+  which they can already do from `/execute`. Cross-tenant impact is contained by the
+  isolation layers above.
 
 ## Reporting a vulnerability
 

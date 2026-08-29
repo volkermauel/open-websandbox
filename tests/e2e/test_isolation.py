@@ -185,7 +185,9 @@ def test_peer_pod_8888_denied(require_broker, broker, second_broker):
         "    sys.exit(1)\n"
         "PY\n"
         f"curl -sS --max-time 8 -o /dev/null 'http://{peer_ip}:8888/' 2>/dev/null && connected=1\n"
-        f"wget -q -T 8 -O /dev/null 'http://{peer_ip}:8888/' 2>/dev/null && connected=1\n"
+        # --tries=1: GNU wget defaults to 20 retries; the netpol silently drops
+        # SYNs, so 20 x the -T timeout would hang the /execute request.
+        f"wget -q -T 8 --tries=1 -O /dev/null 'http://{peer_ip}:8888/' 2>/dev/null && connected=1\n"
         'test "$connected" = 1 && echo SANDBOX_CONNECTED_TO_PEER || echo PEER_8888_BLOCKED'
     )
     ran = broker.post("/execute", json={"command": cmd})

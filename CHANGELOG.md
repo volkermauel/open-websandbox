@@ -12,6 +12,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — workbench toolchain image + capability manifest
+
+- The default runtime image is now a curated workbench toolchain driven by a single
+  source of truth, `rust/runtime/tools.json` (8 areas, 57 apt + 12 pip packages:
+  archives incl. unrar, general CLI, Python data stack incl. pandas/openpyxl/pyarrow,
+  R, docs depth incl. pandoc/tesseract/ocrmypdf, Windows packaging, RE-light, sqlite3)
+  plus pinned tarball tools (Node 22 LTS, PowerShell 7, .NET SDK 8 + ilspycmd,
+  PSAppDeployToolkit, CFR, duckdb CLI). `rust/runtime/gen-manifest.py` expands the
+  same file into the Dockerfile installs and the baked capability manifest, so the
+  image and the LLM-facing inventory can never drift.
+- `GET /system` (and the broker relay) appends `## Available toolchain (base image)` +
+  `## Workspace conventions` behind the `SANDBOX_TOOLS_MANIFEST` knob — default-on
+  in the image and chart (`sandboxTemplate.toolsManifest`); unset/empty keeps the
+  prompt byte-for-byte upstream. Conventions render from the configured `WORKDIR`,
+  never a hardcoded path.
+- `sandbox-tools` command in the image: baked manifest + live delta (re-probed
+  versions, dpkg count vs build-time base) + workspace conventions.
+- sudo, apt-get verbs only: passwordless `update/install/remove/purge/upgrade/
+  full-upgrade/clean/autoremove` via `/etc/sudoers.d/sandbox` (`visudo -c`-checked),
+  all invocations logged to `/var/log/sudo.log`. The runtime sandbox container
+  accordingly sets `readOnlyRootFilesystem: false` (broker/router keep `true`).
+  Posture documented in `docs/security.md`.
+- PEP-668 relief: the `EXTERNALLY-MANAGED` marker is removed so plain
+  `pip install --user/--target` works; docs teach workspace-root recipes
+  (`docs/toolchain.md`).
+
 ## [0.1.5] - 2026-08-29
 
 ### Fixed — draft adoption on PodSecurity-restricted clusters (#182)

@@ -87,6 +87,13 @@ spec:
         # How long a detached terminal survives awaiting a WS resume (seconds).
         - name: TERMINAL_DETACH_TTL_SECS
           value: {{ .Values.sandboxTemplate.terminalDetachTtlSecs | quote }}
+        # Workbench capability manifest (openspec/changes/2026-08-29-workbench-toolchain):
+        # /system appends the baked-in toolchain inventory + workspace
+        # conventions. Disabled renders the env EXPLICITLY empty (the image
+        # ENV would otherwise keep it enabled — same scrub pattern as the
+        # KUBERNETES_* vars above).
+        - name: SANDBOX_TOOLS_MANIFEST
+          value: {{ if .Values.sandboxTemplate.toolsManifest }}/usr/local/share/sandbox-capabilities.md{{ else }}""{{ end }}
         # Suppress kubelet-injected KUBERNETES_* env (leaks service-CIDR / API IP).
         - name: KUBERNETES_SERVICE_HOST
           value: ""
@@ -117,13 +124,36 @@ spec:
           value: {{ $otlp | quote }}
         {{- end }}
         securityContext:
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
+          # Workbench sudo-apt surface (openspec/changes/2026-08-29-workbench-toolchain):
+          # the whitelisted `sudo apt-get` needs (a) privilege escalation so the
+          # setuid sudo binary can transition to root, and (b) a WRITABLE rootfs —
+          # installed packages land in the ephemeral per-pod rootfs and vanish on
+          # pod restart (docs/security.md § sudo posture). This opts the runtime
+          # container out of the restricted profile on these axes; it still runs
+          # as uid 1000 and keeps only the container-default capability set
+          # (minus NET_RAW) — a fully empty bounding set would strip the setuid
+          # sudo binary of every capability at exec, breaking the apt whitelist.
+          allowPrivilegeEscalation: true
+          readOnlyRootFilesystem: false
           runAsNonRoot: true
           runAsUser: {{ .Values.sandboxTemplate.uid }}
           runAsGroup: {{ .Values.sandboxTemplate.uid }}
           capabilities:
             drop: ["ALL"]
+            add:
+              - AUDIT_WRITE
+              - CHOWN
+              - DAC_OVERRIDE
+              - FOWNER
+              - FSETID
+              - KILL
+              - MKNOD
+              - NET_BIND_SERVICE
+              - SETFCAP
+              - SETGID
+              - SETPCAP
+              - SETUID
+              - SYS_CHROOT
         readinessProbe:
           httpGet:
             path: "/"

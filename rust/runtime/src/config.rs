@@ -50,7 +50,11 @@ const DEFAULT_INFO: &str = "";
 /// `OPEN_TERMINAL_SYSTEM_PROMPT` — upstream name; empty default = the
 /// upstream-verbatim built-in prompt).
 const DEFAULT_SYSTEM_PROMPT: &str = "";
-
+// Capability-manifest knob (env `SANDBOX_TOOLS_MANIFEST`; workbench image
+// sets it to `/usr/local/share/sandbox-capabilities.md`). Empty/unset =
+// disabled — the prompt stays byte-for-byte upstream. The same knob also
+// gates the config-driven `## Workspace conventions` section (built from
+// `workdir`, not from the static file — WORKDIR varies per deployment).
 /// Runtime configuration loaded from the environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfig {
@@ -85,6 +89,9 @@ pub struct RuntimeConfig {
     /// `GET /system` prompt template override (env
     /// `OPEN_TERMINAL_SYSTEM_PROMPT`; empty ⇒ upstream-verbatim default).
     pub system_prompt: String,
+    /// Capability-manifest path appended to the `GET /system` prompt (env
+    /// `SANDBOX_TOOLS_MANIFEST`; `None` ⇒ disabled, prompt unchanged).
+    pub tools_manifest: Option<PathBuf>,
 }
 
 impl Default for RuntimeConfig {
@@ -104,6 +111,7 @@ impl Default for RuntimeConfig {
             terminal_detach_ttl_secs: DEFAULT_TERMINAL_DETACH_TTL_SECS,
             info: DEFAULT_INFO.to_string(),
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
+            tools_manifest: None,
         }
     }
 }
@@ -156,6 +164,9 @@ impl RuntimeConfig {
         }
         if let Some(v) = get("OPEN_TERMINAL_SYSTEM_PROMPT") {
             cfg.system_prompt = v;
+        }
+        if let Some(v) = get("SANDBOX_TOOLS_MANIFEST") {
+            cfg.tools_manifest = Some(PathBuf::from(v));
         }
         cfg
     }
@@ -224,6 +235,7 @@ mod tests {
         );
         assert_eq!(cfg.info, "");
         assert_eq!(cfg.system_prompt, "");
+        assert_eq!(cfg.tools_manifest, None);
     }
 
     #[test]
@@ -241,6 +253,10 @@ mod tests {
             ("RUNTIME_KEY_FILE", "/keys/k"),
             ("OPEN_TERMINAL_INFO", "Physics dept sandbox"),
             ("OPEN_TERMINAL_SYSTEM_PROMPT", "host={{hostname}}"),
+            (
+                "SANDBOX_TOOLS_MANIFEST",
+                "/usr/local/share/sandbox-capabilities.md",
+            ),
         ]));
         assert_eq!(cfg.workdir, PathBuf::from("/tmp/ws"));
         assert_eq!(cfg.max_procs, 512);
@@ -254,6 +270,10 @@ mod tests {
         assert_eq!(cfg.runtime_key_file, PathBuf::from("/keys/k"));
         assert_eq!(cfg.info, "Physics dept sandbox");
         assert_eq!(cfg.system_prompt, "host={{hostname}}");
+        assert_eq!(
+            cfg.tools_manifest,
+            Some(PathBuf::from("/usr/local/share/sandbox-capabilities.md"))
+        );
     }
 
     #[test]

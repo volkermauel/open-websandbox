@@ -544,6 +544,10 @@
           "type": "string",
           "description": "Multipart upload body cap rendered as runtime MAX_UPLOAD_BYTES (#162). Size string (e.g. 1Gi); axum's 2 MiB default broke uploads above 2 MiB.",
           "default": "1Gi"
+        },
+        "toolsManifest": {
+          "type": "boolean",
+          "description": "Render SANDBOX_TOOLS_MANIFEST into sandbox pods so /system appends the baked-in toolchain inventory + workspace conventions (workbench image); false renders the env explicitly empty."
         }
       }
     },
