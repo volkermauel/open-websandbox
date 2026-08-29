@@ -29,15 +29,10 @@ pytestmark = pytest.mark.skipif(
 CLAIM_TIMEOUT = 300.0
 
 
-def _client(session: str) -> httpx.Client:
-    client = httpx.Client(base_url=BROKER_URL, timeout=CLAIM_TIMEOUT)
-    _claim_ready_session(client, TEST_USER, session)
-    return client
-
-
 def test_serve_returns_inline_bytes_through_the_relay():
     session = f"ott-serve-{hashlib.sha256(b'serve').hexdigest()[:8]}"
-    with _client(session) as client:
+    with httpx.Client(base_url=BROKER_URL, timeout=CLAIM_TIMEOUT) as client:
+        _claim_ready_session(client, TEST_USER, session)
         up = client.post(
             "/files/write",
             json={"path": "site/index.html", "content": "<h1>hello serve</h1>"},
@@ -61,7 +56,8 @@ def test_serve_returns_inline_bytes_through_the_relay():
 
 def test_api_config_reports_v0_12_3_features():
     session = f"ott-cfg-{hashlib.sha256(b'cfg').hexdigest()[:8]}"
-    with _client(session) as client:
+    with httpx.Client(base_url=BROKER_URL, timeout=CLAIM_TIMEOUT) as client:
+        _claim_ready_session(client, TEST_USER, session)
         resp = client.get("/api/config", headers=headers_for(TEST_USER, session))
         assert resp.status_code == 200, resp.text[:200]
         features = resp.json()["features"]
@@ -72,7 +68,8 @@ def test_api_config_reports_v0_12_3_features():
 
 def test_list_carries_writable_flags_and_read_slices_lines():
     session = f"ott-rw-{hashlib.sha256(b'rw').hexdigest()[:8]}"
-    with _client(session) as client:
+    with httpx.Client(base_url=BROKER_URL, timeout=CLAIM_TIMEOUT) as client:
+        _claim_ready_session(client, TEST_USER, session)
         up = client.post(
             "/files/write",
             json={"path": "lines.txt", "content": "one\ntwo\nthree\nfour\n"},
@@ -105,7 +102,8 @@ def test_list_carries_writable_flags_and_read_slices_lines():
 def test_read_rejects_binary_with_415_instead_of_500():
     session = f"ott-415-{hashlib.sha256(b'415').hexdigest()[:8]}"
     payload = bytes([0x1F, 0x8B, 0x08, 0x00]) + bytes(64)
-    with _client(session) as client:
+    with httpx.Client(base_url=BROKER_URL, timeout=CLAIM_TIMEOUT) as client:
+        _claim_ready_session(client, TEST_USER, session)
         up = client.post(
             "/files/upload",
             params={"directory": "/workspace"},
@@ -124,7 +122,8 @@ def test_read_rejects_binary_with_415_instead_of_500():
 def test_search_and_matches_find_uploaded_files():
     session = f"ott-srch-{hashlib.sha256(b'srch').hexdigest()[:8]}"
     marker = "quokka-settler-42"
-    with _client(session) as client:
+    with httpx.Client(base_url=BROKER_URL, timeout=CLAIM_TIMEOUT) as client:
+        _claim_ready_session(client, TEST_USER, session)
         for name in ("needle_alpha.txt", "docs/needle_beta.md"):
             up = client.post(
                 "/files/write",
