@@ -12,6 +12,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — open-terminal v0.12.3 compatibility, stage 2 (#169)
+
+- `GET /system` (upstream 0.11.27): the LLM system prompt Open Web UI feeds
+  to the model, ported **verbatim from upstream v0.12.3**
+  (`open_terminal/main.py`), with 0.11.35 `{{var}}` template expansion for
+  operator overrides (`OPEN_TERMINAL_SYSTEM_PROMPT`) and grounding from the
+  live sandbox environment. `features.system` flipped to `true` in both the
+  runtime and broker `/api/config`.
+- `GET /info` (0.11.6): `{"info": …}` from `OPEN_TERMINAL_INFO`; 404s while
+  unset, mirroring upstream's conditional route registration.
+- `GET /files/display` (0.2.9): show-file signaling — `{path, exists}`,
+  no bytes served, `exists: false` for missing files.
+- `/proxy/{port}[/{path}]` (0.9.0 with the **0.12.2 ownership lockdown**):
+  reverse proxy to session-owned localhost ports (listener sockets owned by
+  descendant processes of the runtime — the processes `/execute` and PTY
+  sessions start). Unowned ports → 404 `Port not found`; the inbound
+  `Authorization` is never forwarded; upstream's exact 502/504 transport
+  strings.
+- `GET /ports` upgraded from the empty stub to the real session-owned
+  listener listing (`{port, pid, process}` — the same visibility set the
+  proxy enforces, like upstream).
+- Divergences documented in `docs/compatibility.md` (Python-sentence probe
+  grounding, display confinement, proxy transport details).
+
 ### Added — open-terminal v0.12.3 compatibility, stage 1 (#164)
 
 - The runtime now serves the OWUI file-browser surface of the open-terminal

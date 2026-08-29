@@ -248,7 +248,8 @@ pub async fn api_config(_: Authed) -> Json<ConfigResponse> {
         features: Features {
             terminal: true,
             notebooks: false,
-            system: false,
+            // Stage 2 (#169): GET /system is now served by the runtime.
+            system: true,
         },
     })
 }

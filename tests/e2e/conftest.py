@@ -15,6 +15,9 @@ the tests are fast and can assert cross-request persistence. The claim polls bec
 the warm pool + first Sandbox claim take a few seconds to become Ready.
 """
 import os
+import re
+import shutil
+import subprocess
 import time
 import uuid
 from collections.abc import Iterator
@@ -54,6 +57,7 @@ def _claim_ready_session(probe: httpx.Client, user_id: str, session: str) -> str
     """Poll /execute until the sandbox for (user, session) answers successfully."""
     deadline = time.time() + CLAIM_TIMEOUT
     last = "no attempt yet"
+    healed = False
     while time.time() < deadline:
         try:
             r = probe.post(
@@ -64,6 +68,19 @@ def _claim_ready_session(probe: httpx.Client, user_id: str, session: str) -> str
             if r.status_code == 200 and r.json().get("exit_code") == 0:
                 return session
             last = f"HTTP {r.status_code}: {r.text[:200]}"
+            # Self-heal a scheduling-stalled sandbox exactly once: on a busy
+            # runner the claim's pod can sit PodScheduled=Unknown (scheduler
+            # starved behind the mid-suite sandbox burst). Deleting the stuck
+            # Sandbox lets the broker recreate it on the next poll — cheaper
+            # and more honest than waiting out CLAIM_TIMEOUT (#174).
+            if not healed and "PodScheduled=Unknown" in r.text and shutil.which("kubectl") and os.environ.get("KUBECONFIG"):
+                m = re.search(r"owui-[0-9a-f]{12}", r.text)
+                if m:
+                    healed = True
+                    subprocess.run(
+                        ["kubectl", "-n", "agent-sandbox-runtime", "delete", "sandbox", m.group(0), "--ignore-not-found"],
+                        check=False, timeout=30, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
         except Exception as exc:  # broker/router/proxy not up yet
             last = repr(exc)
         time.sleep(3)
@@ -126,7 +143,6 @@ def second_broker(second_session) -> Iterator[httpx.Client]:
 # the original "exec boto3 inside the broker pod" trick no longer applies;
 # instead the test host runs boto3 + reads the same creds the broker uses.
 import base64  # noqa: E402
-import subprocess  # noqa: E402
 import urllib.request  # noqa: E402
 
 S3_SYS_NS = os.environ.get("E2E_SYS_NS", "agent-sandbox-system")

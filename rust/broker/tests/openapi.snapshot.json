@@ -1847,6 +1847,62 @@
         ]
       }
     },
+    "/files/display": {
+      "get": {
+        "description": "This is a **signaling** endpoint, not a byte-serving one: upstream\n`display_file` (open_terminal/main.py @ v0.12.3) resolves the path and\nreports `exists`; the consuming client opens its own viewer. A missing\nfile is a successful `exists: false` response — only an invalid path\nerrors. Divergence: ours confines the resolved path to the workspace\n(400 on escape) like every other file endpoint; upstream single-user\nmode resolves arbitrary host paths.\n\n# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace.",
+        "operationId": "display_file",
+        "parameters": [
+          {
+            "description": "Workspace-relative path to operate on.",
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Resolved path + exists flag (show-file signal)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Signal that a file should be shown to the user (upstream 0.2.9 contract).",
+        "tags": [
+          "files"
+        ]
+      }
+    },
     "/files/glob": {
       "get": {
         "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace and\n[`ApiError::NotFound`] if the search directory is missing.",
@@ -2966,6 +3022,51 @@
         ]
       }
     },
+    "/info": {
+      "get": {
+        "description": "Upstream registers the route only `if OPEN_TERMINAL_INFO:` — with the\nvalue unset the path 404s (`{\"detail\": \"Not Found\"}`). Mirrored exactly.\n\n# Errors\n\nReturns [`ApiError::NotFound`] when no operator info is configured.",
+        "operationId": "get_info",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Operator-provided environment info"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No operator info configured (route unregistered upstream)"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /info` — `{\"info\": <text>}` (upstream 0.11.6).",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
     "/list": {
       "get": {
         "description": "# Errors\n\nReturns [`ApiError::Internal`] if the workspace directory cannot be read.",
@@ -3126,7 +3227,7 @@
                 "schema": {}
               }
             },
-            "description": "Host ports (restricted runtime → always empty)"
+            "description": "Session-visible listening ports (descendant-owned)"
           },
           "401": {
             "content": {
@@ -3144,7 +3245,7 @@
             "brokerBearer": []
           }
         ],
-        "summary": "`GET /ports` — report host ports (always empty under the restricted runtime).",
+        "summary": "`GET /ports` — the ports the proxy would allow (upstream `_visible_ports`\nfeeds both endpoints; ours does too).",
         "tags": [
           "ports"
         ]

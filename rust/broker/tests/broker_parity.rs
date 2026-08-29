@@ -10,7 +10,7 @@ use common::{body_text, json, status, Bearer, Env};
 
 #[tokio::test]
 async fn api_config_matches_openapi_spec_shape() {
-    // ConfigResponse: {"features":{"terminal":true,"notebooks":false,"system":false}} (open-terminal v0.12.3 key set)
+    // ConfigResponse: {"features":{"terminal":true,"notebooks":false,"system":true}} (open-terminal v0.12.3 key set; system flipped true in stage 2, #169)
     let env = Env::new();
     let resp = env
         .send(Method::GET, "/api/config", Bearer::Default, None)
@@ -19,7 +19,7 @@ async fn api_config_matches_openapi_spec_shape() {
     let body: serde_json::Value = json(resp).await;
     assert_eq!(
         body,
-        serde_json::json!({"features": {"terminal": true, "notebooks": false, "system": false}})
+        serde_json::json!({"features": {"terminal": true, "notebooks": false, "system": true}})
     );
 }
 

@@ -40,9 +40,16 @@ const DEFAULT_RUNTIME_KEY_FILE: &str = "/etc/runtime-key/api-key";
 /// `TERMINAL_SCROLLBACK_BYTES`). Replayed to a reattaching WS client and flushed
 /// to the workspace on SIGTERM (issue #129); `0` disables capture, replay and flush.
 const DEFAULT_TERMINAL_SCROLLBACK_BYTES: usize = 128 * 1024;
-/// How long a DETACHED terminal (WS client gone, shell alive) survives awaiting
-/// a resume, in seconds (env `TERMINAL_DETACH_TTL_SECS`) before the sweep reaps it.
+/// Seconds a detached terminal survives before the idle sweep reaps it.
 const DEFAULT_TERMINAL_DETACH_TTL_SECS: u64 = 900;
+/// Operator-provided environment info served by `GET /info` (env
+/// `OPEN_TERMINAL_INFO` — upstream name kept for drop-in parity; empty
+/// default = the route 404s like upstream's conditional registration).
+const DEFAULT_INFO: &str = "";
+/// Operator override for the `GET /system` prompt template (env
+/// `OPEN_TERMINAL_SYSTEM_PROMPT` — upstream name; empty default = the
+/// upstream-verbatim built-in prompt).
+const DEFAULT_SYSTEM_PROMPT: &str = "";
 
 /// Runtime configuration loaded from the environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +80,11 @@ pub struct RuntimeConfig {
     pub terminal_scrollback_bytes: usize,
     /// Seconds a detached terminal survives before the idle sweep reaps it.
     pub terminal_detach_ttl_secs: u64,
+    /// Operator info for `GET /info` (env `OPEN_TERMINAL_INFO`; empty ⇒ 404).
+    pub info: String,
+    /// `GET /system` prompt template override (env
+    /// `OPEN_TERMINAL_SYSTEM_PROMPT`; empty ⇒ upstream-verbatim default).
+    pub system_prompt: String,
 }
 
 impl Default for RuntimeConfig {
@@ -90,6 +102,8 @@ impl Default for RuntimeConfig {
             runtime_key_file: PathBuf::from(DEFAULT_RUNTIME_KEY_FILE),
             terminal_scrollback_bytes: DEFAULT_TERMINAL_SCROLLBACK_BYTES,
             terminal_detach_ttl_secs: DEFAULT_TERMINAL_DETACH_TTL_SECS,
+            info: DEFAULT_INFO.to_string(),
+            system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
         }
     }
 }
@@ -137,6 +151,12 @@ impl RuntimeConfig {
             "TERMINAL_DETACH_TTL_SECS",
             cfg.terminal_detach_ttl_secs,
         );
+        if let Some(v) = get("OPEN_TERMINAL_INFO") {
+            cfg.info = v;
+        }
+        if let Some(v) = get("OPEN_TERMINAL_SYSTEM_PROMPT") {
+            cfg.system_prompt = v;
+        }
         cfg
     }
 }
@@ -202,6 +222,8 @@ mod tests {
             cfg.runtime_key_file,
             PathBuf::from("/etc/runtime-key/api-key")
         );
+        assert_eq!(cfg.info, "");
+        assert_eq!(cfg.system_prompt, "");
     }
 
     #[test]
@@ -217,6 +239,8 @@ mod tests {
             ("MAX_TERMINAL_SESSIONS", "4"),
             ("SHELL", "/bin/sh"),
             ("RUNTIME_KEY_FILE", "/keys/k"),
+            ("OPEN_TERMINAL_INFO", "Physics dept sandbox"),
+            ("OPEN_TERMINAL_SYSTEM_PROMPT", "host={{hostname}}"),
         ]));
         assert_eq!(cfg.workdir, PathBuf::from("/tmp/ws"));
         assert_eq!(cfg.max_procs, 512);
@@ -228,6 +252,8 @@ mod tests {
         assert_eq!(cfg.max_terminal_sessions, 4);
         assert_eq!(cfg.shell, "/bin/sh");
         assert_eq!(cfg.runtime_key_file, PathBuf::from("/keys/k"));
+        assert_eq!(cfg.info, "Physics dept sandbox");
+        assert_eq!(cfg.system_prompt, "host={{hostname}}");
     }
 
     #[test]

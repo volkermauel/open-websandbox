@@ -365,6 +365,47 @@ pub async fn serve_file(
         .into_response())
 }
 
+// --- /files/display ---------------------------------------------------------
+
+/// Signal that a file should be shown to the user (upstream 0.2.9 contract).
+///
+/// This is a **signaling** endpoint, not a byte-serving one: upstream
+/// `display_file` (open_terminal/main.py @ v0.12.3) resolves the path and
+/// reports `exists`; the consuming client opens its own viewer. A missing
+/// file is a successful `exists: false` response — only an invalid path
+/// errors. Divergence: ours confines the resolved path to the workspace
+/// (400 on escape) like every other file endpoint; upstream single-user
+/// mode resolves arbitrary host paths.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace.
+#[utoipa::path(
+    get,
+    path = "/files/display",
+    tag = "files",
+    params(PathQuery),
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Resolved path + exists flag (show-file signal)", body = serde_json::Value),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse)
+    )
+)]
+pub async fn display_file(
+    _auth: Authed,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<PathQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let base = base_of(&state, &headers)?;
+    let resolved = safe_path(&q.path, &base)?;
+    let exists = resolved.is_file();
+    Ok(Json(
+        serde_json::json!({ "path": resolved, "exists": exists }),
+    ))
+}
+
 // --- /files/write ------------------------------------------------------------
 
 /// Request body for `POST /files/write`: overwrite a file with the given content.

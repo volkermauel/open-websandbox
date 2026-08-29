@@ -10,12 +10,14 @@ use axum::Router;
 
 use crate::execute::execute;
 use crate::files::{
-    archive, delete_entry, get_cwd, glob_search, grep, list_dir, list_ports, match_files, mkdir,
+    archive, delete_entry, display_file, get_cwd, glob_search, grep, list_dir, match_files, mkdir,
     move_entry, read_file, replace, search_files, serve_file, set_cwd, tool_download, tool_exists,
     tool_list, tool_list_root, tool_upload, upload, view_file, write_file,
 };
+use crate::ports::{list_ports, port_proxy, port_proxy_path};
 use crate::snapshot::{restore, snapshot};
 use crate::state::AppState;
+use crate::system::{get_info, get_system};
 use crate::terminals::{create_terminal, kill_terminal, list_terminals, terminal_get_or_ws};
 
 /// Health/info payload returned by `GET /`. Field order is fixed
@@ -41,14 +43,15 @@ async fn ok() -> axum::http::StatusCode {
 ///
 /// Unauthenticated exactly like upstream: it leaks only feature flags, and
 /// inside the cluster the route is reachable solely through the broker
-/// relay (broker auth still applies there). We always serve terminals and
-/// implement neither notebooks nor a system-prompt endpoint.
+/// relay (broker auth still applies there). We always serve terminals,
+/// serve the system-prompt endpoint (stage 2, #169) and implement neither
+/// notebooks.
 async fn api_config() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({
         "features": {
             "terminal": true,
             "notebooks": false,
-            "system": false,
+            "system": true,
         }
     }))
 }
@@ -84,6 +87,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/files/view", get(view_file))
         // open-terminal 0.11.34: path-based inline serving for FileNav iframes.
         .route("/files/serve/{*file_path}", get(serve_file))
+        // open-terminal 0.2.9: show-file signaling ({path, exists}).
+        .route("/files/display", get(display_file))
         // open-terminal 0.11.36 / 0.12.0: file-picker + unified search.
         .route("/files/search", get(search_files))
         .route("/files/matches", get(match_files))
@@ -101,8 +106,45 @@ pub fn build_router(state: AppState) -> Router {
         .route("/exists/{*file_path}", get(tool_exists))
         // LLM-tool upload (multipart) — writes the file to the workspace base.
         .route("/upload", post(tool_upload))
-        // Restricted runtime: no host-port introspection (empty ports list).
+        // open-terminal 0.9.0 ports + 0.12.2 session-owned proxy (#169 stage 2):
+        // both fed by the same descendant-owned visibility scan.
         .route("/ports", get(list_ports))
+        // Exactly upstream's method set (others 405 like upstream).
+        .route(
+            "/proxy/{port}",
+            get(port_proxy)
+                .post(port_proxy)
+                .put(port_proxy)
+                .patch(port_proxy)
+                .delete(port_proxy)
+                .head(port_proxy)
+                .options(port_proxy),
+        )
+        // Trailing-slash form ("/proxy/8080/"): upstream's `{path:path}`
+        // captures an empty path here; axum needs the route spelled out.
+        .route(
+            "/proxy/{port}/",
+            get(port_proxy)
+                .post(port_proxy)
+                .put(port_proxy)
+                .patch(port_proxy)
+                .delete(port_proxy)
+                .head(port_proxy)
+                .options(port_proxy),
+        )
+        .route(
+            "/proxy/{port}/{*path}",
+            get(port_proxy_path)
+                .post(port_proxy_path)
+                .put(port_proxy_path)
+                .patch(port_proxy_path)
+                .delete(port_proxy_path)
+                .head(port_proxy_path)
+                .options(port_proxy_path),
+        )
+        // open-terminal 0.11.27 / 0.11.6: LLM grounding + operator info.
+        .route("/system", get(get_system))
+        .route("/info", get(get_info))
         // S3-tiered workspace offload/restore (#52): stream native tar+zstd.
         .route("/snapshot", get(snapshot))
         .route("/restore", put(restore))

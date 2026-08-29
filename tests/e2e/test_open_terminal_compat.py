@@ -1,12 +1,20 @@
-"""#164 stage 1: the open-terminal v0.12.3 compatibility surface, driven
-end-to-end through the broker relay (the exact path OWUI takes).
+"""#164 stage 1 + #169 stage 2: the open-terminal v0.12.3 compatibility
+surface, driven end-to-end through the broker relay (the exact path OWUI
+takes).
 
-Covers: ``GET /files/serve/{path}`` (inline bytes), ``GET /api/config``
+Stage 1: ``GET /files/serve/{path}`` (inline bytes), ``GET /api/config``
 (feature discovery), ``/files/list`` writability flags, ``/files/read``
 line ranges + 415 binaries, ``GET /files/search`` and ``GET /files/matches``.
-Contract-level detail (ranking, tie-breaks, UTF-16 columns) lives in the Rust
-contract tests; this file proves the broker forwards the new routes with
-auth intact and the round-trips are byte-exact.
+
+Stage 2: ``GET /system`` (upstream-verbatim LLM prompt), ``GET /info``
+(404 while unset, like upstream's conditional registration),
+``GET /files/display`` (show-file signaling), real ``GET /ports`` and the
+``/proxy/{port}`` 0.12.2 ownership lockdown (the runtime's own :8888 must
+NOT be proxyable — it is not a descendant of itself).
+
+Contract-level detail (prompt byte-exactness, happy-path proxying, UTF-16
+columns) lives in the Rust contract tests; this file proves the broker
+forwards the new routes with auth intact.
 """
 
 import hashlib
@@ -63,7 +71,8 @@ def test_api_config_reports_v0_12_3_features():
         features = resp.json()["features"]
         assert features["terminal"] is True
         assert features["notebooks"] is False
-        assert features["system"] is False
+        # Flipped in stage 2 (#169): GET /system is now served.
+        assert features["system"] is True
 
 
 def test_list_carries_writable_flags_and_read_slices_lines():
@@ -158,3 +167,99 @@ def test_search_and_matches_find_uploaded_files():
             "/files/matches", params={"query": "  "}, headers=headers_for(TEST_USER, session)
         )
         assert blank.status_code == 400
+
+
+# --- #169 stage 2 -------------------------------------------------------------
+
+
+def test_system_returns_upstream_prompt_through_the_relay():
+    session = f"ott-sys-{hashlib.sha256(b'sys').hexdigest()[:8]}"
+    with httpx.Client(base_url=BROKER_URL, timeout=CLAIM_TIMEOUT) as client:
+        _claim_ready_session(client, TEST_USER, session)
+        resp = client.get("/system", headers=headers_for(TEST_USER, session))
+        assert resp.status_code == 200, resp.text[:200]
+        prompt = resp.json()["prompt"]
+        # Upstream-verbatim opening + closing (values grounded in the pod).
+        assert prompt.startswith("You have access to a computer running Linux ")
+        assert prompt.endswith(
+            "If a command produces no output, that typically means it succeeded."
+        )
+
+        unauth = client.get("/system")
+        assert unauth.status_code == 401
+
+
+def test_info_404s_like_upstreams_unregistered_route():
+    # The chart sets no OPEN_TERMINAL_INFO, so the route 404s exactly like
+    # upstream's `if OPEN_TERMINAL_INFO:` conditional registration.
+    session = f"ott-info-{hashlib.sha256(b'info').hexdigest()[:8]}"
+    with httpx.Client(base_url=BROKER_URL, timeout=CLAIM_TIMEOUT) as client:
+        _claim_ready_session(client, TEST_USER, session)
+        resp = client.get("/info", headers=headers_for(TEST_USER, session))
+        assert resp.status_code == 404, resp.text[:200]
+        assert resp.json() == {"detail": "Not Found"}
+
+
+def test_display_signals_file_existence():
+    session = f"ott-disp-{hashlib.sha256(b'disp').hexdigest()[:8]}"
+    with httpx.Client(base_url=BROKER_URL, timeout=CLAIM_TIMEOUT) as client:
+        _claim_ready_session(client, TEST_USER, session)
+        up = client.post(
+            "/files/write",
+            json={"path": "preview.md", "content": "# shown"},
+            headers=headers_for(TEST_USER, session),
+        )
+        assert up.status_code == 200, up.text[:200]
+
+        shown = client.get(
+            "/files/display",
+            params={"path": "preview.md"},
+            headers=headers_for(TEST_USER, session),
+        )
+        assert shown.status_code == 200, shown.text[:200]
+        body = shown.json()
+        assert body["exists"] is True
+        assert body["path"].endswith("preview.md")
+
+        missing = client.get(
+            "/files/display",
+            params={"path": "nope.md"},
+            headers=headers_for(TEST_USER, session),
+        )
+        assert missing.status_code == 200
+        assert missing.json()["exists"] is False
+
+
+def test_ports_shape_and_proxy_lockdown():
+    session = f"ott-proxy-{hashlib.sha256(b'proxy').hexdigest()[:8]}"
+    with httpx.Client(base_url=BROKER_URL, timeout=CLAIM_TIMEOUT) as client:
+        _claim_ready_session(client, TEST_USER, session)
+
+        ports = client.get("/ports", headers=headers_for(TEST_USER, session))
+        assert ports.status_code == 200, ports.text[:200]
+        rows = ports.json()["ports"]
+        assert isinstance(rows, list)
+        for row in rows:
+            assert isinstance(row["port"], int)
+            assert "uid" not in row, "uid stripped like upstream"
+
+        # The runtime's own :8888 listener is owned by the runtime process
+        # itself — NOT a descendant — so the 0.12.2 lockdown must 404 it.
+        own = client.get("/proxy/8888/", headers=headers_for(TEST_USER, session))
+        assert own.status_code == 404, own.text[:200]
+        assert own.json() == {"detail": "Port not found"}
+
+        # Unlistened port: same upstream 404; port 0: upstream range message
+        # (upstream 422 vs our documented 400 divergence).
+        unlistened = client.get(
+            "/proxy/47000/", headers=headers_for(TEST_USER, session)
+        )
+        assert unlistened.status_code == 404, unlistened.text[:200]
+        assert unlistened.json() == {"detail": "Port not found"}
+
+        zero = client.get("/proxy/0/x", headers=headers_for(TEST_USER, session))
+        assert zero.status_code == 400, zero.text[:200]
+        assert zero.json() == {"detail": "Port must be between 1 and 65535"}
+
+        unauth = client.get("/proxy/8888/")
+        assert unauth.status_code == 401

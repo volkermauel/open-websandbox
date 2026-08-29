@@ -16,9 +16,11 @@ pub mod execute;
 pub mod files;
 pub mod metrics;
 pub mod openapi;
+pub mod ports;
 pub mod safe_path;
 pub mod snapshot;
 pub mod state;
+pub mod system;
 pub mod terminals;
 
 pub use app::build_router;
