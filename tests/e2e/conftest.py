@@ -143,7 +143,6 @@ def second_broker(second_session) -> Iterator[httpx.Client]:
 # the original "exec boto3 inside the broker pod" trick no longer applies;
 # instead the test host runs boto3 + reads the same creds the broker uses.
 import base64  # noqa: E402
-import subprocess  # noqa: E402
 import urllib.request  # noqa: E402
 
 S3_SYS_NS = os.environ.get("E2E_SYS_NS", "agent-sandbox-system")
