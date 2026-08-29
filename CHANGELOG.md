@@ -12,6 +12,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-08-29
+
+### Fixed — open-terminal FileNav parity (#179)
+
+- `GET /files/cwd` now returns `root` alongside `cwd`/`home` (upstream
+  `get_file_browser_root`): OWUI FileNav roots its tree at `root ?? "/"` and
+  then lists `/`, which the safe-path jail correctly rejected with 400 — the
+  browser could not browse the workspace. Terminal WS is unaffected.
+
+### Changed — CI (#177)
+
+- e2e: the four fast PVC-family lanes (per-user-pvc, shared-subpath,
+  rate-limit, drain) now share ONE KIND cluster sequentially in a new
+  `e2e-pvc-fast` job with a full namespace-delete reset between modes;
+  `pvc-s3`/`pvc-s3-shared` keep their own runners (pytest-bound).
+  9 → 6 lane runners, wall clock unchanged (~13 m).
+
 ## [0.1.3] - 2026-08-29
 
 ### Added — open-terminal v0.12.3 compatibility, stage 2 (#169)
