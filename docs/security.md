@@ -47,7 +47,7 @@ scope for v0.1.0). See `openspec/changes/archive/adopt-agent-sandbox/design.md` 
 
 The [workbench toolchain](toolchain.md) image gives the sandbox user passwordless
 sudo for exactly the apt-get verbs (`update, install, remove, purge, upgrade,
-`full-upgrade, clean, autoremove` — `/etc/sudoers.d/sandbox`, `visudo -c`-checked at
+full-upgrade, clean, autoremove` — `/etc/sudoers.d/sandbox`, `visudo -c`-checked at
 build). Every invocation, allowed or denied, is appended to `/var/log/sudo.log` inside
 the sandbox. Nothing else gets sudo; `npm`/`pip` stay user-mode by design.
 
@@ -55,7 +55,7 @@ Why this is acceptable: **apt maintainer scripts run as root, but only inside th
 sandbox's own containment** —
 
 - **gVisor (`runsc`)**: the root the scripts get is a userspace-kernel guest root, not the
-  host's. runsc runs with `allow_suid` (setuid emulation enabled — gVisor [#5299](https://github.com/google/gvisor/issues/5299);
+  host's. runsc runs with `allow-suid` (setuid emulation enabled — gVisor [#5299](https://github.com/google/gvisor/issues/5299);
   without it the setuid `sudo` binary cannot elevate at all): the elevation is emulated
   inside the sentry and never confers host privileges.
 - **Default-deny egress**: apt itself can only reach public-internet DNS/HTTP(S); the
@@ -80,7 +80,6 @@ the setuid `sudo` binary of every capability at `exec`, and `apt`'s maintainer s
 (chown/setuid on installed files, service starts) need the working set anyway. Everything the runtime
 itself serves still runs as uid 1000; only the whitelisted apt verbs execute as root,
 and only within the pod's own filesystem.
-
 
 ## Residual risks (v0.1.0)
 

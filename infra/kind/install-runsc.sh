@@ -37,10 +37,10 @@ sudo chmod -R a+rX /usr/local/bin/gvisor-bin
 echo "== runsc installed =="
 /usr/local/bin/runsc --version
 
-# runsc config: setuid emulation for the workbench sudo-apt surface (gVisor
+# SHIM config: setuid emulation for the workbench sudo-apt surface (gVisor
 # #5299 — runsc mounts container filesystems nosuid by default; `sudo` inside
 # the sandbox needs allow-suid). This file is the SHIM config (wired via
 # options.ConfigPath in kind-config-gvisor.yaml): runsc flags go under
 # [runsc_config] as string key/value pairs.
 sudo mkdir -p /etc/runsc
-printf '[runsc_config]\n  allow_suid = "true"\n' | sudo tee /etc/runsc/config.toml >/dev/null
+printf '[runsc_config]\n  allow-suid = "true"\n' | sudo tee /etc/runsc/config.toml >/dev/null

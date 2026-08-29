@@ -56,7 +56,7 @@ fi
 mkdir -p "$(dirname "$RUNSC_CFG")"
 # runsc flags go under [runsc_config] as STRING values — this file is the
 # containerd-shim-runsc-v1 config (options.ConfigPath), not a bare runsc config.
-printf '[runsc_config]\n  platform = "%s"\n  allow_suid = "true"\n' "$RUNSC_PLATFORM" > "$RUNSC_CFG"
+printf '[runsc_config]\n  platform = "%s"\n  allow-suid = "true"\n' "$RUNSC_PLATFORM" > "$RUNSC_CFG"
 echo "    wrote $RUNSC_CFG (shim config: platform=$RUNSC_PLATFORM, allow_suid=true for the workbench sudo-apt surface)"
 
 # --- 3. inject runsc handler into the containerd TEMPLATE (idempotent) --------

@@ -68,6 +68,7 @@ the same root the runtime's conventions section is rendered from.
   ```bash
   python3 -m venv "${WORKDIR}/.venv" && . "${WORKDIR}/.venv/bin/activate"
   ```
+
 - **npm user prefix** (keeps npm's global dir out of the ephemeral rootfs):
 
   ```bash
@@ -125,11 +126,11 @@ Imports/prefixes opt in explicitly (`PYTHONPATH=…`, `npm prefix`), per command
 Every invocation (allowed or denied) is logged to `/var/log/sudo.log` inside the sandbox
 (world-readable).
 
-> **gVisor nodes**: setuid elevation requires runsc's `allow_suid` setting
+> **gVisor nodes**: setuid elevation requires runsc's `allow-suid` flag
 > ([gVisor #5299](https://github.com/google/gvisor/issues/5299) — runsc mounts container
 > filesystems `nosuid` by default). [`infra/gvisor/install-gvisor-node.sh`](../infra/gvisor/install-gvisor-node.sh)
 > and [`infra/kind/install-runsc.sh`](../infra/kind/install-runsc.sh) write
-> `/etc/runsc/config.toml` with `[runsc_config]` → `allow_suid = "true"` (the shim
+> `/etc/runsc/config.toml` with `[runsc_config]` → `allow-suid = "true"` (the shim
 > config — runsc flags are string values under that section) and wire it into containerd via
 > `options.ConfigPath` — re-run them if `sudo` fails with "effective uid is not 0".
 `npm`, `pip`, and friends stay user-mode by design. The security posture — why running
