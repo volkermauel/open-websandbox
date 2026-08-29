@@ -137,7 +137,7 @@ jobs:
           pct = 100.0 * hit / lines if lines else 0.0
           print(f"line coverage: {hit}/{lines} ({pct:.1f}%)")
           PY
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: rust-coverage-lcov
           path: rust/lcov.info
