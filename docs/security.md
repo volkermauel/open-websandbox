@@ -64,10 +64,13 @@ sandbox's own containment** —
 - **No host mounts, no service-account token, caps dropped**: the sandbox has no
   Kubernetes identity and no privileged device to reach for.
 
-This is the reason the **runtime container now sets `readOnlyRootFilesystem: false`**
-(it was `true`): `apt-get install` must write `/usr`, `/etc`, and `/var/lib/dpkg` in the
-sandbox's own rootfs. The change is scoped to the **runtime container only** — the broker
-and router containers keep `readOnlyRootFilesystem: true`. Everything the runtime
+This is the reason the **runtime container now sets `readOnlyRootFilesystem: false` and
+`allowPrivilegeEscalation: true`** (both were the restricted defaults): `apt-get install`
+must write `/usr`, `/etc`, and `/var/lib/dpkg` in the sandbox's own rootfs, and the setuid
+`sudo` binary needs to escape the no-new-privileges regime that
+`allowPrivilegeEscalation: false` imposes. The runtime container therefore leaves the
+*restricted* Pod Security profile on these two axes (the runtime namespace sets no enforce
+labels); broker and router stay fully restricted. Everything the runtime
 itself serves still runs as uid 1000; only the whitelisted apt verbs execute as root,
 and only within the pod's own filesystem.
 

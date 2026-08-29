@@ -124,11 +124,14 @@ spec:
           value: {{ $otlp | quote }}
         {{- end }}
         securityContext:
-          allowPrivilegeEscalation: false
           # Workbench sudo-apt surface (openspec/changes/2026-08-29-workbench-toolchain):
-          # `sudo apt-get install` needs a WRITABLE rootfs — the installed
-          # packages land in the ephemeral per-pod rootfs and vanish on pod
-          # restart (docs/security.md § sudo posture).
+          # the whitelisted `sudo apt-get` needs (a) privilege escalation so the
+          # setuid sudo binary can transition to root, and (b) a WRITABLE rootfs —
+          # installed packages land in the ephemeral per-pod rootfs and vanish on
+          # pod restart (docs/security.md § sudo posture). This opts the runtime
+          # container out of the restricted profile on these two axes; everything
+          # else stays non-root with all capabilities dropped.
+          allowPrivilegeEscalation: true
           readOnlyRootFilesystem: false
           runAsNonRoot: true
           runAsUser: {{ .Values.sandboxTemplate.uid }}

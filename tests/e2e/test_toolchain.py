@@ -65,10 +65,13 @@ def test_system_appends_toolchain_manifest_and_conventions():
         assert resp.status_code == 200, resp.text[:200]
         prompt = resp.json()["prompt"]
 
-        # Append-only: the upstream-verbatim tail is still the tail.
-        assert prompt.endswith(
+        # Append-only: the upstream-verbatim tail is intact and PRECEDES the
+        # knob-gated sections (the manifest is appended after it).
+        upstream_tail = (
             "If a command produces no output, that typically means it succeeded."
         )
+        assert upstream_tail in prompt
+        assert prompt.index(upstream_tail) < prompt.index("## Available toolchain")
 
         # The two knob-gated sections (SANDBOX_TOOLS_MANIFEST, default-on).
         assert "## Available toolchain (base image)" in prompt

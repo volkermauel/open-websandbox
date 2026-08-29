@@ -59,7 +59,10 @@ spec:
         securityContext:
           # Workbench sudo-apt surface (openspec/changes/2026-08-29-workbench-toolchain):
           # `sudo apt-get install` needs a WRITABLE rootfs — installed packages
-          # land in the ephemeral per-pod rootfs and vanish on pod restart.
+          # land in the ephemeral per-pod rootfs and vanish on pod restart — and
+          # privilege escalation so the setuid sudo binary can run (chart parity:
+          # templates/sandboxtemplate.yaml; docs/security.md § sudo posture).
+          allowPrivilegeEscalation: true
           readOnlyRootFilesystem: false
           runAsNonRoot: true
           runAsUser: 1000

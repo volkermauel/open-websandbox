@@ -181,9 +181,13 @@ def test_system_returns_upstream_prompt_through_the_relay():
         prompt = resp.json()["prompt"]
         # Upstream-verbatim opening + closing (values grounded in the pod).
         assert prompt.startswith("You have access to a computer running Linux ")
-        assert prompt.endswith(
+        upstream_tail = (
             "If a command produces no output, that typically means it succeeded."
         )
+        assert upstream_tail in prompt
+        # Workbench knob (SANDBOX_TOOLS_MANIFEST, default-on) appends AFTER the
+        # upstream prompt — the upstream text stays verbatim and comes first.
+        assert prompt.index(upstream_tail) < prompt.index("## Available toolchain")
 
         unauth = client.get("/system")
         assert unauth.status_code == 401

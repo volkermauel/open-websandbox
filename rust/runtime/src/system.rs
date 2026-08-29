@@ -211,7 +211,7 @@ pub fn expand_template(template: &str, g: &Grounding) -> String {
 ///
 /// When `tools_manifest` is set (workbench knob `SANDBOX_TOOLS_MANIFEST`),
 /// the toolchain + workspace-conventions sections are appended AFTER the
-/// (default or operator-overridden) prompt — see [`append_sections`].
+/// (default or operator-overridden) prompt; the private `append_sections` helper does the appending.
 #[must_use]
 pub async fn system_prompt(
     shell: &str,
