@@ -222,10 +222,10 @@ pub async fn system_prompt(
 ) -> String {
     let mut g = grounding_from_env(shell);
     g.python_version = probe_python_version().await;
-    let mut prompt = if !template.is_empty() {
-        expand_template(template, &g)
-    } else {
+    let mut prompt = if template.is_empty() {
         render_default_prompt(&g, info)
+    } else {
+        expand_template(template, &g)
     };
     append_sections(&mut prompt, workdir, tools_manifest);
     prompt
@@ -249,7 +249,9 @@ fn append_sections(prompt: &mut String, workdir: &Path, tools_manifest: Option<&
             prompt.push_str("\n\n");
             prompt.push_str(&workspace_conventions(workdir));
         }
-        Ok(_) => tracing::warn!(path = %path.display(), "tools manifest empty; /system prompt stays as rendered"),
+        Ok(_) => {
+            tracing::warn!(path = %path.display(), "tools manifest empty; /system prompt stays as rendered");
+        }
         Err(e) => tracing::warn!(
             path = %path.display(),
             error = %e,
@@ -416,13 +418,25 @@ mod tests {
 
     #[test]
     fn manifest_appends_toolchain_and_conventions_sections() {
-        let manifest = write_manifest("- Python and data — python3 3.11.2, pip: pandas 2.2.3, openpyxl 3.1.5");
+        let manifest =
+            write_manifest("- Python and data — python3 3.11.2, pip: pandas 2.2.3, openpyxl 3.1.5");
         let mut prompt = render_default_prompt(&synthetic(), "");
-        append_sections(&mut prompt, std::path::Path::new("/workspace"), Some(&manifest));
+        append_sections(
+            &mut prompt,
+            std::path::Path::new("/workspace"),
+            Some(&manifest),
+        );
 
-        let toolchain = prompt.find("## Available toolchain (base image)").expect("toolchain section");
-        let conventions = prompt.find("## Workspace conventions").expect("conventions section");
-        assert!(toolchain < conventions, "conventions come after the toolchain section");
+        let toolchain = prompt
+            .find("## Available toolchain (base image)")
+            .expect("toolchain section");
+        let conventions = prompt
+            .find("## Workspace conventions")
+            .expect("conventions section");
+        assert!(
+            toolchain < conventions,
+            "conventions come after the toolchain section"
+        );
         assert!(prompt.contains("pandas 2.2.3"));
         // The upstream-verbatim body is still the prefix, untouched.
         assert!(prompt.starts_with("You have access to a computer running Linux"));
@@ -452,7 +466,11 @@ mod tests {
         let g = synthetic();
         let mut prompt = expand_template("Custom host={{hostname}} template.", &g);
         let manifest = write_manifest("- Archives — gzip 1.12");
-        append_sections(&mut prompt, std::path::Path::new("/workspace"), Some(&manifest));
+        append_sections(
+            &mut prompt,
+            std::path::Path::new("/workspace"),
+            Some(&manifest),
+        );
         assert!(prompt.starts_with("Custom host=sandbox-7f9a template."));
         assert!(prompt.contains("## Available toolchain (base image)"));
         assert!(prompt.contains("## Workspace conventions"));
@@ -461,8 +479,14 @@ mod tests {
     #[test]
     fn conventions_are_built_from_the_configured_workdir() {
         let c = workspace_conventions(std::path::Path::new("/data/ws"));
-        assert!(c.contains("/data/ws/tmp"), "scratch dir must follow WORKDIR: {c}");
-        assert!(c.contains("/data/ws/.venv"), "venv path must follow WORKDIR: {c}");
+        assert!(
+            c.contains("/data/ws/tmp"),
+            "scratch dir must follow WORKDIR: {c}"
+        );
+        assert!(
+            c.contains("/data/ws/.venv"),
+            "venv path must follow WORKDIR: {c}"
+        );
         assert!(
             !c.contains("/workspace"),
             "no hardcoded default workspace root may appear: {c}"

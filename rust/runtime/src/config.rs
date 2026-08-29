@@ -50,13 +50,11 @@ const DEFAULT_INFO: &str = "";
 /// `OPEN_TERMINAL_SYSTEM_PROMPT` — upstream name; empty default = the
 /// upstream-verbatim built-in prompt).
 const DEFAULT_SYSTEM_PROMPT: &str = "";
-/// Optional capability-manifest path appended to the `GET /system` prompt
-/// (env `SANDBOX_TOOLS_MANIFEST`; workbench image sets it to
-/// `/usr/local/share/sandbox-capabilities.md`). Empty/unset = disabled — the
-/// prompt stays byte-for-byte upstream. The same knob also gates the
-/// config-driven `## Workspace conventions` section (built from `workdir`,
-/// not from the static file — WORKDIR varies per deployment).
-
+// Capability-manifest knob (env `SANDBOX_TOOLS_MANIFEST`; workbench image
+// sets it to `/usr/local/share/sandbox-capabilities.md`). Empty/unset =
+// disabled — the prompt stays byte-for-byte upstream. The same knob also
+// gates the config-driven `## Workspace conventions` section (built from
+// `workdir`, not from the static file — WORKDIR varies per deployment).
 /// Runtime configuration loaded from the environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfig {
@@ -255,7 +253,10 @@ mod tests {
             ("RUNTIME_KEY_FILE", "/keys/k"),
             ("OPEN_TERMINAL_INFO", "Physics dept sandbox"),
             ("OPEN_TERMINAL_SYSTEM_PROMPT", "host={{hostname}}"),
-            ("SANDBOX_TOOLS_MANIFEST", "/usr/local/share/sandbox-capabilities.md"),
+            (
+                "SANDBOX_TOOLS_MANIFEST",
+                "/usr/local/share/sandbox-capabilities.md",
+            ),
         ]));
         assert_eq!(cfg.workdir, PathBuf::from("/tmp/ws"));
         assert_eq!(cfg.max_procs, 512);
