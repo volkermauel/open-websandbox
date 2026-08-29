@@ -41,25 +41,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Full product matrix (3 images x 2 arch = 6 legs). Do NOT use
+        # `include:` without axis keys: such entries merge into EVERY
+        # combination and later entries overwrite earlier ones (the v0.1.4
+        # first run built only router).
+        image: [broker, runtime, router]
         arch: [amd64, arm64]
-        include:
-          - image: broker
-            context: rust
-            dockerfile: rust/broker/Dockerfile
-            buildargs: ''
-          - image: runtime
-            context: rust
-            dockerfile: rust/runtime/Dockerfile
-            buildargs: ''
-          - image: router
-            context: agent-sandbox
-            dockerfile: agent-sandbox/sandbox-router/Dockerfile
-            buildargs: 'VERSION=v0.5.6'
-            upstream: true
     steps:
       - uses: actions/checkout@v7
       - name: Checkout upstream agent-sandbox@v0.5.6
-        if: matrix.upstream
+        if: matrix.image == 'router'
         uses: actions/checkout@v7
         with:
           repository: kubernetes-sigs/agent-sandbox
@@ -74,8 +65,8 @@ jobs:
       - id: build
         uses: docker/build-push-action@v7
         with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
+          context: ${{ matrix.image == 'router' && 'agent-sandbox' || 'rust' }}
+          file: ${{ matrix.image == 'router' && 'agent-sandbox/sandbox-router/Dockerfile' || format('rust/{0}/Dockerfile', matrix.image) }}
           platforms: linux/${{ matrix.arch }}
           push: true
           tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/open-websandbox-${{ matrix.image }}:${{ github.ref_name }}-${{ matrix.arch }}
@@ -84,7 +75,7 @@ jobs:
             org.opencontainers.image.version=${{ github.ref_name }}
           cache-from: type=registry,ref=ghcr.io/volkermauel/cache/${{ matrix.image }}:buildkit
           cache-to: type=registry,ref=ghcr.io/volkermauel/cache/${{ matrix.image }}:buildkit,mode=max,scope=buildkit
-          build-args: ${{ matrix.buildargs }}
+          build-args: ${{ matrix.image == 'router' && 'VERSION=v0.5.6' || '' }}
 
   release-images:
     # Merge the per-arch images into the final multi-arch manifest list
@@ -122,9 +113,12 @@ jobs:
             -t "${IMAGE}:${SHA_TAG}" \
             "${EXTRA_TAGS[@]}" \
             "${IMAGE}:${TAG}-amd64" \
-            "${IMAGE}:${TAG}-arm64" | tee merge.out
-          DIGEST="$(grep -oE 'sha256:[0-9a-f]{64}' merge.out | head -n1)"
-          test -n "${DIGEST}" || { echo "no digest in imagetools output"; exit 1; }
+            "${IMAGE}:${TAG}-arm64"
+          # The created manifest list's digest: first sha256 in the inspect
+          # output is the list itself (create's own output has no digest).
+          DIGEST="$(docker buildx imagetools inspect "${IMAGE}:${TAG}" \
+            | grep -oE 'sha256:[0-9a-f]{64}' | head -n1)"
+          test -n "${DIGEST}" || { echo "no digest from imagetools inspect"; exit 1; }
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
