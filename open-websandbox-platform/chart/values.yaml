@@ -165,6 +165,12 @@ sandboxTemplate:
   # Seconds a DETACHED terminal (WS gone, shell alive) survives awaiting a
   # resume before the runtime's idle sweep reaps it.
   terminalDetachTtlSecs: 900
+  # Workbench capability manifest (openspec/changes/2026-08-29-workbench-toolchain):
+  # render SANDBOX_TOOLS_MANIFEST into sandbox pods so /system appends the
+  # baked-in toolchain inventory + workspace conventions to the LLM prompt.
+  # false renders the env explicitly empty (the image ENV would otherwise
+  # keep it enabled).
+  toolsManifest: true
   uid: 1000
   # Dedicated sandbox node pools (issue #126): rendered onto the runtime podTemplate.
   # Pair with a labeled (+ optionally tainted) node pool, e.g. label

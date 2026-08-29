@@ -44,6 +44,9 @@ spec:
         - { name: MAX_TIMEOUT, value: "600" }
         # Per-sandbox process cap (RLIMIT_NPROC); gVisor enforces it.
         - { name: MAX_PROCS, value: "256" }
+        # Workbench capability manifest (openspec/changes/2026-08-29-workbench-toolchain):
+        # /system appends the baked-in toolchain inventory + workspace conventions.
+        - { name: SANDBOX_TOOLS_MANIFEST, value: /usr/local/share/sandbox-capabilities.md }
         # Suppress kubelet-injected KUBERNETES_* env (leaks service-CIDR / API IP).
         - { name: KUBERNETES_SERVICE_HOST, value: "" }
         - { name: KUBERNETES_SERVICE_PORT, value: "" }
@@ -54,8 +57,10 @@ spec:
         - { name: KUBERNETES_PORT_443_TCP_PORT, value: "" }
         - { name: KUBERNETES_PORT_443_TCP_PROTO, value: "" }
         securityContext:
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
+          # Workbench sudo-apt surface (openspec/changes/2026-08-29-workbench-toolchain):
+          # `sudo apt-get install` needs a WRITABLE rootfs — installed packages
+          # land in the ephemeral per-pod rootfs and vanish on pod restart.
+          readOnlyRootFilesystem: false
           runAsNonRoot: true
           runAsUser: 1000
           runAsGroup: 1000
