@@ -22,7 +22,8 @@ installs, so the manifest and the image contents cannot drift.
   and the duckdb CLI are fetched as tarballs/artifacts pinned by VERSION and
   SHA256 under `/opt`, with PATH/`DOTNET_ROOT`/`PSModulePath` wired up, and
   `wix` is installed only if `dotnet tool install wix` succeeds on linux
-  (otherwise `wixl` from msitools is the documented MSI path)
+  (in practice skipped — Windows-only; Debian ships msitools without `wixl`,
+  so PSAppDeployToolkit + nsis + msitools are the documented MSI-adjacent paths)
 
 ### Requirement: apt-only sudo whitelist
 

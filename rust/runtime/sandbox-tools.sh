@@ -42,7 +42,7 @@ probe R R --version
 probe node node --version
 probe pwsh pwsh --version
 probe dotnet dotnet --version
-probe wixl wixl --version
+probe msibuild msibuild --help
 probe duckdb duckdb --version
 probe soffice soffice --version
 probe sqlite3 sqlite3 --version

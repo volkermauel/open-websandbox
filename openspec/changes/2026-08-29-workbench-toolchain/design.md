@@ -78,8 +78,10 @@ pnpm alone is fine). PowerShell 7 (`/opt/powershell`), .NET SDK 8
 (`/opt/dotnet`, `DOTNET_ROOT`), CFR jar (`/opt/tools/cfr.jar` + `cfr`
 wrapper), and the duckdb CLI (`/opt/tools`) follow the same pin+sha256
 pattern. dotnet tools (`ilspycmd` pinned; `wix` only if
-`dotnet tool install wix` succeeds on linux during the build — otherwise
-skipped and msitools' `wixl` is the documented MSI path) install into
+`dotnet tool install wix` succeeds on linux during the build — in practice
+skipped, Windows-only warning; and Debian ships msitools WITHOUT `wixl` at
+all, so PSADT + nsis + msitools' msiextract/msibuild are the documented
+Windows-packaging paths) install into
 `/opt/dotnet-tools` with `DOTNET_CLI_HOME=/opt`. PSAppDeployToolkit goes to
 `/opt/psmodules` (+ `PSModulePath`). unrar needs the `non-free` component
 appended to debian.sources (freeware license, NOTICE.md).

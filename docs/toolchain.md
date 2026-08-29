@@ -27,7 +27,7 @@ tools are pinned VERSION + SHA256 in `rust/runtime/Dockerfile`.
 | Python & data | python3 + venv/pip/dev, build-essential; pip: numpy, pandas, scipy, matplotlib, openpyxl, python-docx, python-pptx, pyarrow, duckdb, oletools, capstone, pip-audit |
 | R | r-base-core + dplyr, tidyr, ggplot2, readxl, stringr, lubridate |
 | Docs depth | pandoc, poppler-utils, qpdf, ghostscript, imagemagick, exiftool, tesseract-ocr (+deu), ocrmypdf, antiword, LibreOffice headless (`soffice`) |
-| Windows packaging | msitools (`wixl`), makensis (Debian `nsis`), innoextract, PowerShell 7.6.5, .NET SDK 8.0.424 (+ ilspycmd 9.1.0.7988), PSAppDeployToolkit 4.1.8 |
+| Windows packaging | msitools (`msiextract`/`msiinfo`/`msibuild`), makensis (Debian `nsis`), innoextract, PowerShell 7.6.5, .NET SDK 8.0.424 (+ ilspycmd 9.1.0.7988), PSAppDeployToolkit 4.1.8 |
 | Reverse engineering (light) | binutils, gdb, binwalk, yara, JDK (default-jdk-headless), CFR 0.152 (`cfr`) |
 | DB clients | sqlite3, duckdb CLI v1.5.5 |
 | Node | Node.js 22 LTS (v22.23.2 tarball, /opt/node) with npm and corepack-managed pnpm + yarn |
@@ -103,9 +103,15 @@ Imports/prefixes opt in explicitly (`PYTHONPATH=…`, `npm prefix`), per command
   RFC1918 database hosts are unreachable by design.
 - **WiX (`wix` dotnet tool)** — intentionally **not** installed: it warns at runtime that
   only Windows is supported ("All behavior after this point is undefined").
-  **`wixl` from msitools is the supported MSI path** on this image (Linux-native WiX
-  authoring; see `docs` in the [PSAppDeployToolkit](https://psappdeploytoolkit.com/)
-  ecosystem for combining `wixl`-built MSIs with the bundled toolkit module).
+  **`wixl` is not packaged by Debian either** — bookworm, bookworm-backports and
+  trixie all ship `msitools` *without* wixl (verified empirically). So this image has
+  no WiX-syntax MSI builder; the supported silent-deployment paths are:
+  [PSAppDeployToolkit](https://psappdeploytoolkit.com/) wrapper packages (the
+  NinjaOne-standard wrapper — wraps ANY installer incl. existing MSIs with silent
+  `msiexec` flags), `makensis` for new installers, and msitools'
+  `msiextract`/`msidump`/`msiinfo` for inspecting + extracting existing MSIs.
+  Raw MSI assembly is possible via `msibuild` (its own project format, not WiX
+  syntax). A `wine` + WiX lane remains a possible opt-in heavyweight profile.
 - **radare2 / upx-ucl** — not in Debian bookworm at all (any component: main,
   contrib, non-free; both were dropped from Debian 12). The RE-light area keeps
   binutils, gdb, binwalk, yara, the JDK, and CFR. Building radare2 from upstream

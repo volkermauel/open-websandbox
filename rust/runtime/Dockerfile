@@ -146,8 +146,11 @@ RUN cd /tmp \
 # dotnet tools install into /opt/dotnet-tools (on PATH, DOTNET_CLI_HOME=/opt):
 #   ilspycmd pinned @ 9.1.0.7988 (10.x+ packages target newer .NET and fail on SDK 8).
 #   wix: NOT installed — the `wix` dotnet tool warns at runtime that only
-#   Windows is supported ("All behavior after this point is undefined");
-#   msitools' `wixl` is the supported MSI path on this image (docs/toolchain.md).
+#   Windows is supported ("All behavior after this point is undefined").
+#   Debian does not package `wixl` either (bookworm, backports and trixie all
+#   ship msitools WITHOUT it — verified empirically): PSADT + nsis + msitools'
+#   msiextract/msibuild are the supported Windows-packaging paths
+#   (docs/toolchain.md).
 ARG DOTNET_VERSION=8.0.424
 ARG DOTNET_SHA256=1a0f577b530d52e54c5a53ea0b578fd1ebe421b11bfbf9b29a5bdc413bdbad64
 RUN cd /tmp \

@@ -20,8 +20,9 @@
       module, CFR jar + wrapper, duckdb CLI, `fd` symlink, sudo package +
       sudoers.d/sandbox (visudo -c), EXTERNALLY-MANAGED removal, keep
       LibreOffice/user/env/ENTRYPOINT intact
-      (wix resolved as intentionally SKIPPED — Windows-only; `wixl` is the
-      documented MSI path)
+      (wix resolved as intentionally SKIPPED — Windows-only; Debian ships
+      msitools WITHOUT wixl at all, so PSADT + nsis + msitools are the
+      documented Windows-packaging paths)
 
 ## 2. Capability manifest → LLM awareness
 
@@ -65,5 +66,7 @@
       `cargo test --workspace`
 - [x] 5.2 `helm lint` + `helm template -f values-kind.yaml`; `openspec
       validate`; `mkdocs build --strict`; `pytest tests/e2e --collect-only -q`
-- [ ] 5.3 Local `docker build` (e2e.yml context/flags mirrored) + bounded
-      smoke test; image size recorded for the PR body
+- [x] 5.3 Local `docker build` (e2e.yml context/flags mirrored: `context: rust`) +
+      bounded smoke test (rebuilt after the wixl/radare2 corrections, image
+      3.51 GB, sha256:86d97df7); manifest verified msibuild/no-wixl/no-radare2; size
+      recorded for the PR body

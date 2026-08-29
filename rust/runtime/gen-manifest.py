@@ -29,7 +29,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 VERSION_RE = re.compile(r"\d+(?:\.\d+)+")
@@ -70,7 +69,7 @@ PROBES: dict[str, list[tuple[str, list[str], str | None]]] = {
         ("tesseract", ["tesseract", "--version"], "tesseract-ocr"),
     ],
     "Windows packaging": [
-        ("wixl", ["wixl", "--version"], "msitools"),
+        ("msibuild", ["msibuild", "--help"], "msitools"),
         ("makensis", ["makensis", "-VERSION"], "nsis"),
         ("pwsh", ["pwsh", "--version"], None),
         ("dotnet", ["dotnet", "--version"], None),
@@ -78,7 +77,6 @@ PROBES: dict[str, list[tuple[str, list[str], str | None]]] = {
     ],
     "Reverse engineering light": [
         ("gdb", ["gdb", "--version"], "gdb"),
-        ("radare2", ["radare2", "-v"], "radare2"),
         ("java", ["java", "--version"], "default-jdk-headless"),
         ("cfr", ["cfr"], None),
     ],
@@ -103,8 +101,11 @@ FOOTER_FINAL = (
 
 
 def load_tools(path: Path) -> dict:
-    with path.open(encoding="utf-8") as fh:
-        return json.load(fh)
+    try:
+        with path.open(encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"error: cannot load {path}: {exc}") from exc
 
 
 def validate_tools(doc: dict) -> list[str]:
@@ -237,7 +238,7 @@ def self_test(tools_path: Path) -> int:
     failures: list[str] = []
     try:
         doc = load_tools(tools_path)
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, json.JSONDecodeError, SystemExit) as exc:
         print(f"FAIL: cannot load {tools_path}: {exc}")
         return 1
     failures.extend(validate_tools(doc))
@@ -281,7 +282,8 @@ def self_test(tools_path: Path) -> int:
 
 def main() -> int:
     default_tools = Path(__file__).resolve().parent / "tools.json"
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description=(__doc__ or "sandbox capability manifest generator").splitlines()[0])
     parser.add_argument("--tools", type=Path, default=default_tools,
                         help="path to tools.json (default: alongside this script)")
     parser.add_argument("--output", type=Path,
