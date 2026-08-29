@@ -18,8 +18,9 @@ use utoipa::OpenApi;
 // Schema types referenced by `components(schemas(...))` (bare names need them in scope).
 use crate::execute::{ExecuteRequest, ExecuteResponse};
 use crate::files::{
-    ArchiveRequest, CwdRequest, Entry, FileUpload, ListResponse, MoveRequest, PathBody,
-    ReplaceRequest, WriteRequest,
+    ArchiveRequest, ContentMatch, CwdRequest, Entry, FileUpload, ListResponse, MatchResult,
+    MatchesResponse, MoveRequest, PathBody, ReplaceRequest, SearchResponse, SearchResult,
+    WriteRequest,
 };
 use crate::snapshot::RestoreResponse;
 use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
@@ -46,6 +47,9 @@ use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
         crate::files::io::replace,
         crate::files::search::grep,
         crate::files::search::glob_search,
+        crate::files::search::search_files,
+        crate::files::search::match_files,
+        crate::files::io::serve_file,
         crate::files::archive::archive,
         crate::files::archive::upload,
         crate::files::tools::tool_download,
@@ -66,6 +70,7 @@ use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
         TermInfo, CreateResponse, DeleteResponse,
         CwdRequest, WriteRequest, PathBody, MoveRequest, ReplaceRequest, ArchiveRequest, FileUpload,
         ListResponse, Entry,
+        SearchResponse, SearchResult, MatchesResponse, MatchResult, ContentMatch,
         shared::ErrorResponse
     )),
     modifiers(&BearerAddon)

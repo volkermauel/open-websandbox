@@ -12,6 +12,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — open-terminal v0.12.3 compatibility, stage 1 (#164)
+
+- The runtime now serves the OWUI file-browser surface of the open-terminal
+  reference server: `GET /files/serve/{path}` (inline bytes for FileNav
+  iframes, 0.11.34), `GET /files/search` (ranked filename picker, gitignore
+  aware, 0.11.36) and `GET /files/matches` (unified name+content search with
+  line previews and `next_offset` pagination, 0.12.0). `/files/list` gained
+  per-entry and top-level `writable` flags (0.11.35, honest `access(W_OK)`
+  probe) and `/files/read` gained 1-indexed inclusive `start_line`/`end_line`
+  plus open-terminal's 415 for non-image binaries (0.2.7) — previously an
+  opaque 500.
+- Broker `GET /api/config` now reports the v0.12.3 feature key set
+  (`terminal`/`notebooks`/`system`); the runtime serves the same shape
+  unauthenticated like upstream.
+- New `docs/compatibility.md`: endpoint-by-endpoint matrix + documented
+  divergences, stating **compatible with open-terminal v0.12.3** for the
+  implemented surface. Deferred: `/proxy/{port}` (needs 0.12.2 ownership
+  semantics), `/system`, `/info`, `/files/display`, notebooks, Office→text
+  extraction.
+
 ### Fixed — uploads above 2 MiB (#162)
 
 - Neither the broker nor the runtime raised axum's `DefaultBodyLimit`, so its

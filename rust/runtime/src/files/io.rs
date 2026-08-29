@@ -13,7 +13,7 @@ use crate::error::ApiError;
 use crate::safe_path::{open_read, open_write, safe_path};
 use crate::state::AppState;
 
-/// One entry in a directory listing (name, type, size, modified time).
+/// One entry in a directory listing (name, type, size, modified time, writability).
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct Entry {
     name: String,
@@ -21,13 +21,17 @@ pub struct Entry {
     kind: &'static str,
     size: u64,
     modified: f64,
+    /// Whether the entry is writable (0.11.35 open-terminal contract: `access(W_OK)`).
+    writable: bool,
 }
 
-/// A directory listing: the resolved directory and its sorted entries.
+/// A directory listing: the resolved directory, its writability, and sorted entries.
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct ListResponse {
     #[schema(value_type = String)]
     dir: PathBuf,
+    /// Whether the listed directory itself is writable (0.11.35).
+    writable: bool,
     entries: Vec<Entry>,
 }
 
@@ -164,7 +168,8 @@ pub async fn list_dir(
         }
     }
     Ok(Json(ListResponse {
-        dir: resolved,
+        dir: resolved.clone(),
+        writable: super::is_writable(&resolved),
         entries,
     }))
 }
@@ -188,6 +193,7 @@ fn entry_for(p: &Path) -> Option<Entry> {
         kind: if is_dir { "directory" } else { "file" },
         size: meta.len(),
         modified: modified_secs(&meta),
+        writable: super::is_writable(p),
     })
 }
 
@@ -200,24 +206,42 @@ pub struct PathQuery {
     pub path: String,
 }
 
+/// Query parameters for `GET /files/read` (open-terminal 0.2.7).
+#[derive(Deserialize, utoipa::IntoParams)]
+pub struct ReadQuery {
+    /// Workspace-relative path to operate on.
+    pub path: String,
+    /// Optional 1-indexed inclusive first line.
+    pub start_line: Option<usize>,
+    /// Optional 1-indexed inclusive last line.
+    pub end_line: Option<usize>,
+}
+
 /// Read a workspace file as JSON text, or raw bytes for an image.
+///
+/// Mirrors the open-terminal 0.2.7 contract: optional 1-indexed inclusive
+/// `start_line`/`end_line` slicing for text; images return raw bytes; any
+/// other non-UTF-8 binary returns 415 (Office/text extraction deferred —
+/// see docs/compatibility.md).
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::BadRequest`] if the path escapes the workspace,
-/// [`ApiError::NotFound`] if it is missing or not a regular file, and
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace or a
+/// line range is zero, [`ApiError::NotFound`] if it is missing or not a regular
+/// file, [`ApiError::UnsupportedMediaType`] for non-image binaries, and
 /// [`ApiError::Internal`] on a read failure.
 #[utoipa::path(
     get,
     path = "/files/read",
     tag = "files",
-    params(PathQuery),
+    params(ReadQuery),
     security(("brokerBearer" = [])),
     responses(
         (status = 200, description = "File content (JSON) or raw image bytes"),
         (status = 400, body = shared::ErrorResponse),
         (status = 401, body = shared::ErrorResponse),
         (status = 404, description = "File not found", body = shared::ErrorResponse),
+        (status = 415, description = "Unsupported binary file type", body = shared::ErrorResponse),
         (status = 500, body = shared::ErrorResponse)
     )
 )]
@@ -225,8 +249,13 @@ pub async fn read_file(
     _auth: Authed,
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(q): Query<PathQuery>,
+    Query(q): Query<ReadQuery>,
 ) -> Result<Response, ApiError> {
+    if q.start_line == Some(0) || q.end_line == Some(0) {
+        return Err(ApiError::BadRequest(
+            "start_line/end_line are 1-indexed".to_string(),
+        ));
+    }
     let base = base_of(&state, &headers)?;
     let full = safe_path(&q.path, &base)?;
     let meta =
@@ -253,15 +282,87 @@ pub async fn read_file(
     // #99 A5: TOCTOU-safe read (see image branch above).
     let mut file = open_read(&full, &base)?;
     let mut content = String::new();
-    std::io::Read::read_to_string(&mut file, &mut content)
-        .map_err(|e| ApiError::Internal(format!("read failed: {e}")))?;
-    let total_lines = content.lines().count();
+    std::io::Read::read_to_string(&mut file, &mut content).map_err(|e| {
+        // InvalidData = non-UTF-8: mirror open-terminal's 415 for every
+        // non-image binary (its Office-extraction branch is deferred).
+        if e.kind() == std::io::ErrorKind::InvalidData {
+            let len = meta.len();
+            ApiError::UnsupportedMediaType(format!(
+                "Unsupported binary file type: {mime} ({len} bytes)"
+            ))
+        } else {
+            ApiError::Internal(format!("read failed: {e}"))
+        }
+    })?;
+    // keepends line slicing (`splitlines(keepends=True)` parity for \n/\r\n).
+    let lines: Vec<&str> = content.split_inclusive('\n').collect();
+    let start = q.start_line.unwrap_or(1).saturating_sub(1);
+    let end = q.end_line.unwrap_or(lines.len()).min(lines.len());
+    let sliced: String = if start >= end {
+        String::new()
+    } else {
+        lines[start..end].concat()
+    };
     Ok(Json(serde_json::json!({
         "path": full,
-        "total_lines": total_lines,
-        "content": content,
+        "total_lines": lines.len(),
+        "content": sliced,
     }))
     .into_response())
+}
+// --- /files/serve ------------------------------------------------------------
+
+/// Serve a workspace file inline with its guessed content type.
+///
+/// Path-parameter alias of the view semantics introduced by open-terminal
+/// 0.11.34 so OWUI FileNav iframes resolve relative assets. Unlike
+/// [`view_file`] there is **no** `Content-Disposition: attachment` header —
+/// browsers must render the bytes inline.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the path escapes the workspace and
+/// [`ApiError::NotFound`] if it is missing or not a regular file.
+#[utoipa::path(
+    get,
+    path = "/files/serve/{file_path}",
+    tag = "files",
+    params(
+        ("file_path" = String, Path, description = "Workspace-relative file path"),
+    ),
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Raw file bytes with guessed content type"),
+        (status = 400, body = shared::ErrorResponse),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 404, description = "File not found", body = shared::ErrorResponse)
+    )
+)]
+pub async fn serve_file(
+    _auth: Authed,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(file_path): axum::extract::Path<String>,
+) -> Result<Response, ApiError> {
+    let base = base_of(&state, &headers)?;
+    let full = safe_path(&file_path, &base)?;
+    if !full.is_file() {
+        return Err(ApiError::NotFound("File not found".to_string()));
+    }
+    let mime = mime_guess::from_path(&full).first_or_octet_stream();
+    // #99 A5: TOCTOU-safe read — O_NOFOLLOW + /proc re-resolve.
+    let mut file = open_read(&full, &base)?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut bytes)
+        .map_err(|e| ApiError::Internal(format!("read failed: {e}")))?;
+    let ct = axum::http::HeaderValue::from_str(mime.as_ref())
+        .unwrap_or_else(|_| axum::http::HeaderValue::from_static("application/octet-stream"));
+    Ok((
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, ct)],
+        bytes,
+    )
+        .into_response())
 }
 
 // --- /files/write ------------------------------------------------------------

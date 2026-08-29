@@ -146,6 +146,7 @@ and Open WebUI wiring, see [`docs/deploy.md`](./docs/deploy.md).
 | [Architecture](./docs/architecture.md) | broker ↔ router ↔ runtime ↔ controller flow (Mermaid), per-chat lifecycle (warm → claim → park/suspend → reap), ephemeral vs. persistent workspaces, four isolation layers. |
 | [Deployment guide](./docs/deploy.md) | Full prerequisites + install: gVisor nodes, controller + CRDs, RWX storage, namespaces, private-registry image pull, building/loading the 3 images, broker shared-secret, Open WebUI wiring, broker env-var table, production values presets. |
 | [Operations runbook](./docs/operations.md) | Warm-pool tuning, idle park/reap policy, ResourceQuota/LimitRange limits, Backup & Restore (per-user PVCs), troubleshooting, rolling the runtime image, upgrade/rollback. |
+| [open-terminal compatibility](./docs/compatibility.md) | Endpoint-by-endpoint matrix against open-terminal v0.12.3 (the Open WebUI *Open Terminal* contract) + documented divergences. |
 | [Security model](./docs/security.md) | The four isolation layers and threat model. |
 | [Production-readiness checklist](./docs/production-readiness-checklist.md) | Table-stakes hardening before real tenants. |
 | [`infra/gvisor/`](./infra/gvisor/) | Online-safe gVisor install/activate + `RuntimeClass`. |
