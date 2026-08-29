@@ -19,7 +19,7 @@
 # syntax=docker/dockerfile:1.7
 
 # --- Stage 1: build deps (cached layer) --------------------------------------
-FROM rust:1.97-bookworm AS deps
+FROM rust:1.98-bookworm AS deps
 WORKDIR /ws
 COPY Cargo.toml Cargo.lock ./
 COPY shared/Cargo.toml shared/Cargo.toml
@@ -34,7 +34,7 @@ RUN mkdir -p shared/src broker/src runtime/src \
  && cargo build --release -p runtime
 
 # --- Stage 2: build the real runtime binary ----------------------------------
-FROM rust:1.97-bookworm AS builder
+FROM rust:1.98-bookworm AS builder
 WORKDIR /ws
 COPY --from=deps /ws/target target
 COPY Cargo.toml Cargo.lock ./
