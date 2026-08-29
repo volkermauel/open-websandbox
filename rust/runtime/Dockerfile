@@ -202,11 +202,12 @@ RUN useradd -u 1000 -m -d /home/sandbox -s /bin/bash sandbox \
 # user-mode by design; apt writes the ephemeral per-pod rootfs (docs/security.md).
 # `visudo -c` fails the build on any syntax slip.
 RUN printf '%s\n' \
-      'sandbox ALL=(root) NOPASSWD: /usr/bin/apt-get update, /usr/bin/apt-get install *, /usr/bin/apt-get remove *, /usr/bin/apt-get purge *, /usr/bin/apt-get upgrade *, /usr/bin/apt-get full-upgrade *, /usr/bin/apt-get clean, /usr/bin/apt-get autoremove *' \
+      'sandbox ALL=(root) NOPASSWD: /usr/bin/apt-get update, /usr/bin/apt-get update *, /usr/bin/apt-get install *, /usr/bin/apt-get remove *, /usr/bin/apt-get purge *, /usr/bin/apt-get upgrade *, /usr/bin/apt-get full-upgrade *, /usr/bin/apt-get clean, /usr/bin/apt-get clean *, /usr/bin/apt-get autoremove *' \
       'Defaults logfile="/var/log/sudo.log"' \
       > /etc/sudoers.d/sandbox \
  && chmod 440 /etc/sudoers.d/sandbox \
- && visudo -c
+ && visudo -c \
+ && install -o root -g root -m 644 /dev/null /var/log/sudo.log
 
 # The release binary from stage 2. Owned by root (read+exec for all); the pod runs
 # it as uid 1000 via the chart securityContext, so it must NOT live under /workspace
