@@ -78,12 +78,12 @@ the runtime route and the broker-fronted `/api/config` (stage 1 had shipped
   implemented: isolation is per-sandbox (one runtime user per chat).
 - **Python sentence in `/system`** (stage 2): upstream's
   *"Python {version} is available."* is rendered only when a python3 probe
-  succeeds — our default runtime image ships no Python (bookworm-slim +
-  libreoffice-nogui; no python3 in that dependency tree), and the prompt must
-  not claim an interpreter the model cannot run. With python3 present the
-  prompt is byte-for-byte upstream. The `shell` grounding also reflects the
-  shell `/execute` actually runs (default `/bin/bash`, upstream defaults to
-  `/bin/sh` when its env is unset).
+  succeeds. With the workbench toolchain image (which ships python3 + the data
+  stack, see [workbench toolchain](toolchain.md)) the sentence renders and the
+  prompt is byte-for-byte upstream; on a python-less image it is omitted rather
+  than claiming an interpreter the model cannot run. The `shell` grounding also
+  reflects the shell `/execute` actually runs (default `/bin/bash`, upstream
+  defaults to `/bin/sh` when its env is unset).
 - **`/info` conditional**: upstream registers the route only when
   `OPEN_TERMINAL_INFO` is set; we mirror with a 404 `{"detail":"Not Found"}`
   (same wire behavior).
@@ -97,3 +97,12 @@ the runtime route and the broker-fronted `/api/config` (stage 1 had shipped
   global 400 divergence. The multi-user UID ownership branch does not apply
   (single OS user per sandbox); the descendant-process ownership rule is the
   faithful single-user equivalent and also powers `/ports`.
+- **`/system` toolchain append** (workbench image): when
+  `SANDBOX_TOOLS_MANIFEST` is set (default on in the image and in the chart via
+  `sandboxTemplate.toolsManifest`; unset/empty = disabled), `GET /system` appends two
+  sections after the upstream-verbatim prompt — `## Available toolchain (base image)`
+  (the build-time manifest from `rust/runtime/tools.json`) and `## Workspace
+  conventions` (built from the **configured workspace root** (`WORKDIR`, default
+  `/workspace`) — never a hardcoded path). Append-only: the upstream prompt body and
+  its closing sentence are untouched, and with the knob off the response is
+  byte-for-byte upstream.

@@ -78,6 +78,7 @@ nav:
   - Quick start: quickstart.md
   - Architecture: architecture.md
   - open-terminal compatibility: compatibility.md
+  - Workbench toolchain: toolchain.md
   - Deployment guide: deploy.md
   - Operations runbook: operations.md
   - S3-tiered storage: s3-tiered-storage.md
