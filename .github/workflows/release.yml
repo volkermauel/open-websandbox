@@ -21,6 +21,11 @@ permissions:
   packages: write   # push images + OCI signature ref-tags to ghcr.io
   id-token: write   # keyless cosign signing via GitHub OIDC (sigstore)
 
+concurrency:
+  # Cancel superseded runs of the same PR: only the newest SHA can merge.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
 
@@ -54,8 +59,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=open-websandbox-broker
-          cache-to: type=gha,mode=max,scope=open-websandbox-broker
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit,mode=max,scope=buildkit' || '' }}
       # Supply-chain (issue #25): keyless cosign sign + per-image syft SBOM.
       # cosign signs the immutable digest and pushes the signature as an OCI
       # ref-tag (<repo>:sha256-<digest>.sig). The SBOM (SPDX-JSON) is uploaded
@@ -103,8 +108,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=open-websandbox-runtime
-          cache-to: type=gha,mode=max,scope=open-websandbox-runtime
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit,mode=max,scope=buildkit' || '' }}
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
       - name: Sign image (keyless, sigstore / GitHub OIDC)
@@ -155,8 +160,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=open-websandbox-router
-          cache-to: type=gha,mode=max,scope=open-websandbox-router
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit,mode=max,scope=buildkit' || '' }}
           build-args: |
             VERSION=v0.5.6
       - name: Install cosign
@@ -208,18 +213,26 @@ jobs:
     if: github.event_name == 'pull_request'
     name: trivy image (PR, report-only)
     runs-on: ubuntu-latest
+    env:
+      # Buildx registry cache ref for this matrix image (issue #172); the
+      # matrix context is available in job-level env. Used by the build step's
+      # cache-from/cache-to (the gated cache-to needs format() over this env).
+      CACHE_REF: ghcr.io/volkermauel/cache/${{ matrix.cache-image }}:buildkit
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
         include:
           - image: open-websandbox-broker
+            cache-image: broker   # buildx cache ref: ghcr.io/volkermauel/cache/broker
             context: rust
             dockerfile: rust/broker/Dockerfile
           - image: open-websandbox-runtime
+            cache-image: runtime  # buildx cache ref: ghcr.io/volkermauel/cache/runtime
             context: rust
             dockerfile: rust/runtime/Dockerfile
           - image: open-websandbox-router
+            cache-image: router   # buildx cache ref: ghcr.io/volkermauel/cache/router
             context: agent-sandbox
             dockerfile: agent-sandbox/sandbox-router/Dockerfile
             upstream: true
@@ -233,6 +246,12 @@ jobs:
           ref: v0.5.6
           path: agent-sandbox
       - uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR (build cache)
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build image (load, no push)
         uses: docker/build-push-action@v7
         with:
@@ -241,7 +260,10 @@ jobs:
           push: false
           load: true
           tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:pr-scan
-          cache-from: type=gha,scope=${{ matrix.image }}
+          # Registry cache (issue #172): read always, write gated to same-repo
+          # PRs/branches (fork PRs get a read-only GITHUB_TOKEN).
+          cache-from: type=registry,ref=${{ env.CACHE_REF }}
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && format('type=registry,ref={0},mode=max,scope=buildkit', env.CACHE_REF) || '' }}
       - name: trivy image (HIGH,CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
         with:

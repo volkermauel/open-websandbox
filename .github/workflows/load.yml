@@ -23,6 +23,9 @@ permissions:
 jobs:
   load-smoke:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # buildx registry build cache (ghcr.io/volkermauel/cache/*)
     timeout-minutes: 30
     env:
       KIND_CLUSTER: open-websandbox-load
@@ -51,6 +54,12 @@ jobs:
           wait: 60s
 
       - uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR (build cache)
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build broker image
         uses: docker/build-push-action@v7
@@ -60,8 +69,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-broker:v0.1.1
-          cache-from: type=gha,scope=open-websandbox-broker
-          cache-to: type=gha,mode=max,scope=open-websandbox-broker
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/broker:buildkit,mode=max,scope=buildkit' || '' }}
       - name: Build runtime image
         uses: docker/build-push-action@v7
         with:
@@ -70,8 +79,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-runtime:v0.1.1
-          cache-from: type=gha,scope=open-websandbox-runtime
-          cache-to: type=gha,mode=max,scope=open-websandbox-runtime
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/runtime:buildkit,mode=max,scope=buildkit' || '' }}
       - name: Checkout upstream agent-sandbox@v0.5.6 (router self-build)
         uses: actions/checkout@v7
         with:
@@ -86,8 +95,8 @@ jobs:
           load: true
           provenance: false
           tags: open-websandbox-router:v0.1.1
-          cache-from: type=gha,scope=open-websandbox-router
-          cache-to: type=gha,mode=max,scope=open-websandbox-router
+          cache-from: type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=registry,ref=ghcr.io/volkermauel/cache/router:buildkit,mode=max,scope=buildkit' || '' }}
 
       - name: Load images into KIND
         run: |
@@ -104,12 +113,10 @@ jobs:
           helm install open-websandbox open-websandbox-platform/chart/ \
             -f open-websandbox-platform/chart/values-kind.yaml -n "$SYS_NS"
           kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
-          for i in $(seq 1 60); do
-            if kubectl -n "$RUNTIME_NS" get sandbox -o \
-                'go-template={{range .items}}{{range .status.conditions}}{{if eq .type "Ready"}}{{.status}}{{"\n"}}{{end}}{{end}}{{end}}' \
-                2>/dev/null | grep -q True; then break; fi
-            sleep 5
-          done
+          # No warm-pool wait: values-kind.yaml leaves warmPool.replicas at the
+          # values.yaml default of 0 (issue #4), so no warm Sandbox can ever turn
+          # Ready — the old 60x5s poll here was a guaranteed 5m dead wait (#172).
+          # Re-add a wait only if this lane enables the pool.
 
       - name: Install test deps
         run: pip install -r requirements-test.txt
