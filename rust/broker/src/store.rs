@@ -146,6 +146,20 @@ pub struct WorkspacePvcSpec {
     pub storage_class: String,
 }
 
+/// Pod uid/gid/fsGroup mirrored from the SandboxTemplate's pod
+/// securityContext, so the one-shot adoption Job writes into the
+/// same-ownership PVC subPaths (`None` => omit the field; the Job then
+/// runs with the image defaults).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PodOwnership {
+    /// Pod `runAsUser` (None => omit; image default).
+    pub run_as_user: Option<i64>,
+    /// Pod `runAsGroup` (None => omit; image default).
+    pub run_as_group: Option<i64>,
+    /// Pod `fsGroup`, keeping group-write into the PVC (None => omit).
+    pub fs_group: Option<i64>,
+}
+
 /// One-shot workspace move for draft adoption (#157): `from_subpath` →
 /// `to_subpath` on `claim`, executed by a best-effort batch/v1 Job. Both
 /// subpaths are broker-derived hash paths on the same claim.
@@ -163,14 +177,10 @@ pub struct WorkspaceMove {
     pub to_subpath: String,
     /// Seconds to wait for Job completion before giving up (best-effort).
     pub timeout_secs: u64,
-    /// Pod \`runAsUser\` mirrored from the SandboxTemplate so the Job writes
-    /// into the same-uid PVC subPaths (None => image default).
-    pub run_as_user: Option<i64>,
-    /// Pod \`runAsGroup\` mirrored from the SandboxTemplate (None => omit).
-    pub run_as_group: Option<i64>,
-    /// Pod \`fsGroup\` mirrored from the SandboxTemplate so the Job keeps
-    /// group-write into the per-user PVC (None => omit).
-    pub fs_group: Option<i64>,
+    /// Pod uid/gid/fsGroup mirrored from the SandboxTemplate (see
+    /// [`PodOwnership`]); the Job keeps writing into the sandbox pods'
+    /// PVC subPaths.
+    pub ownership: PodOwnership,
 }
 
 /// Real Kubernetes backend: typed [`Api`]s over a [`kube::Client`].
@@ -805,19 +815,24 @@ pub mod test_fakes {
 /// mover keeps writing into the sandbox pods' PVC subPaths; the container
 /// drops all capabilities without privilege escalation. The Job touches no
 /// Kubernetes API, so its service-account token is not mounted.
-pub(crate) fn adopt_job_spec(mv: &WorkspaceMove) -> serde_json::Value {
+fn adopt_job_spec(mv: &WorkspaceMove) -> serde_json::Value {
     let mut pod_sc = serde_json::json!({
-        "runAsNonRoot": true,
         "seccompProfile": {"type": "RuntimeDefault"},
     });
-    if let Some(uid) = mv.run_as_user {
-        pod_sc["runAsUser"] = uid.into();
+    // A mirrored uid of 0 means the Job runs as root: pairing it with
+    // `runAsNonRoot` is unsatisfiable and the pod could never start, even
+    // on unrestricted sites — so the pin only applies to non-root uids.
+    if mv.ownership.run_as_user != Some(0) {
+        pod_sc["runAsNonRoot"] = serde_json::Value::Bool(true);
     }
-    if let Some(gid) = mv.run_as_group {
-        pod_sc["runAsGroup"] = gid.into();
-    }
-    if let Some(fsg) = mv.fs_group {
-        pod_sc["fsGroup"] = fsg.into();
+    for (key, val) in [
+        ("runAsUser", mv.ownership.run_as_user),
+        ("runAsGroup", mv.ownership.run_as_group),
+        ("fsGroup", mv.ownership.fs_group),
+    ] {
+        if let Some(v) = val {
+            pod_sc[key] = v.into();
+        }
     }
     serde_json::json!({
         "apiVersion": "batch/v1",
@@ -876,9 +891,11 @@ mod adopt_job_spec_tests {
             from_subpath: "chats/aa".into(),
             to_subpath: "chats/bb".into(),
             timeout_secs: 60,
-            run_as_user: Some(1000),
-            run_as_group: Some(1000),
-            fs_group: Some(1000),
+            ownership: PodOwnership {
+                run_as_user: Some(1000),
+                run_as_group: Some(1000),
+                fs_group: Some(1000),
+            },
         }
     }
 
@@ -909,14 +926,24 @@ mod adopt_job_spec_tests {
         assert_eq!(sc["fsGroup"], 1000);
 
         let mut m = mv();
-        m.run_as_user = None;
-        m.run_as_group = None;
-        m.fs_group = None;
+        m.ownership = PodOwnership::default();
         let sc = &adopt_job_spec(&m)["spec"]["template"]["spec"]["securityContext"];
         assert!(sc.get("runAsUser").is_none());
         assert!(sc.get("runAsGroup").is_none());
         assert!(sc.get("fsGroup").is_none());
         // Restricted-compliance fields survive the Option-less path.
         assert_eq!(sc["runAsNonRoot"], true);
+    }
+
+    /// A template that (against the chart default) runs as uid 0 must not
+    /// get `runAsNonRoot: true` — the pair is unsatisfiable and the Job
+    /// could never start, even on unrestricted sites.
+    #[test]
+    fn root_uid_skips_run_as_non_root() {
+        let mut m = mv();
+        m.ownership.run_as_user = Some(0);
+        let sc = &adopt_job_spec(&m)["spec"]["template"]["spec"]["securityContext"];
+        assert_eq!(sc["runAsUser"], 0);
+        assert!(sc.get("runAsNonRoot").is_none());
     }
 }

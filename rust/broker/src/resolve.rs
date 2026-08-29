@@ -411,7 +411,7 @@ async fn capture_draft_adoption(
         .pointer("/spec/containers/0/image")?
         .as_str()?
         .to_string();
-    let (run_as_user, run_as_group, fs_group) = template_pod_ownership(pod_template);
+    let ownership = template_pod_ownership(pod_template);
     let draft = match state.store.get_sandbox(&draft_name).await {
         Ok(Some(draft)) => draft,
         Ok(None) => {
@@ -444,9 +444,7 @@ async fn capture_draft_adoption(
         from_subpath,
         to_subpath,
         timeout_secs: 60,
-        run_as_user,
-        run_as_group,
-        fs_group,
+        ownership,
     })
 }
 
@@ -502,7 +500,7 @@ async fn resume_draft_adoption(
         .pointer("/spec/containers/0/image")?
         .as_str()?
         .to_string();
-    let (run_as_user, run_as_group, fs_group) = template_pod_ownership(&pod_template);
+    let ownership = template_pod_ownership(&pod_template);
     // Both subpaths live on the same claim (same user).
     let (claim, from_subpath) = workspace_layout(&state.config, user_id, user_id);
     let (_, to_subpath) = workspace_layout(&state.config, user_id, session_id);
@@ -513,9 +511,7 @@ async fn resume_draft_adoption(
         from_subpath,
         to_subpath,
         timeout_secs: 60,
-        run_as_user,
-        run_as_group,
-        fs_group,
+        ownership,
     })
 }
 /// Poll the store until the named Sandbox is Ready with a pod IP, or the deadline.
@@ -584,15 +580,17 @@ fn condition_summary(status: Option<&SandboxStatus>) -> String {
 /// one-shot mover writes into the same-ownership PVC subPaths. Absent fields
 /// (template without a pod securityContext) return None — the Job then runs
 /// with the image defaults.
-pub(crate) fn template_pod_ownership(
-    pod_template: &serde_json::Value,
-) -> (Option<i64>, Option<i64>, Option<i64>) {
+fn template_pod_ownership(pod_template: &serde_json::Value) -> crate::store::PodOwnership {
     let sc = pod_template.pointer("/spec/securityContext");
     let field = |name: &str| {
         sc.and_then(|s| s.get(name))
             .and_then(serde_json::Value::as_i64)
     };
-    (field("runAsUser"), field("runAsGroup"), field("fsGroup"))
+    crate::store::PodOwnership {
+        run_as_user: field("runAsUser"),
+        run_as_group: field("runAsGroup"),
+        fs_group: field("fsGroup"),
+    }
 }
 
 #[cfg(test)]
@@ -600,6 +598,30 @@ mod tests {
     use super::*;
     use crate::store::SandboxStore as _;
     use shared::SandboxStatus;
+
+    // --- template pod ownership mirroring (#182) ---------------------------
+
+    #[test]
+    fn template_pod_ownership_mirrors_and_omits() {
+        let tpl = serde_json::json!({
+            "spec": {"securityContext": {
+                "runAsUser": 1000, "runAsGroup": 2000, "fsGroup": 3000
+            }}
+        });
+        assert_eq!(
+            template_pod_ownership(&tpl),
+            crate::store::PodOwnership {
+                run_as_user: Some(1000),
+                run_as_group: Some(2000),
+                fs_group: Some(3000),
+            }
+        );
+        // Absent pod securityContext => all omitted (image defaults).
+        assert_eq!(
+            template_pod_ownership(&serde_json::json!({"spec": {}})),
+            crate::store::PodOwnership::default()
+        );
+    }
 
     // --- name derivation (deterministic scheme) -----------------------------
 

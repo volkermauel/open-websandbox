@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — draft adoption on PodSecurity-restricted clusters (#182)
+
+- The broker's one-shot adoption Jobs (`draft-adopt-*`) are now PodSecurity
+  `restricted:latest`-compliant. They carried no securityContext at all and were
+  Forbidden at admission in enforcing runtime namespaces — adoption silently
+  degraded to event spam + `DeadlineExceeded`. Pod: `runAsNonRoot` (skipped when
+  the mirrored uid is 0) + `seccompProfile: RuntimeDefault` + `runAsUser`/
+  `runAsGroup`/`fsGroup` mirrored from the SandboxTemplate; container:
+  `allowPrivilegeEscalation: false` + `capabilities: drop [ALL]`; no
+  service-account token mounted (the Job touches no Kubernetes API).
+
 ## [0.1.4] - 2026-08-29
 
 ### Fixed — open-terminal FileNav parity (#179)
@@ -84,6 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MAX_UPLOAD_BYTES` (chart `sandboxTemplate.maxUploadBytes`, default 1 GiB;
   the workspace quota still applies at write time) and the broker's proxy
   surface raises its limit to the existing 256 MiB forward cap.
+
 ### Changed — per-chat rate limits (#161)
 
 - Rate limiting re-scoped: a token bucket per **chat** (`X-User-Id`+`X-Session-Id`,
