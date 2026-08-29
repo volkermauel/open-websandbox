@@ -1,0 +1,74 @@
+{
+  "comment": [
+    "Single source of truth for the workbench toolchain",
+    "(openspec/changes/2026-08-29-workbench-toolchain).",
+    "rust/runtime/Dockerfile expands these lists into apt/pip installs via",
+    "gen-manifest.py --print-apt/--print-pip, and gen-manifest.py renders the",
+    "LLM capability manifest from the same file -- the manifest and the image",
+    "contents can never drift.",
+    "Tarball-distributed tools (Node 22 LTS, PowerShell 7, .NET SDK 8, CFR,",
+    "duckdb CLI, PSAppDeployToolkit) are pinned VERSION+SHA256 in the Dockerfile",
+    "and version-probed by gen-manifest.py at build time."
+  ],
+  "areas": [
+    {
+      "name": "Archives",
+      "apt": [
+        "gzip", "bzip2", "xz-utils", "zip", "unzip", "p7zip-full",
+        "unar", "lz4", "cpio", "cabextract", "unrar"
+      ]
+    },
+    {
+      "name": "General CLI",
+      "apt": [
+        "git", "curl", "wget", "jq", "ripgrep", "fd-find", "less", "nano",
+        "file", "tree", "htop", "shellcheck", "openssh-client", "dnsutils",
+        "iproute2", "procps"
+      ]
+    },
+    {
+      "name": "Python and data",
+      "apt": [
+        "python3-venv", "python3-pip", "python3-dev", "build-essential"
+      ],
+      "pip": [
+        "numpy", "pandas", "scipy", "matplotlib", "openpyxl", "python-docx",
+        "python-pptx", "pyarrow", "duckdb", "oletools", "capstone", "pip-audit"
+      ]
+    },
+    {
+      "name": "R",
+      "apt": [
+        "r-base-core", "r-cran-dplyr", "r-cran-tidyr", "r-cran-ggplot2",
+        "r-cran-readxl", "r-cran-stringr", "r-cran-lubridate"
+      ]
+    },
+    {
+      "name": "Docs depth",
+      "apt": [
+        "pandoc", "poppler-utils", "qpdf", "ghostscript", "imagemagick",
+        "libimage-exiftool-perl", "tesseract-ocr", "tesseract-ocr-deu",
+        "ocrmypdf", "antiword"
+      ]
+    },
+    {
+      "name": "Windows packaging",
+      "apt": [
+        "msitools", "makensis", "innoextract"
+      ]
+    },
+    {
+      "name": "Reverse engineering light",
+      "apt": [
+        "binutils", "gdb", "radare2", "binwalk", "yara", "upx-ucl",
+        "default-jdk-headless"
+      ]
+    },
+    {
+      "name": "DB clients",
+      "apt": [
+        "sqlite3"
+      ]
+    }
+  ]
+}
