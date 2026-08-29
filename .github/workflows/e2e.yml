@@ -205,7 +205,10 @@ jobs:
           # the old hardcoded placeholder was rejected by the broker's fail-closed check).
           SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
             -o jsonpath='{.data.shared-secret}' | base64 -d)"
-          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" pytest tests/e2e -v
+          # KUBECONFIG: test_ws_touch.py reads sandbox annotations via kubectl;
+          # export the kind kubeconfig so the test runs instead of skipping.
+          KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}" \
+            BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" pytest tests/e2e -v
           kill "$PF"
 
   # S3-tiered e2e (issue #52): a SEPARATE job (runc only) that deploys an in-cluster
