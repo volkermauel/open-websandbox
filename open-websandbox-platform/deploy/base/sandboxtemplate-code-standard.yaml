@@ -67,7 +67,24 @@ spec:
           runAsNonRoot: true
           runAsUser: 1000
           runAsGroup: 1000
-          capabilities: { drop: ["ALL"] }
+          # Container-default cap set (minus NET_RAW); an empty bounding set
+          # breaks setuid sudo — see the chart's sandboxtemplate.yaml comment.
+          capabilities:
+            drop: ["ALL"]
+            add:
+              - AUDIT_WRITE
+              - CHOWN
+              - DAC_OVERRIDE
+              - FOWNER
+              - FSETID
+              - KILL
+              - MKNOD
+              - NET_BIND_SERVICE
+              - SETFCAP
+              - SETGID
+              - SETPCAP
+              - SETUID
+              - SYS_CHROOT
         readinessProbe:
           httpGet: { path: "/", port: 8888 }
           periodSeconds: 2

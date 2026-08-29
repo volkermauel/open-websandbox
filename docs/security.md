@@ -70,7 +70,12 @@ must write `/usr`, `/etc`, and `/var/lib/dpkg` in the sandbox's own rootfs, and 
 `sudo` binary needs to escape the no-new-privileges regime that
 `allowPrivilegeEscalation: false` imposes. The runtime container therefore leaves the
 *restricted* Pod Security profile on these two axes (the runtime namespace sets no enforce
-labels); broker and router stay fully restricted. Everything the runtime
+labels); broker and router stay fully restricted. The container keeps `drop: ["ALL"]`
+plus the container-default capability set minus `NET_RAW` (`AUDIT_WRITE`, `CHOWN`,
+`DAC_OVERRIDE`, `FOWNER`, `FSETID`, `KILL`, `MKNOD`, `NET_BIND_SERVICE`, `SETFCAP`,
+`SETGID`, `SETPCAP`, `SETUID`, `SYS_CHROOT`): an entirely empty bounding set would strip
+the setuid `sudo` binary of every capability at `exec`, and `apt`'s maintainer scripts
+(chown/setuid on installed files, service starts) need the working set anyway. Everything the runtime
 itself serves still runs as uid 1000; only the whitelisted apt verbs execute as root,
 and only within the pod's own filesystem.
 
