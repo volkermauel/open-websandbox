@@ -1712,7 +1712,7 @@
             "brokerBearer": []
           }
         ],
-        "summary": "Return the effective workspace cwd (== home) for the session.",
+        "summary": "Return the effective workspace cwd — == home == file-browser `root`\n(upstream `get_file_browser_root`; #179 FileNav parity) — for the session.",
         "tags": [
           "files"
         ]

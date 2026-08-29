@@ -37,7 +37,8 @@ pub struct ListResponse {
 
 // --- /files/cwd --------------------------------------------------------------
 
-/// Return the effective workspace cwd (== home) for the session.
+/// Return the effective workspace cwd — == home == file-browser `root`
+/// (upstream `get_file_browser_root`; #179 FileNav parity) — for the session.
 ///
 /// # Errors
 ///
@@ -62,6 +63,7 @@ pub async fn get_cwd(
     Ok(Json(serde_json::json!({
         "cwd": base,
         "home": base,
+        "root": base,
     })))
 }
 
