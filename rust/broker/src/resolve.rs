@@ -411,6 +411,7 @@ async fn capture_draft_adoption(
         .pointer("/spec/containers/0/image")?
         .as_str()?
         .to_string();
+    let (run_as_user, run_as_group, fs_group) = template_pod_ownership(pod_template);
     let draft = match state.store.get_sandbox(&draft_name).await {
         Ok(Some(draft)) => draft,
         Ok(None) => {
@@ -443,6 +444,9 @@ async fn capture_draft_adoption(
         from_subpath,
         to_subpath,
         timeout_secs: 60,
+        run_as_user,
+        run_as_group,
+        fs_group,
     })
 }
 
@@ -498,6 +502,7 @@ async fn resume_draft_adoption(
         .pointer("/spec/containers/0/image")?
         .as_str()?
         .to_string();
+    let (run_as_user, run_as_group, fs_group) = template_pod_ownership(&pod_template);
     // Both subpaths live on the same claim (same user).
     let (claim, from_subpath) = workspace_layout(&state.config, user_id, user_id);
     let (_, to_subpath) = workspace_layout(&state.config, user_id, session_id);
@@ -508,6 +513,9 @@ async fn resume_draft_adoption(
         from_subpath,
         to_subpath,
         timeout_secs: 60,
+        run_as_user,
+        run_as_group,
+        fs_group,
     })
 }
 /// Poll the store until the named Sandbox is Ready with a pod IP, or the deadline.
@@ -570,6 +578,21 @@ fn condition_summary(status: Option<&SandboxStatus>) -> String {
     } else {
         parts.join("; ")
     }
+}
+
+/// Mirror the template pod's uid/group/fsGroup into the adoption Job so the
+/// one-shot mover writes into the same-ownership PVC subPaths. Absent fields
+/// (template without a pod securityContext) return None — the Job then runs
+/// with the image defaults.
+pub(crate) fn template_pod_ownership(
+    pod_template: &serde_json::Value,
+) -> (Option<i64>, Option<i64>, Option<i64>) {
+    let sc = pod_template.pointer("/spec/securityContext");
+    let field = |name: &str| {
+        sc.and_then(|s| s.get(name))
+            .and_then(serde_json::Value::as_i64)
+    };
+    (field("runAsUser"), field("runAsGroup"), field("fsGroup"))
 }
 
 #[cfg(test)]
