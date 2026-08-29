@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added — workbench toolchain image + capability manifest
 
 - The default runtime image is now a curated workbench toolchain driven by a single
-  source of truth, `rust/runtime/tools.json` (8 areas, 59 apt + 12 pip packages:
+  source of truth, `rust/runtime/tools.json` (8 areas, 57 apt + 12 pip packages:
   archives incl. unrar, general CLI, Python data stack incl. pandas/openpyxl/pyarrow,
   R, docs depth incl. pandoc/tesseract/ocrmypdf, Windows packaging, RE-light, sqlite3)
   plus pinned tarball tools (Node 22 LTS, PowerShell 7, .NET SDK 8 + ilspycmd,

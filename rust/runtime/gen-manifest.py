@@ -71,7 +71,7 @@ PROBES: dict[str, list[tuple[str, list[str], str | None]]] = {
     ],
     "Windows packaging": [
         ("wixl", ["wixl", "--version"], "msitools"),
-        ("makensis", ["makensis", "-VERSION"], "makensis"),
+        ("makensis", ["makensis", "-VERSION"], "nsis"),
         ("pwsh", ["pwsh", "--version"], None),
         ("dotnet", ["dotnet", "--version"], None),
         ("ilspycmd", ["ilspycmd", "--version"], None),

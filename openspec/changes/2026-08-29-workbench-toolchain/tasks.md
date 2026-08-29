@@ -5,6 +5,8 @@
 - [x] 1.1 `rust/runtime/tools.json`: stdlib-JSON areas (Archives, General
       CLI, Python/data incl. pip list, R, Docs depth, Windows packaging, RE
       light, DB clients) with the approved apt/pip package contents
+      (build-verified fix: `makensis`→`nsis` (the real Debian name); radare2
+      and upx-ucl dropped — absent from bookworm in main/contrib/non-free)
 - [x] 1.2 `rust/runtime/gen-manifest.py` (stdlib json): `--print-apt` /
       `--print-pip` (Dockerfile consumption), manifest rendering
       (per-area name—version probes, dpkg base count, path-free footer,

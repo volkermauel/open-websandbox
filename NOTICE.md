@@ -24,7 +24,6 @@ license text is in [`LICENSE`](./LICENSE).
 | [unrar](https://www.rarlab.com/) (Debian `unrar` package) | freeware — Debian `non-free` (license forbids using its source to re-create the RAR compression algorithm); distribution of unmodified binaries is permitted | installed in the runtime container image by `rust/runtime/Dockerfile` (the only reason the build enables the `non-free` apt component); not distributed in this repository |
 | [pandoc](https://pandoc.org/) (Debian package) | GPL-2.0-or-later | installed in the runtime container image by `rust/runtime/Dockerfile`; not distributed in this repository |
 | [msitools](https://gitlab.gnome.org/GNOME/msitools) (Debian package, provides `wixl`) | LGPL-2.1-or-later | installed in the runtime container image by `rust/runtime/Dockerfile`; not distributed in this repository |
-| [radare2](https://rada.re/) (Debian package) | LGPL-3.0-or-later | installed in the runtime container image by `rust/runtime/Dockerfile`; not distributed in this repository |
 | [tesseract](https://github.com/tesseract-ocr/tesseract) (Debian package) | Apache License 2.0 | installed in the runtime container image by `rust/runtime/Dockerfile`; not distributed in this repository |
 | [ocrmypdf](https://ocrmypdf.readthedocs.io/) (Debian package) | Mozilla Public License 2.0 | installed in the runtime container image by `rust/runtime/Dockerfile`; not distributed in this repository |
 

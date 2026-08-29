@@ -54,13 +54,13 @@
     {
       "name": "Windows packaging",
       "apt": [
-        "msitools", "makensis", "innoextract"
+        "msitools", "nsis", "innoextract"
       ]
     },
     {
       "name": "Reverse engineering light",
       "apt": [
-        "binutils", "gdb", "radare2", "binwalk", "yara", "upx-ucl",
+        "binutils", "gdb", "binwalk", "yara",
         "default-jdk-headless"
       ]
     },
