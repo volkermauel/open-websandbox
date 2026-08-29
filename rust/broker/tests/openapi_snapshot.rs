@@ -23,6 +23,14 @@ fn openapi_matches_frozen_snapshot() {
     // with the same canonical formatter the fixture was generated with.
     let value = serde_json::to_value(&doc).expect("OpenApi serializes to JSON");
     let actual = serde_json::to_string_pretty(&value).expect("pretty JSON");
+    // REGEN_SNAPSHOT=1 cargo test -p broker openapi_snapshot — rewrite the fixture
+    // in place instead of asserting (committed afterwards like any source file).
+    if std::env::var("REGEN_SNAPSHOT").is_ok() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/openapi.snapshot.json");
+        std::fs::write(path, format!("{actual}\n")).expect("regenerate fixture");
+        eprintln!("openapi.snapshot.json regenerated");
+        return;
+    }
     assert_eq!(
         actual,
         FIXTURE.trim_end(),

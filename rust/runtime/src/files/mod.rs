@@ -53,6 +53,13 @@ pub(super) fn modified_secs(meta: &std::fs::Metadata) -> f64 {
         .map_or(0.0, |d| d.as_secs_f64())
 }
 
+/// Honest writability probe mirroring upstream `os.access(path, W_OK)`
+/// (open-terminal 0.11.35): read-only mounts, chmod and ownership all factor
+/// in. `nix::unistd::access` wraps the syscall safely — no `unsafe` needed.
+pub(super) fn is_writable(p: &Path) -> bool {
+    nix::unistd::access(p, nix::unistd::AccessFlags::W_OK).is_ok()
+}
+
 // --- raw-file response helper (view + download) -----------------------------
 
 /// Stream a file as raw bytes with mime + content-disposition

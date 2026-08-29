@@ -10,7 +10,7 @@ use common::{body_text, json, status, Bearer, Env};
 
 #[tokio::test]
 async fn api_config_matches_openapi_spec_shape() {
-    // ConfigResponse: {"features":{"terminal":true,"notebooks":false,"desktop":false}}
+    // ConfigResponse: {"features":{"terminal":true,"notebooks":false,"system":false}} (open-terminal v0.12.3 key set)
     let env = Env::new();
     let resp = env
         .send(Method::GET, "/api/config", Bearer::Default, None)
@@ -19,14 +19,14 @@ async fn api_config_matches_openapi_spec_shape() {
     let body: serde_json::Value = json(resp).await;
     assert_eq!(
         body,
-        serde_json::json!({"features": {"terminal": true, "notebooks": false, "desktop": false}})
+        serde_json::json!({"features": {"terminal": true, "notebooks": false, "system": false}})
     );
 }
 
 #[tokio::test]
 async fn api_config_feature_keys_in_canonical_order() {
     // Field order matters for byte parity (D11). serde serializes struct fields
-    // in declaration order, so the JSON text must read terminal, notebooks, desktop.
+    // in declaration order, so the JSON text must read terminal, notebooks, system.
     let env = Env::new();
     let resp = env
         .send(Method::GET, "/api/config", Bearer::Default, None)
@@ -34,7 +34,7 @@ async fn api_config_feature_keys_in_canonical_order() {
     let text = body_text(resp).await;
     let a = text.find(r#""terminal""#).unwrap();
     let b = text.find(r#""notebooks""#).unwrap();
-    let c = text.find(r#""desktop""#).unwrap();
+    let c = text.find(r#""system""#).unwrap();
     assert!(a < b && b < c, "feature key order wrong: {text}");
 }
 

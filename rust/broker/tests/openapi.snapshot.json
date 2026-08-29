@@ -29,6 +29,31 @@
         ],
         "type": "object"
       },
+      "ContentMatch": {
+        "description": "One content match inside a file: line, UTF-16 code-unit column, line text.",
+        "properties": {
+          "column": {
+            "description": "1-indexed column in UTF-16 code units (upstream mirror).",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "line": {
+            "description": "1-indexed line number.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "text": {
+            "description": "The matched line, trimmed of its line terminator.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "line",
+          "column",
+          "text"
+        ],
+        "type": "object"
+      },
       "CreateResponse": {
         "description": "Response body for `POST /api/terminals` (id, created_at, pid).",
         "properties": {
@@ -120,7 +145,7 @@
         "type": "object"
       },
       "Entry": {
-        "description": "One entry in a directory listing (name, type, size, modified time).",
+        "description": "One entry in a directory listing (name, type, size, modified time, writability).",
         "properties": {
           "modified": {
             "format": "double",
@@ -136,13 +161,18 @@
           },
           "type": {
             "type": "string"
+          },
+          "writable": {
+            "description": "Whether the entry is writable (0.11.35 open-terminal contract: `access(W_OK)`).",
+            "type": "boolean"
           }
         },
         "required": [
           "name",
           "type",
           "size",
-          "modified"
+          "modified",
+          "writable"
         ],
         "type": "object"
       },
@@ -213,10 +243,10 @@
       "Features": {
         "description": "Feature-flag set returned inside `ConfigResponse`.",
         "properties": {
-          "desktop": {
+          "notebooks": {
             "type": "boolean"
           },
-          "notebooks": {
+          "system": {
             "type": "boolean"
           },
           "terminal": {
@@ -226,7 +256,7 @@
         "required": [
           "terminal",
           "notebooks",
-          "desktop"
+          "system"
         ],
         "type": "object"
       },
@@ -257,7 +287,7 @@
         "type": "object"
       },
       "ListResponse": {
-        "description": "A directory listing: the resolved directory and its sorted entries.",
+        "description": "A directory listing: the resolved directory, its writability, and sorted entries.",
         "properties": {
           "dir": {
             "type": "string"
@@ -267,11 +297,81 @@
               "$ref": "#/components/schemas/Entry"
             },
             "type": "array"
+          },
+          "writable": {
+            "description": "Whether the listed directory itself is writable (0.11.35).",
+            "type": "boolean"
           }
         },
         "required": [
           "dir",
+          "writable",
           "entries"
+        ],
+        "type": "object"
+      },
+      "MatchResult": {
+        "description": "One unified-search row (name match, content matches, or both).",
+        "properties": {
+          "content_matches": {
+            "description": "Literal content matches inside the file (<= 3).",
+            "items": {
+              "$ref": "#/components/schemas/ContentMatch"
+            },
+            "type": "array"
+          },
+          "name": {
+            "description": "Entry base name.",
+            "type": "string"
+          },
+          "name_match": {
+            "description": "Whether the name/path matched (score 0-3).",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "Absolute path of the match.",
+            "type": "string"
+          },
+          "relative_path": {
+            "description": "Path relative to the search directory (`/`-separated).",
+            "type": "string"
+          },
+          "type": {
+            "description": "`file` or `directory`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "relative_path",
+          "name",
+          "type",
+          "name_match",
+          "content_matches"
+        ],
+        "type": "object"
+      },
+      "MatchesResponse": {
+        "description": "Response of `GET /files/matches`.",
+        "properties": {
+          "next_offset": {
+            "description": "Offset of the next page, or `None` when exhausted.",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "results": {
+            "description": "This page of matches.",
+            "items": {
+              "$ref": "#/components/schemas/MatchResult"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
         ],
         "type": "object"
       },
@@ -565,6 +665,58 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "SearchResponse": {
+        "description": "Response of `GET /files/search`.",
+        "properties": {
+          "results": {
+            "description": "Ranked matches, at most `limit`.",
+            "items": {
+              "$ref": "#/components/schemas/SearchResult"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "type": "object"
+      },
+      "SearchResult": {
+        "description": "One ranked result row (`path` is absolute, matching upstream).",
+        "properties": {
+          "modified": {
+            "description": "mtime in seconds since epoch.",
+            "format": "double",
+            "type": "number"
+          },
+          "name": {
+            "description": "Entry base name.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Absolute path of the match (upstream returns absolute paths).",
+            "type": "string"
+          },
+          "size": {
+            "description": "Size in bytes.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "description": "`file` or `directory`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "name",
+          "type",
+          "size",
+          "modified"
+        ],
         "type": "object"
       },
       "ShutdownPolicy": {
@@ -1996,6 +2148,124 @@
         ]
       }
     },
+    "/files/matches": {
+      "get": {
+        "description": "Score 0 = exact name, 1 = name prefix, 2 = name contains,\n3 = relative path contains, 4 = content-only. Sorted by\n`(score, relative_path.len(), relative path lowercase)` and paginated\nwith `next_offset`.\n\n# Errors\n\nReturns [`ApiError::BadRequest`] for a blank query or out-of-range\n`offset`/`limit`, and [`ApiError::NotFound`] when `path` is missing or\nnot a directory.",
+        "operationId": "match_files",
+        "parameters": [
+          {
+            "description": "Literal text to match (required, non-blank).",
+            "in": "path",
+            "name": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Directory to search within (default `.`).",
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Include hidden dotfiles and dot-directories.",
+            "in": "path",
+            "name": "show_hidden",
+            "required": true,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Result offset (default 0).",
+            "in": "path",
+            "name": "offset",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Maximum number of results (1..=100, default 100).",
+            "in": "path",
+            "name": "limit",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchesResponse"
+                }
+              }
+            },
+            "description": "Unified matches page"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Search directory not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Unified search by ranked name, path, and content (0.12.0).",
+        "tags": [
+          "files"
+        ]
+      }
+    },
     "/files/mkdir": {
       "post": {
         "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace or the\ndirectory cannot be created.",
@@ -2128,7 +2398,7 @@
     },
     "/files/read": {
       "get": {
-        "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace,\n[`ApiError::NotFound`] if it is missing or not a regular file, and\n[`ApiError::Internal`] on a read failure.",
+        "description": "Mirrors the open-terminal 0.2.7 contract: optional 1-indexed inclusive\n`start_line`/`end_line` slicing for text; images return raw bytes; any\nother non-UTF-8 binary returns 415 (Office/text extraction deferred —\nsee docs/compatibility.md).\n\n# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace or a\nline range is zero, [`ApiError::NotFound`] if it is missing or not a regular\nfile, [`ApiError::UnsupportedMediaType`] for non-image binaries, and\n[`ApiError::Internal`] on a read failure.",
         "operationId": "read_file",
         "parameters": [
           {
@@ -2138,6 +2408,32 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "description": "Optional 1-indexed inclusive first line.",
+            "in": "path",
+            "name": "start_line",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Optional 1-indexed inclusive last line.",
+            "in": "path",
+            "name": "end_line",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             }
           }
         ],
@@ -2174,6 +2470,16 @@
               }
             },
             "description": "File not found"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported binary file type"
           },
           "500": {
             "content": {
@@ -2257,6 +2563,187 @@
           }
         ],
         "summary": "Apply one or more find/replace chunks to a workspace file.",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/search": {
+      "get": {
+        "description": "Rank 0 = exact name (case-insensitive), 1 = name prefix, 2 = substring;\nan empty `query` matches everything at rank 2. Sort key\n`(rank, name.len(), relative path lowercase)` — the upstream order.\n\n# Errors\n\nReturns [`ApiError::BadRequest`] for an out-of-range `limit` or bad\n`type`, and [`ApiError::NotFound`] when `path` is missing or not a directory.",
+        "operationId": "search_files",
+        "parameters": [
+          {
+            "description": "Filename search term.",
+            "in": "path",
+            "name": "query",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Directory to search within (default `.`).",
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Maximum number of matches (1..=100, default 20).",
+            "in": "path",
+            "name": "limit",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Type filter: `file`, `directory`, or `any` (default `any`).",
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Include hidden dotfiles and dot-directories.",
+            "in": "path",
+            "name": "show_hidden",
+            "required": true,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            },
+            "description": "Ranked filename matches"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Search directory not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Search files and subdirectories by ranked filename match (0.11.36).",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/serve/{file_path}": {
+      "get": {
+        "description": "Path-parameter alias of the view semantics introduced by open-terminal\n0.11.34 so OWUI FileNav iframes resolve relative assets. Unlike\n[`view_file`] there is **no** `Content-Disposition: attachment` header —\nbrowsers must render the bytes inline.\n\n# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace and\n[`ApiError::NotFound`] if it is missing or not a regular file.",
+        "operationId": "serve_file",
+        "parameters": [
+          {
+            "description": "Workspace-relative file path",
+            "in": "path",
+            "name": "file_path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw file bytes with guessed content type"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "File not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "Serve a workspace file inline with its guessed content type.",
         "tags": [
           "files"
         ]

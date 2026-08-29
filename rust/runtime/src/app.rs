@@ -10,9 +10,9 @@ use axum::Router;
 
 use crate::execute::execute;
 use crate::files::{
-    archive, delete_entry, get_cwd, glob_search, grep, list_dir, list_ports, mkdir, move_entry,
-    read_file, replace, set_cwd, tool_download, tool_exists, tool_list, tool_list_root,
-    tool_upload, upload, view_file, write_file,
+    archive, delete_entry, get_cwd, glob_search, grep, list_dir, list_ports, match_files, mkdir,
+    move_entry, read_file, replace, search_files, serve_file, set_cwd, tool_download, tool_exists,
+    tool_list, tool_list_root, tool_upload, upload, view_file, write_file,
 };
 use crate::snapshot::{restore, snapshot};
 use crate::state::AppState;
@@ -37,6 +37,22 @@ async fn ok() -> axum::http::StatusCode {
     axum::http::StatusCode::OK
 }
 
+/// `GET /api/config` — feature discovery (open-terminal 0.8.1).
+///
+/// Unauthenticated exactly like upstream: it leaks only feature flags, and
+/// inside the cluster the route is reachable solely through the broker
+/// relay (broker auth still applies there). We always serve terminals and
+/// implement neither notebooks nor a system-prompt endpoint.
+async fn api_config() -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "features": {
+            "terminal": true,
+            "notebooks": false,
+            "system": false,
+        }
+    }))
+}
+
 /// Build the full runtime router over `state`.
 pub fn build_router(state: AppState) -> Router {
     // #162: axum's DefaultBodyLimit (2 MiB) silently rejected uploads above
@@ -48,6 +64,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/", get(root))
         .route("/healthz", get(ok))
         .route("/readyz", get(ok))
+        // open-terminal 0.8.1 feature discovery — unauthenticated like upstream.
+        .route("/api/config", get(api_config))
         // D9: Prometheus exposition (open — scraped without auth, matching the
         //      chart's PodMonitor on :8888/metrics).
         .route("/metrics", get(crate::metrics::metrics))
@@ -64,6 +82,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/files/delete", delete(delete_entry))
         // PR-B-4 remaining file-operation surface (open-terminal + LLM-tool):
         .route("/files/view", get(view_file))
+        // open-terminal 0.11.34: path-based inline serving for FileNav iframes.
+        .route("/files/serve/{*file_path}", get(serve_file))
+        // open-terminal 0.11.36 / 0.12.0: file-picker + unified search.
+        .route("/files/search", get(search_files))
+        .route("/files/matches", get(match_files))
         .route("/files/replace", post(replace))
         .route("/files/grep", get(grep))
         .route("/files/glob", get(glob_search))

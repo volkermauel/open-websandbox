@@ -57,7 +57,7 @@ pub struct ConfigResponse {
 pub struct Features {
     terminal: bool,
     notebooks: bool,
-    desktop: bool,
+    system: bool,
 }
 
 /// `GET /api/status` body: static operator telemetry.
@@ -248,7 +248,7 @@ pub async fn api_config(_: Authed) -> Json<ConfigResponse> {
         features: Features {
             terminal: true,
             notebooks: false,
-            desktop: false,
+            system: false,
         },
     })
 }
