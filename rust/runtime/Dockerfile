@@ -119,14 +119,27 @@ RUN python3 -m pip install --no-cache-dir --break-system-packages \
 
 # Node 22 LTS — official tarball, NOT apt (bookworm's nodejs is 18 = EOL).
 # Pinned VERSION + SHA256; /opt/node/bin is on PATH via the ENV block below.
+# Tarball tools below are arch-pinned: buildx sets TARGETARCH per platform
+# (release.yml builds natively per arch, issue #175). Each case picks the matching
+# upstream artifact + SHA256 — never a hardcoded linux-x64 (v0.1.6 arm64 release died
+# executing the x86-64 node binary on aarch64). Node/.NET name assets linux-x64/arm64;
+# duckdb names them amd64/arm64.
+ARG TARGETARCH
 ARG NODE_VERSION=v22.23.2
-ARG NODE_SHA256=d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307
-RUN cd /tmp \
- && curl -fsSLO "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-x64.tar.xz" \
- && echo "${NODE_SHA256}  node-${NODE_VERSION}-linux-x64.tar.xz" | sha256sum -c - \
+ARG NODE_SHA256_AMD64=d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307
+ARG NODE_SHA256_ARM64=fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8
+RUN set -eu \
+ && case "${TARGETARCH}" in \
+      amd64) triple=linux-x64;   sha="${NODE_SHA256_AMD64}" ;; \
+      arm64) triple=linux-arm64; sha="${NODE_SHA256_ARM64}" ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && cd /tmp \
+ && curl -fsSLO "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-${triple}.tar.xz" \
+ && echo "${sha}  node-${NODE_VERSION}-${triple}.tar.xz" | sha256sum -c - \
  && mkdir -p /opt/node \
- && tar -xJf "node-${NODE_VERSION}-linux-x64.tar.xz" -C /opt/node --strip-components=1 \
- && rm -f "node-${NODE_VERSION}-linux-x64.tar.xz" \
+ && tar -xJf "node-${NODE_VERSION}-${triple}.tar.xz" -C /opt/node --strip-components=1 \
+ && rm -f "node-${NODE_VERSION}-${triple}.tar.xz" \
  && export PATH=/opt/node/bin:$PATH \
  && corepack enable \
  && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@latest --activate \
@@ -134,13 +147,20 @@ RUN cd /tmp \
 
 # PowerShell 7 stable — pinned tarball into /opt/powershell (on PATH).
 ARG PWSH_VERSION=v7.6.5
-ARG PWSH_SHA256=b34ab3b19acac1d3d4d0d3cfdb02acf62f457b0b6a962ff008132033f7566844
-RUN cd /tmp \
- && curl -fsSLO "https://github.com/PowerShell/PowerShell/releases/download/${PWSH_VERSION}/powershell-${PWSH_VERSION#v}-linux-x64.tar.gz" \
- && echo "${PWSH_SHA256}  powershell-${PWSH_VERSION#v}-linux-x64.tar.gz" | sha256sum -c - \
+ARG PWSH_SHA256_AMD64=b34ab3b19acac1d3d4d0d3cfdb02acf62f457b0b6a962ff008132033f7566844
+ARG PWSH_SHA256_ARM64=ed4084f215d8bce2edd23aa7cb1f1e7b0818e41363a635a22065d2701b6141df
+RUN set -eu \
+ && case "${TARGETARCH}" in \
+      amd64) triple=linux-x64;   sha="${PWSH_SHA256_AMD64}" ;; \
+      arm64) triple=linux-arm64; sha="${PWSH_SHA256_ARM64}" ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && cd /tmp \
+ && curl -fsSLO "https://github.com/PowerShell/PowerShell/releases/download/${PWSH_VERSION}/powershell-${PWSH_VERSION#v}-${triple}.tar.gz" \
+ && echo "${sha}  powershell-${PWSH_VERSION#v}-${triple}.tar.gz" | sha256sum -c - \
  && mkdir -p /opt/powershell \
- && tar -xzf "powershell-${PWSH_VERSION#v}-linux-x64.tar.gz" -C /opt/powershell \
- && rm -f "powershell-${PWSH_VERSION#v}-linux-x64.tar.gz"
+ && tar -xzf "powershell-${PWSH_VERSION#v}-${triple}.tar.gz" -C /opt/powershell \
+ && rm -f "powershell-${PWSH_VERSION#v}-${triple}.tar.gz"
 
 # .NET SDK 8 — pinned tarball into /opt/dotnet (DOTNET_ROOT; on PATH).
 # dotnet tools install into /opt/dotnet-tools (on PATH, DOTNET_CLI_HOME=/opt):
@@ -152,13 +172,20 @@ RUN cd /tmp \
 #   msiextract/msibuild are the supported Windows-packaging paths
 #   (docs/toolchain.md).
 ARG DOTNET_VERSION=8.0.424
-ARG DOTNET_SHA256=1a0f577b530d52e54c5a53ea0b578fd1ebe421b11bfbf9b29a5bdc413bdbad64
-RUN cd /tmp \
- && curl -fsSLO "https://builds.dotnet.microsoft.com/dotnet/Sdk/${DOTNET_VERSION}/dotnet-sdk-${DOTNET_VERSION}-linux-x64.tar.gz" \
- && echo "${DOTNET_SHA256}  dotnet-sdk-${DOTNET_VERSION}-linux-x64.tar.gz" | sha256sum -c - \
+ARG DOTNET_SHA256_AMD64=1a0f577b530d52e54c5a53ea0b578fd1ebe421b11bfbf9b29a5bdc413bdbad64
+ARG DOTNET_SHA256_ARM64=fc86992aec3536e60383b4decbdfa762f16171b5d52e085d8c0a9491577f475d
+RUN set -eu \
+ && case "${TARGETARCH}" in \
+      amd64) triple=linux-x64;   sha="${DOTNET_SHA256_AMD64}" ;; \
+      arm64) triple=linux-arm64; sha="${DOTNET_SHA256_ARM64}" ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && cd /tmp \
+ && curl -fsSLO "https://builds.dotnet.microsoft.com/dotnet/Sdk/${DOTNET_VERSION}/dotnet-sdk-${DOTNET_VERSION}-${triple}.tar.gz" \
+ && echo "${sha}  dotnet-sdk-${DOTNET_VERSION}-${triple}.tar.gz" | sha256sum -c - \
  && mkdir -p /opt/dotnet /opt/dotnet-tools \
- && tar -xzf "dotnet-sdk-${DOTNET_VERSION}-linux-x64.tar.gz" -C /opt/dotnet \
- && rm -f "dotnet-sdk-${DOTNET_VERSION}-linux-x64.tar.gz" \
+ && tar -xzf "dotnet-sdk-${DOTNET_VERSION}-${triple}.tar.gz" -C /opt/dotnet \
+ && rm -f "dotnet-sdk-${DOTNET_VERSION}-${triple}.tar.gz" \
  && export DOTNET_CLI_HOME=/opt DOTNET_ROOT=/opt/dotnet PATH=/opt/dotnet:$PATH DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 \
  && dotnet tool install --tool-path /opt/dotnet-tools ilspycmd --version 9.1.0.7988 \
  && chmod 0777 /opt/.dotnet   # CLI-home sentinel dir: stay writable for uid 1000 at runtime
@@ -171,7 +198,8 @@ ARG PSADT_SHA256=80b45fb8e518ee98774e16e44599d470e4069a0695a6a359022f954edaa8336
 ARG CFR_VERSION=0.152
 ARG CFR_SHA256=f686e8f3ded377d7bc87d216a90e9e9512df4156e75b06c655a16648ae8765b2
 ARG DUCKDB_VERSION=v1.5.5
-ARG DUCKDB_SHA256=08c0ca117111fcede14239d0093792352befdc174218c344d232c13279643d05
+ARG DUCKDB_SHA256_AMD64=08c0ca117111fcede14239d0093792352befdc174218c344d232c13279643d05
+ARG DUCKDB_SHA256_ARM64=02163197027a42149147364d31fa67cac82108517a4be43304a1cc226eaef07a
 RUN cd /tmp \
  && curl -fsSLO "https://github.com/PSAppDeployToolkit/PSAppDeployToolkit/releases/download/${PSADT_VERSION}/PSAppDeployToolkit_ModuleOnly.zip" \
  && echo "${PSADT_SHA256}  PSAppDeployToolkit_ModuleOnly.zip" | sha256sum -c - \
@@ -184,11 +212,16 @@ RUN cd /tmp \
  && mv "cfr-${CFR_VERSION}.jar" /opt/tools/cfr.jar \
  && printf '#!/bin/sh\nexec java -jar /opt/tools/cfr.jar "$@"\n' > /usr/local/bin/cfr \
  && chmod 0755 /usr/local/bin/cfr \
- && curl -fsSLO "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip" \
- && echo "${DUCKDB_SHA256}  duckdb_cli-linux-amd64.zip" | sha256sum -c - \
- && unzip -j -o duckdb_cli-linux-amd64.zip duckdb -d /opt/tools \
+ && case "${TARGETARCH}" in \
+      amd64) darch=amd64; dsha="${DUCKDB_SHA256_AMD64}" ;; \
+      arm64) darch=arm64; dsha="${DUCKDB_SHA256_ARM64}" ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSLO "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb_cli-linux-${darch}.zip" \
+ && echo "${dsha}  duckdb_cli-linux-${darch}.zip" | sha256sum -c - \
+ && unzip -j -o "duckdb_cli-linux-${darch}.zip" duckdb -d /opt/tools \
  && chmod 0755 /opt/tools/duckdb \
- && rm -f duckdb_cli-linux-amd64.zip
+ && rm -f "duckdb_cli-linux-${darch}.zip"
 
 # Non-root uid 1000 — matches the chart's sandboxTemplate.uid (1000) and the Python
 # runtime's `sandbox` user, so the pod securityContext (runAsUser: 1000) binds the
