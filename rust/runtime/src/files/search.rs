@@ -16,6 +16,7 @@ use crate::state::AppState;
 
 /// Query parameters for `GET /files/grep`: a literal/regex search of the workspace.
 #[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct GrepQuery {
     query: String,
     path: Option<String>,
@@ -145,6 +146,7 @@ fn collect_files(dir: &Path, include: Option<&[String]>, out: &mut Vec<PathBuf>)
 
 /// Query parameters for `GET /files/glob`: match entries by pattern and optional type.
 #[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct GlobQuery {
     pattern: String,
     path: Option<String>,
@@ -463,6 +465,7 @@ fn git_candidates(
 
 /// Query parameters for `GET /files/search` (open-terminal 0.11.36).
 #[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct SearchQuery {
     /// Filename search term.
     pub query: Option<String>,
@@ -588,6 +591,7 @@ pub async fn search_files(
 
 /// Query parameters for `GET /files/matches`.
 #[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct MatchesQuery {
     /// Literal text to match (required, non-blank).
     pub query: String,

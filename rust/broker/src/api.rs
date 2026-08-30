@@ -111,6 +111,7 @@ pub struct SandboxObject {
 
 /// `GET /api/sandboxes` query: optional Kubernetes label selector.
 #[derive(Deserialize, Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListQuery {
     /// Kubernetes label selector (URL `labelSelector`) to filter listed sandboxes.
     #[serde(default, rename = "labelSelector")]

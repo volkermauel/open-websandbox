@@ -26,6 +26,7 @@ pub struct ArchiveRequest {
 
 /// `POST /files/upload` query params.
 #[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct UploadQuery {
     /// Optional subdirectory under the workspace root to upload into.
     pub directory: Option<String>,

@@ -111,6 +111,7 @@ pub async fn set_cwd(
 
 /// Query parameters for `GET /files/list`: an optional directory (defaults to `.`).
 #[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListQuery {
     /// Optional workspace-relative directory to list (defaults to `.`).
     pub directory: Option<String>,
@@ -203,6 +204,7 @@ fn entry_for(p: &Path) -> Option<Entry> {
 
 /// Query parameter naming a single workspace-relative path.
 #[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct PathQuery {
     /// Workspace-relative path to operate on.
     pub path: String,
@@ -210,6 +212,7 @@ pub struct PathQuery {
 
 /// Query parameters for `GET /files/read` (open-terminal 0.2.7).
 #[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ReadQuery {
     /// Workspace-relative path to operate on.
     pub path: String,

@@ -866,14 +866,11 @@
         "parameters": [
           {
             "description": "Kubernetes label selector (URL `labelSelector`) to filter listed sandboxes.",
-            "in": "path",
+            "in": "query",
             "name": "labelSelector",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -1788,7 +1785,7 @@
         "parameters": [
           {
             "description": "Workspace-relative path to operate on.",
-            "in": "path",
+            "in": "query",
             "name": "path",
             "required": true,
             "schema": {
@@ -1854,7 +1851,7 @@
         "parameters": [
           {
             "description": "Workspace-relative path to operate on.",
-            "in": "path",
+            "in": "query",
             "name": "path",
             "required": true,
             "schema": {
@@ -1909,7 +1906,7 @@
         "operationId": "glob_search",
         "parameters": [
           {
-            "in": "path",
+            "in": "query",
             "name": "pattern",
             "required": true,
             "schema": {
@@ -1917,37 +1914,28 @@
             }
           },
           {
-            "in": "path",
+            "in": "query",
             "name": "path",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
-            "in": "path",
+            "in": "query",
             "name": "type",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
-            "in": "path",
+            "in": "query",
             "name": "max_results",
-            "required": true,
+            "required": false,
             "schema": {
               "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
+              "type": "integer"
             }
           }
         ],
@@ -2008,7 +1996,7 @@
         "operationId": "grep",
         "parameters": [
           {
-            "in": "path",
+            "in": "query",
             "name": "query",
             "required": true,
             "schema": {
@@ -2016,59 +2004,44 @@
             }
           },
           {
-            "in": "path",
+            "in": "query",
             "name": "path",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
-            "in": "path",
+            "in": "query",
             "name": "regex",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "boolean",
-                "null"
-              ]
+              "type": "boolean"
             }
           },
           {
-            "in": "path",
+            "in": "query",
             "name": "case_insensitive",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "boolean",
-                "null"
-              ]
+              "type": "boolean"
             }
           },
           {
-            "in": "path",
+            "in": "query",
             "name": "include",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
-            "in": "path",
+            "in": "query",
             "name": "max_results",
-            "required": true,
+            "required": false,
             "schema": {
               "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
+              "type": "integer"
             }
           }
         ],
@@ -2130,14 +2103,11 @@
         "parameters": [
           {
             "description": "Optional workspace-relative directory to list (defaults to `.`).",
-            "in": "path",
+            "in": "query",
             "name": "directory",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -2211,7 +2181,7 @@
         "parameters": [
           {
             "description": "Literal text to match (required, non-blank).",
-            "in": "path",
+            "in": "query",
             "name": "query",
             "required": true,
             "schema": {
@@ -2220,52 +2190,40 @@
           },
           {
             "description": "Directory to search within (default `.`).",
-            "in": "path",
+            "in": "query",
             "name": "path",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "description": "Include hidden dotfiles and dot-directories.",
-            "in": "path",
+            "in": "query",
             "name": "show_hidden",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "boolean",
-                "null"
-              ]
+              "type": "boolean"
             }
           },
           {
             "description": "Result offset (default 0).",
-            "in": "path",
+            "in": "query",
             "name": "offset",
-            "required": true,
+            "required": false,
             "schema": {
               "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
+              "type": "integer"
             }
           },
           {
             "description": "Maximum number of results (1..=100, default 100).",
-            "in": "path",
+            "in": "query",
             "name": "limit",
-            "required": true,
+            "required": false,
             "schema": {
               "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
+              "type": "integer"
             }
           }
         ],
@@ -2459,7 +2417,7 @@
         "parameters": [
           {
             "description": "Workspace-relative path to operate on.",
-            "in": "path",
+            "in": "query",
             "name": "path",
             "required": true,
             "schema": {
@@ -2468,28 +2426,22 @@
           },
           {
             "description": "Optional 1-indexed inclusive first line.",
-            "in": "path",
+            "in": "query",
             "name": "start_line",
-            "required": true,
+            "required": false,
             "schema": {
               "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
+              "type": "integer"
             }
           },
           {
             "description": "Optional 1-indexed inclusive last line.",
-            "in": "path",
+            "in": "query",
             "name": "end_line",
-            "required": true,
+            "required": false,
             "schema": {
               "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
+              "type": "integer"
             }
           }
         ],
@@ -2631,63 +2583,48 @@
         "parameters": [
           {
             "description": "Filename search term.",
-            "in": "path",
+            "in": "query",
             "name": "query",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "description": "Directory to search within (default `.`).",
-            "in": "path",
+            "in": "query",
             "name": "path",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "description": "Maximum number of matches (1..=100, default 20).",
-            "in": "path",
+            "in": "query",
             "name": "limit",
-            "required": true,
+            "required": false,
             "schema": {
               "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
+              "type": "integer"
             }
           },
           {
             "description": "Type filter: `file`, `directory`, or `any` (default `any`).",
-            "in": "path",
+            "in": "query",
             "name": "type",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "description": "Include hidden dotfiles and dot-directories.",
-            "in": "path",
+            "in": "query",
             "name": "show_hidden",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "boolean",
-                "null"
-              ]
+              "type": "boolean"
             }
           }
         ],
@@ -2812,14 +2749,11 @@
         "parameters": [
           {
             "description": "Optional subdirectory under the workspace root to upload into.",
-            "in": "path",
+            "in": "query",
             "name": "directory",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -2882,7 +2816,7 @@
         "parameters": [
           {
             "description": "Workspace-relative path to operate on.",
-            "in": "path",
+            "in": "query",
             "name": "path",
             "required": true,
             "schema": {
