@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-08-30
+
 ### Added — workbench toolchain image + capability manifest
 
 - The default runtime image is now a curated workbench toolchain driven by a single
@@ -37,6 +39,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PEP-668 relief: the `EXTERNALLY-MANAGED` marker is removed so plain
   `pip install --user/--target` works; docs teach workspace-root recipes
   (`docs/toolchain.md`).
+
+### Changed — sudo surface on gVisor nodes + container posture
+
+- The runtime sandbox container additionally sets `allowPrivilegeEscalation: true`
+  and a container-default capability set minus `NET_RAW` (an empty bounding set
+  strips the setuid `sudo` binary at exec — sudo fails with “unable to change to
+  root gid”). It leaves the *restricted* Pod Security profile on these two axes;
+  broker and router stay fully restricted. Compensating controls and the full
+  threat discussion: `docs/security.md`.
+- **Node prerequisite for existing gVisor installs:** runsc needs `allow-suid` for
+  the sudo surface (gVisor [#5299](https://github.com/google/gvisor/issues/5299);
+  container filesystems are mounted `nosuid` by default and the setuid bit is
+  ignored). `infra/gvisor/install-gvisor-node.sh` and `infra/kind/install-runsc.sh`
+  now write the shim config (`[runsc_config]` → `allow-suid = "true"`) and wire it
+  into containerd via `options.ConfigPath`. Re-run the installer on existing
+  gVisor nodes and restart containerd before upgrading.
+
+### Changed — dependency updates
+
+- Broker and runtime images build on Rust 1.98 (#183, #184).
+- `aws-sdk-s3` 1.144 and `futures` updates in the rust workspace (#185).
+- CI `upload-artifact` v5 → v7 (#186).
 
 ## [0.1.5] - 2026-08-29
 
