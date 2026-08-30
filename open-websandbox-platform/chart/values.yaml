@@ -15,7 +15,7 @@ imagePullPolicy: Never   # prod: IfNotPresent
 # job) — i.e. the Rust broker/runtime HAVE end-to-end coverage. release.yml publishes the
 # same images to ghcr.io/<owner>/open-websandbox-{broker,runtime,router}. There is no Python
 # image: the Rust images were a drop-in replacement at the same name/tag (see Dockerfile headers).
-imageTag: v0.1.5
+imageTag: v0.1.6
 # Optional Kubernetes imagePullSecrets — a LocalObjectReference list, e.g.
 #   imagePullSecrets: [{name: ghcr-pull}]
 # Applied to the broker, router, AND runtime (SandboxTemplate) pod specs when
