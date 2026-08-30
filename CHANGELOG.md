@@ -12,6 +12,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-08-30
+
+### Fixed — OpenAPI documented query params as path params
+
+- Every struct bound to axum's `Query` extractor derived `IntoParams` without
+  `parameter_in`, so utoipa 5 published the entire GET parameter set of every
+  `/files/*` endpoint (`/files/read`'s `path`/`start_line`/`end_line` among them)
+  as `in: "path"` in `/openapi.json` — the document Open Web UI's tool discovery
+  consumes. Spec-driven tool callers bind parameters by declared location and
+  substitute `in: "path"` values into `{slots}`; with no slots present the
+  parameters were silently dropped and the runtime rejected the empty query with
+  `400 missing field \`path\``. The failure was surface-dependent ("sometimes"):
+  terminal-UI callers build query strings by hand and were unaffected.
+- All 9 query-extractor structs now carry `#[into_params(parameter_in = Query)]`
+  (runtime io/search/archive + broker list); request-body structs untouched and
+  genuine path params (`{name}`, `{{file_path}}`, `{id}`) stay `in: "path"`. The
+  OpenAPI snapshot regenerated — the diff is exactly `in: "path" → in: "query"`
+  plus the consequent `required`/nullable handling — and spec-driven regression
+  tests cover both documents (#190).
+
 ## [0.1.6] - 2026-08-30
 
 ### Added — workbench toolchain image + capability manifest
