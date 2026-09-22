@@ -29,6 +29,10 @@ anyhow = "1.0.104"
 # only, audited deps with internal unsafe are accepted (Q7) — matching ring/aws-lc.
 async-compression = { version = "0.4", features = ["tokio", "zstd"] }
 async-trait = "0.1.89"
+# In-process sequence diff for `/files/compare` (#195): pure-Rust Myers diff
+# (same crate cargo itself uses) — replaces upstream's Python `difflib` worker
+# subprocess; no `unsafe` in its public API and no new system deps.
+similar = "2"
 tar = "0.4"
 walkdir = "2"
 # OpenTelemetry stack (D9): the OTLP exporter + SDK + tracing bridge. The

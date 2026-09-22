@@ -49,6 +49,12 @@ use crate::store::SandboxStore;
 /// `S3_OFFLOAD_BACKOFF_SECONDS=10`). Exposed as constants so the wiring +
 /// tests reference the documented defaults.
 const DEFAULT_RETENTION_DAYS: u32 = 30;
+
+/// Sandbox annotation stamped after a fully-successful offload naming the
+/// uploaded object key; the restore path prefers it over a fresh LIST so a
+/// read-after-list race on the S3 backend cannot restore a stale snapshot
+/// (#195 hardening).
+pub const S3_LAST_KEY_ANNOTATION: &str = "broker-s3-last-offloaded-key";
 const DEFAULT_OFFLOAD_MAX_ATTEMPTS: u32 = 5;
 const DEFAULT_OFFLOAD_BACKOFF: Duration = Duration::from_secs(10);
 
@@ -126,7 +132,7 @@ pub trait ColdStore: Send + Sync {
 /// Real cold-tier backend: an `aws-sdk-s3` client (decision D4).
 ///
 /// Built once from [`BrokerConfig`] with path-style addressing
-/// (MinIO/R2/Proxmox + works on AWS S3), an optional custom endpoint, and
+/// (MinIO/RustFS/R2/Proxmox + works on AWS S3), an optional custom endpoint, and
 /// static credentials when provided (else the SDK default chain applies).
 pub struct AwsColdStore {
     client: aws_sdk_s3::Client,
@@ -520,7 +526,7 @@ impl S3Offload {
         pod_ip: &str,
         user: &str,
         session: &str,
-    ) -> Result<(), OffloadError> {
+    ) -> Result<String, OffloadError> {
         let ts = now_unix();
         let key = s3_object_key(&self.prefix, user, session, ts);
         let bearer = self.runtime_key(name).await;
@@ -564,7 +570,7 @@ impl S3Offload {
         tracing::info!(
             sandbox = %name, %key, user, session, "s3 offload complete"
         );
-        Ok(())
+        Ok(key)
     }
 
     /// Restore-on-resume: list the namespace →
@@ -572,29 +578,62 @@ impl S3Offload {
     /// when there is no object (first creation); any failure surfaces as
     /// [`RestoreError::Failed`] so resolve can fail the resume (502) rather than
     /// hand the user an empty workspace (D7).
+    ///
+    /// `recorded` is the Sandbox's last-offloaded-key stamp (#195 hardening):
+    /// when present it is preferred over a fresh LIST — a read-after-list race
+    /// on the S3 backend could otherwise pick a stale object as "newest". A
+    /// stamp whose object has since vanished falls back to the LIST.
+    #[allow(clippy::too_many_arguments)]
     pub async fn restore_on_resume(
         &self,
         name: &str,
         pod_ip: &str,
         user: &str,
         session: &str,
+        recorded: Option<&str>,
     ) -> Result<RestoreOutcome, RestoreError> {
         let ns = s3_namespace(&self.prefix, user, session);
         let bearer = self.runtime_key(name).await;
-        let Some(latest) = self
+        let listed = self
             .cold
             .latest_key(&ns)
             .await
-            .map_err(|e| RestoreError::Failed(format!("s3 list {ns}: {e}")))?
-        else {
+            .map_err(|e| RestoreError::Failed(format!("s3 list {ns}: {e}")))?;
+        // Prefer the Sandbox's last-offloaded-key stamp over the LIST (#195
+        // hardening): a read-after-list race on the S3 backend could otherwise
+        // pick a stale object as "newest". The stamp's object can be gone
+        // (namespace purged elsewhere) — the LIST result stays as fallback.
+        let latest: Option<String> = match recorded.filter(|k| !k.is_empty()) {
+            Some(key) => {
+                tracing::debug!(sandbox = %name, %key, "restore via last-offloaded-key stamp");
+                Some(key.to_string())
+            }
+            None => listed.clone(),
+        };
+        let Some(latest) = latest else {
             // Nothing to restore (first creation).
             return Ok(RestoreOutcome::NoObject);
         };
-        let body = self
-            .cold
-            .get_object(&latest)
-            .await
-            .map_err(|e| RestoreError::Failed(format!("s3 get {latest}: {e}")))?;
+        let (latest, body) = match self.cold.get_object(&latest).await {
+            Ok(body) => (latest, body),
+            // A stamped key can be gone (namespace purged from elsewhere);
+            // fall back to whatever the LIST knows.
+            Err(e) if recorded.is_some_and(|k| !k.is_empty()) => {
+                tracing::warn!(sandbox = %name, %latest, %e, "stamped key unreadable; falling back to list");
+                match listed {
+                    Some(key) => {
+                        let body = self
+                            .cold
+                            .get_object(&key)
+                            .await
+                            .map_err(|e| RestoreError::Failed(format!("s3 get {key}: {e}")))?;
+                        (key, body)
+                    }
+                    None => return Ok(RestoreOutcome::NoObject),
+                }
+            }
+            Err(e) => return Err(RestoreError::Failed(format!("s3 get {latest}: {e}"))),
+        };
 
         let resp = self
             .http
@@ -650,7 +689,20 @@ impl ReapOffload for S3Offload {
         // Retry with linear backoff (D7): on exhaustion, keep the sandbox alive.
         for attempt in 1..=self.max_attempts {
             match self.offload_once(&name, &pod_ip, &user, &session).await {
-                Ok(()) => {
+                Ok(key) => {
+                    // Stamp the offloaded key on the Sandbox (restore prefers
+                    // it over a fresh LIST — read-after-list races on the S3
+                    // backend would otherwise restore a stale snapshot,
+                    // #195 hardening). Best-effort: a missing stamp merely
+                    // falls back to latest_key.
+                    if let Some(store) = &self.store {
+                        if let Err(e) = store
+                            .set_annotation(&name, S3_LAST_KEY_ANNOTATION, &key)
+                            .await
+                        {
+                            tracing::warn!(sandbox = %name, %key, %e, "last-offloaded-key stamp failed");
+                        }
+                    }
                     // #142: after a FULLY-successful offload (new object stored +
                     // keep-latest delete done), purge the chat dir from a PVC
                     // hot tier so it actually frees space. Best-effort: the
@@ -807,7 +859,7 @@ fn profile_of(sbx: &Sandbox) -> Profile {
 }
 
 /// Read a sandbox annotation (empty string when absent).
-fn annotation(sbx: &Sandbox, key: &str) -> String {
+pub(crate) fn annotation(sbx: &Sandbox, key: &str) -> String {
     sbx.metadata
         .annotations
         .as_ref()
@@ -1120,7 +1172,7 @@ mod tests {
         let offload = S3Offload::new(&pvc_cfg(), cold, wiremock_client())
             .with_runtime_upstream_override(server.uri());
         let outcome = offload
-            .restore_on_resume("owui-c-x", "10.0.0.1", "u", "s")
+            .restore_on_resume("owui-c-x", "10.0.0.1", "u", "s", None)
             .await
             .expect("skip is Ok");
         assert_eq!(outcome, RestoreOutcome::HotTierHit);
@@ -1133,9 +1185,125 @@ mod tests {
         let store = Arc::new(InMemoryColdStore::new());
         let offload = S3Offload::new(&BrokerConfig::default(), store, reqwest::Client::new());
         let outcome = offload
-            .restore_on_resume("owui-c-abc", "10.0.0.1", "alice", "chat1")
+            .restore_on_resume("owui-c-abc", "10.0.0.1", "alice", "chat1", None)
             .await
             .unwrap();
         assert_eq!(outcome, RestoreOutcome::NoObject);
+    }
+
+    #[tokio::test]
+    async fn restore_prefers_recorded_key_over_listing() {
+        // #195 hardening: the Sandbox's last-offloaded-key stamp wins over the
+        // LIST result — a read-after-list race on the S3 backend must not be
+        // able to serve a stale "newest". Proven by precedence: the stamp
+        // names the OLDER object while latest_key would pick the newer one.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/restore"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "restored": true, "bytes": 5 })),
+            )
+            .mount(&server)
+            .await;
+
+        let cold = Arc::new(InMemoryColdStore::new());
+        let old_key = s3_object_key("users", "u", "s", 1_700_000_000);
+        let new_key = s3_object_key("users", "u", "s", 1_700_000_100);
+        cold.seed(&old_key, &b"stamped"[..]);
+        cold.seed(&new_key, &b"listed-newest"[..]);
+        let offload = S3Offload::new(&pvc_cfg(), cold, wiremock_client())
+            .with_runtime_upstream_override(server.uri());
+        let outcome = offload
+            .restore_on_resume("owui-c-abc", "10.0.0.1", "u", "s", Some(&old_key))
+            .await
+            .expect("stamped restore succeeds");
+        assert_eq!(outcome, RestoreOutcome::Restored(old_key.clone()));
+
+        // The runtime received exactly the stamped object's body.
+        let received = server.received_requests().await.expect("captured");
+        let put = received
+            .iter()
+            .find(|r| r.method == "PUT" && r.url.path() == "/restore")
+            .expect("PUT /restore issued");
+        assert_eq!(put.body, b"stamped");
+    }
+
+    #[tokio::test]
+    async fn restore_falls_back_to_listing_when_stamp_is_unreadable() {
+        // The stamp can name an object that is gone (namespace purged from
+        // elsewhere): restore must fall back to the LIST's newest, not fail.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/restore"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "restored": true, "bytes": 5 })),
+            )
+            .mount(&server)
+            .await;
+
+        let cold = Arc::new(InMemoryColdStore::new());
+        let live = s3_object_key("users", "u", "s", 1_700_000_000);
+        cold.seed(&live, &b"listed"[..]);
+        let gone = s3_object_key("users", "u", "s", 1_700_000_050);
+        let offload = S3Offload::new(&pvc_cfg(), cold, wiremock_client())
+            .with_runtime_upstream_override(server.uri());
+        let outcome = offload
+            .restore_on_resume("owui-c-abc", "10.0.0.1", "u", "s", Some(&gone))
+            .await
+            .expect("fallback restore succeeds");
+        assert_eq!(outcome, RestoreOutcome::Restored(live));
+    }
+
+    #[tokio::test]
+    async fn offload_stamps_last_offloaded_key_on_the_sandbox() {
+        // After a fully-successful offload, the Sandbox carries the uploaded
+        // key so a later resume can skip the LIST race.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/snapshot"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"tar-zst"))
+            .mount(&server)
+            .await;
+
+        let stub = Arc::new(crate::store::test_fakes::StubSandboxStore::new());
+        let sbx = sandbox("persistent", Some("10.0.0.9"));
+        let name = sbx.name_any();
+        stub.create_sandbox(sbx.clone()).await.expect("create");
+
+        let cfg = BrokerConfig {
+            s3_enabled: true,
+            persistent_mode: shared::PersistentMode::EmptyDir,
+            ..Default::default()
+        };
+        let offload = S3Offload::new(&cfg, Arc::new(InMemoryColdStore::new()), wiremock_client())
+            .with_runtime_upstream_override(server.uri())
+            .with_store(stub.clone());
+        offload.offload_on_reap(&sbx).await.expect("offload ok");
+
+        let after = stub
+            .get_sandbox(&name)
+            .await
+            .expect("get")
+            .expect("present");
+        let stamped = after
+            .metadata
+            .annotations
+            .and_then(|a| a.get(S3_LAST_KEY_ANNOTATION).cloned())
+            .unwrap_or_default();
+        assert!(
+            stamped.starts_with("users/u/chats/s/workspace-") && stamped.ends_with(".tar.zst"),
+            "stamped key has the object-key shape: {stamped}"
+        );
     }
 }

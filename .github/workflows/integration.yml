@@ -31,14 +31,16 @@ concurrency:
 
 jobs:
   live-backends:
-    name: broker live backends (KIND + MinIO)
+    name: broker live backends (KIND + RustFS)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # C2 target: MinIO S3 API on :9000. Started as a docker-run step (NOT a
-    # `services:` container): GH service containers cannot pass a `server /data`
-    # command, and current minio/minio images no longer start a server without
-    # one — the container dies and :9000 never listens. Pinned release; image
-    # tag verified to exist.
+    # C2 target: an S3 API on :9000. RustFS (MinIO-API-compatible, Apache-2.0)
+    # replaces the original MinIO: minio/minio was yanked from Docker Hub
+    # (pull access denied), and the quay mirror could follow the same fate —
+    # ghcr.io is immune to that and gives prod parity (the OKD cluster runs
+    # RustFS for its object storage). Still a docker-run step (NOT `services:`)
+    # because GH service containers cannot pass a `server /data` command.
+    # Pinned release; image tag verified to exist.
     env:
       KIND_CLUSTER: owui-c1c2
     steps:
@@ -51,19 +53,19 @@ jobs:
         with:
           workspaces: rust
 
-      # --- C2: MinIO ---------------------------------------------------------
-      - name: Start MinIO (pinned release, S3 API on :9000)
+      # --- C2: RustFS (S3-compatible object storage) ------------------------
+      - name: Start RustFS (pinned release, S3 API on :9000)
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=minio -e MINIO_ROOT_PASSWORD=minio123 \
-            minio/minio:RELEASE.2024-01-16T16-07-38Z server /data
-      - name: Wait for MinIO (:9000)
+          docker run -d --name rustfs -p 9000:9000 \
+            -e RUSTFS_ACCESS_KEY=minio -e RUSTFS_SECRET_KEY=minio123 \
+            ghcr.io/rustfs/rustfs:1.0.0 server /data
+      - name: Wait for RustFS (:9000)
         run: |
           for i in $(seq 1 30); do
-            curl -sf http://localhost:9000/minio/health/live >/dev/null && exit 0
+            curl -sf http://localhost:9000/health >/dev/null && exit 0
             sleep 2
           done
-          echo "MinIO never became healthy"; exit 1
+          echo "RustFS never became healthy"; exit 1
 
       - name: C2 — live S3 cold-tier test (OWUI_S3_LIVE=1)
         working-directory: rust

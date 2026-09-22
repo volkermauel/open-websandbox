@@ -1,16 +1,16 @@
 # SPDX-FileCopyrightText: 2026 the open-websandbox contributors
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Create the e2e MinIO bucket BEFORE any test traffic (lane pre-step, #142).
+"""Create the e2e S3 bucket BEFORE any test traffic (lane pre-step, #142).
 
 The hybrid PVC×S3 lane runs PVC tests that do not resolve the `require_s3`
 fixture (which would create the bucket). But the REAPER offloads regardless of
 which module is running — with the bucket missing, every offload fails and the
 fail-safe keeps sandboxes alive in a churn loop that breaks unrelated tests.
-Run this right after the MinIO rollout / before pytest.
+Run this right after the RustFS rollout / before pytest.
 
 Usage (lane pre-step; boto3 from requirements-test.txt):
-    python tests/e2e/ensure_minio_bucket.py
+    python tests/e2e/ensure_s3_bucket.py
 """
 
 from __future__ import annotations
@@ -41,20 +41,20 @@ def main() -> int:
     from botocore.config import Config
 
     pf = subprocess.Popen(
-        ["kubectl", "-n", SYS_NS, "port-forward", "svc/minio", f"{PF_PORT}:9000"],
+        ["kubectl", "-n", SYS_NS, "port-forward", "svc/rustfs", f"{PF_PORT}:9000"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     try:
         for _ in range(30):
             try:
                 with urllib.request.urlopen(
-                    f"http://localhost:{PF_PORT}/minio/health/live", timeout=2
+                    f"http://localhost:{PF_PORT}/health", timeout=2
                 ):
                     break
             except Exception:
                 time.sleep(1)
         else:
-            print(f"MinIO port-forward :{PF_PORT} never became healthy", file=sys.stderr)
+            print(f"RustFS port-forward :{PF_PORT} never became healthy", file=sys.stderr)
             return 1
 
         client = boto3.client(

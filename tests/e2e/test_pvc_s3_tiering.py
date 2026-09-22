@@ -32,7 +32,7 @@ from conftest import (  # type: ignore[import-not-found]
     CLAIM_TIMEOUT,
     _claim_ready_session,
     headers_for,
-    minio_list_objects,
+    s3_list_objects,
 )
 
 RT_NS = os.getenv("E2E_RT_NS", "agent-sandbox-runtime")
@@ -183,7 +183,7 @@ def test_reap_offloads_purges_hot_tier_and_restores_on_resolve():
 
         # The offload landed in the cold tier (keys use the RAW user/session —
         # mirror of s3_namespace in rust/broker/src/s3.rs).
-        keys = minio_list_objects(f"users/{user}/chats/{session}/")
+        keys = s3_list_objects(f"users/{user}/chats/{session}/")
         assert keys, "no S3 object after reap — offload did not run"
         assert any(k.endswith(".tar.zst") for k in keys), keys
 

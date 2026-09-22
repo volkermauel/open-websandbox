@@ -43,6 +43,10 @@ pub struct ResolvedSandbox {
     pub name: String,
     /// Pod IP the runtime is serving on (`:8888`).
     pub pod_ip: String,
+    /// The Sandbox's `broker-s3-last-offloaded-key` stamp at resolve time
+    /// (`None` when absent) — the restore path prefers it over a fresh S3
+    /// LIST (#195 hardening).
+    pub last_offloaded_key: Option<String>,
 }
 
 /// Deterministic, DNS-label-safe per-session Sandbox name.
@@ -306,8 +310,18 @@ pub async fn resolve_sandbox(
     // workspace (D7).
     if profile == Profile::Persistent {
         if let Some(tier) = state.s3_restore.clone() {
+            // Prefer the Sandbox's last-offloaded-key stamp over a fresh LIST
+            // (#195 hardening: a read-after-list race on the S3 backend could
+            // otherwise restore a stale snapshot over newer hot-tier data).
+            let recorded = resolved.last_offloaded_key.as_deref();
             match tier
-                .restore_on_resume(&resolved.name, &resolved.pod_ip, user_id, session_id)
+                .restore_on_resume(
+                    &resolved.name,
+                    &resolved.pod_ip,
+                    user_id,
+                    session_id,
+                    recorded,
+                )
                 .await
             {
                 Ok(crate::s3::RestoreOutcome::Restored(key)) => {
@@ -527,9 +541,16 @@ async fn wait_for_ready(state: &AppState, name: &str) -> Result<ResolvedSandbox,
         if let Some(sbx) = state.store.get_sandbox(name).await.map_err(map_store_err)? {
             if let Some(ip) = ready_pod_ip(&sbx) {
                 tracing::info!(sandbox = %name, pod_ip = %ip, "sandbox resolved");
+                // Snapshot the last-offloaded-key stamp while the object is
+                // in hand — an extra GET just for it would double the reads.
+                let last_offloaded_key = {
+                    let k = crate::s3::annotation(&sbx, crate::s3::S3_LAST_KEY_ANNOTATION);
+                    (!k.is_empty()).then_some(k)
+                };
                 return Ok(ResolvedSandbox {
                     name: name.to_string(),
                     pod_ip: ip,
+                    last_offloaded_key,
                 });
             }
             last_digest = condition_summary(sbx.status.as_ref());

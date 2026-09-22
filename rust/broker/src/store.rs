@@ -92,6 +92,11 @@ pub trait SandboxStore: Send + Sync {
     /// site: a failure is logged, never fatal.
     async fn clear_annotation(&self, name: &str, key: &str) -> Result<(), StoreError>;
 
+    /// Set one annotation key (merge-patch; k8s preserves the rest). Backs
+    /// the S3 last-offloaded-key stamp (restore prefers it over a fresh LIST
+    /// — #195 hardening). Best-effort at the call site.
+    async fn set_annotation(&self, name: &str, key: &str, value: &str) -> Result<(), StoreError>;
+
     /// Is the apiserver reachable? Backs `GET /readyz` (503 when not).
     async fn apiserver_reachable(&self) -> bool;
 
@@ -448,6 +453,18 @@ impl SandboxStore for KubeSandboxStore {
         }
     }
 
+    async fn set_annotation(&self, name: &str, key: &str, value: &str) -> Result<(), StoreError> {
+        // Merge-patch the single annotation key; k8s preserves the others.
+        let patch = kube::api::Patch::Merge(serde_json::json!({
+            "metadata": { "annotations": { key: value } }
+        }));
+        let params = kube::api::PatchParams::default();
+        match self.sandbox_api().patch(name, &params, &patch).await {
+            Ok(_) => Ok(()),
+            Err(err) => Err(StoreError::classify(err)),
+        }
+    }
+
     async fn apiserver_reachable(&self) -> bool {
         // Lightweight readyz probe: list sandboxes
         // (limit 1). Any error → not ready.
@@ -729,6 +746,23 @@ pub mod test_fakes {
                     if let Some(annots) = sbx.metadata.annotations.as_mut() {
                         annots.remove(key);
                     }
+                    Ok(())
+                }
+                None => Err(StoreError::NotFound),
+            }
+        }
+
+        async fn set_annotation(
+            &self,
+            name: &str,
+            key: &str,
+            value: &str,
+        ) -> Result<(), StoreError> {
+            let mut map = self.sandboxes.lock().expect("stub sandboxes");
+            match map.get_mut(name) {
+                Some(sbx) => {
+                    let annots = sbx.metadata.annotations.get_or_insert_with(BTreeMap::new);
+                    annots.insert(key.to_string(), value.to_string());
                     Ok(())
                 }
                 None => Err(StoreError::NotFound),

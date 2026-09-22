@@ -26,11 +26,11 @@ broker:
   reapSeconds: 50                # reap → resume → offload → purge → delete
   s3:
     enabled: true
-    endpoint: "http://minio.agent-sandbox-system:9000"
+    endpoint: "http://rustfs.agent-sandbox-system:9000"
     bucket: "owsb-e2e"
     prefix: "users"
     region: "us-east-1"
-    credentialsSecret: "owui-s3-creds"   # created by tests/e2e/fixtures/minio.yaml
+    credentialsSecret: "owui-s3-creds"   # created by tests/e2e/fixtures/rustfs.yaml
     retentionDays: 1
     compression: zstd
     sse: ""                      # dev MinIO has no KMS/SSE backend; disable SSE (the broker omits the header)

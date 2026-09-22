@@ -168,7 +168,7 @@ async fn restore_streams_latest_object_to_restore_endpoint() {
 
     let offload = offload(store.clone(), server.uri());
     let outcome = offload
-        .restore_on_resume("owui-c-abc", "10.0.0.5", "u", "s")
+        .restore_on_resume("owui-c-abc", "10.0.0.5", "u", "s", None)
         .await
         .expect("restore succeeds");
     assert_eq!(outcome, RestoreOutcome::Restored(latest));
@@ -194,7 +194,7 @@ async fn restore_skips_when_no_object_and_never_hits_restore() {
     let offload = offload(store.clone(), server.uri());
 
     let outcome = offload
-        .restore_on_resume("owui-c-abc", "10.0.0.5", "u", "s")
+        .restore_on_resume("owui-c-abc", "10.0.0.5", "u", "s", None)
         .await
         .expect("no-object is not an error");
     assert_eq!(outcome, RestoreOutcome::NoObject);
@@ -221,7 +221,7 @@ async fn restore_failure_surfaces_so_resolve_can_fail_the_resume() {
     let offload = offload(store.clone(), server.uri());
 
     let err = offload
-        .restore_on_resume("owui-c-abc", "10.0.0.5", "u", "s")
+        .restore_on_resume("owui-c-abc", "10.0.0.5", "u", "s", None)
         .await
         .expect_err("a failing restore must surface as Err");
     let msg = err.to_string();

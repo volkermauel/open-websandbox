@@ -337,6 +337,7 @@ mod tests {
 
     fn resolved() -> ResolvedSandbox {
         ResolvedSandbox {
+            last_offloaded_key: None,
             name: "owui-c-deadbeef".into(),
             pod_ip: "10.0.0.5".into(),
         }

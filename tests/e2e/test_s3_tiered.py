@@ -14,7 +14,7 @@ the REAL data movement + per-session isolation:
      data (per-session object keying users/<uid>/chats/<sid>/; /restore pulls one object).
 
 Reuses the broker httpx + claim helpers from conftest; MinIO is inspected by exec'ing the
-broker's own boto3 + projected creds (conftest.minio_list_objects).
+broker's own boto3 + projected creds (conftest.s3_list_objects).
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from conftest import (  # type: ignore[import-not-found]
     CLAIM_TIMEOUT,
     _claim_ready_session,
     headers_for,
-    minio_list_objects,
+    s3_list_objects,
 )
 
 RUNTIME_NS = "agent-sandbox-runtime"
@@ -66,7 +66,7 @@ def _wait_offloaded(timeout: int = OFFLOAD_TIMEOUT) -> list[str]:
     """Poll MinIO until >=1 workspace-*.tar.zst object appears; return all object keys."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        objs = [o for o in minio_list_objects("users/") if o.endswith(".tar.zst")]
+        objs = [o for o in s3_list_objects("users/") if o.endswith(".tar.zst")]
         if objs:
             return objs
         time.sleep(5)

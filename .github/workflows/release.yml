@@ -28,6 +28,16 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
+  # Upstream-compatibility tags stamped onto ALL three released images (see
+  # release-images' EXTRA_TAGS). Bump BOTH on every release whose surface
+  # compatibility changes — they advertise to deployers which upstream
+  # consumers this build was verified against (docs/compatibility.md is the
+  # authoritative matrix; these tags are its machine-readable pointer):
+  #   OWUI_COMPAT_TAG:           newest Open Web UI version exercised end-to-end
+  #   OPEN_TERMINAL_COMPAT_TAG:  open-terminal API surface implemented
+  #                              (`-skills` = post-v0.12.3 skills/compare additions)
+  OWUI_COMPAT_TAG: owui-v0.11.4
+  OPEN_TERMINAL_COMPAT_TAG: open-terminal-v0.12.3-skills
 
 jobs:
   build-images:
@@ -79,7 +89,8 @@ jobs:
 
   release-images:
     # Merge the per-arch images into the final multi-arch manifest list
-    # (<tag>, sha-<short>, router: agent-sandbox-v0.5.6), then sign the
+    # (<tag>, sha-<short>, ${OWUI_COMPAT_TAG}, ${OPEN_TERMINAL_COMPAT_TAG}; router
+    # additionally agent-sandbox-v0.5.6), then sign the
     # manifest digest and generate the SBOM from it (keyless cosign, syft —
     # same supply-chain contract as before, now on the merged list).
     name: merge+sign+sbom open-websandbox-${{ matrix.image }}
@@ -105,9 +116,16 @@ jobs:
         run: |
           SHA_TAG="sha-${GITHUB_SHA::7}"
           EXTRA_TAGS=()
+          # Router inlines the upstream agent-sandbox image; its tag names that.
           if [ "${{ matrix.image }}" = "router" ]; then
             EXTRA_TAGS+=(-t "${IMAGE}:agent-sandbox-v0.5.6")
           fi
+          # Upstream-compatibility tags (workflow env) apply to every image:
+          # broker + runtime implement the client surface, router routes it.
+          EXTRA_TAGS+=(
+            -t "${IMAGE}:${OWUI_COMPAT_TAG}"
+            -t "${IMAGE}:${OPEN_TERMINAL_COMPAT_TAG}"
+          )
           docker buildx imagetools create \
             -t "${IMAGE}:${TAG}" \
             -t "${IMAGE}:${SHA_TAG}" \
