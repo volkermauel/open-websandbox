@@ -6,6 +6,18 @@ sandbox server [open-terminal](https://github.com/open-webui/open-terminal).
 post-v0.12.3 skills/compare surface) for the surface listed below** — verified
 against upstream `main` @ `542094a` (post-v0.12.3); the gap research is
 attached to issues #164 and #195.
+against upstream `main` @ `542094a` (post-v0.12.3); the gap research is
+attached to issues #164 and #195.
+
+Every released image carries two upstream-compatibility tags mirroring this
+matrix (stamped by `.github/workflows/release.yml`, bumped per release):
+
+- `owui-v0.11.4` — newest Open Web UI version exercised end-to-end
+- `open-terminal-v0.12.3-skills` — open-terminal API surface implemented
+  (`-skills` = the post-v0.12.3 skills/compare additions)
+
+This file stays the authoritative matrix; the tags are its machine-readable
+pointer for deployers picking a digest.
 
 ## Architecture note
 
