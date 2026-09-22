@@ -30,7 +30,7 @@ install is unchanged.
 |-------|---------|
 | idle > park age (PVC tiers) | sandbox suspended — resume serves the PVC directly, no S3 involved |
 | idle > reap age | broker offloads `/workspace` → S3 (briefly resuming a suspended sandbox so a pod exists to snapshot), then deletes the pod + CR + per-session key — and for PVC tiers purges the chat dir from the hot tier |
-| resolve after reap | broker creates a fresh pod, waits for readiness, then **synchronously** restores S3 → `/workspace` before the session becomes ready (only if the workspace is empty — hot-tier data always wins) |
+| resolve after reap | broker creates a fresh pod, waits for readiness, then **synchronously** restores S3 → `/workspace` before the session becomes ready (only if the workspace is empty — hot-tier data always wins). The restore prefers the Sandbox's `broker-s3-last-offloaded-key` stamp over a fresh S3 LIST, so a read-after-list race on the backend cannot serve a stale snapshot |
 | long-running session | a leader-gated task snapshots it every `broker.s3.periodicSyncInterval`, so a node loss loses at most one interval |
 | offload failure on reap | retried with backoff; the pod + CR stay alive until success or `maxAttempts` (**no silent data loss**) |
 | restore failure on resume | the resume **fails** (surfaced as an error); an empty workspace is never handed back |

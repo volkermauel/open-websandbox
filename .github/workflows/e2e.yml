@@ -191,23 +191,6 @@ jobs:
           VALUES_FILE: open-websandbox-platform/chart/values-kind${{ matrix.runtime == 'gvisor' && '-gvisor' || '' }}.yaml
 
 
-      - name: Diagnostics (on failure)
-        if: failure()
-        run: |
-          echo "=== broker/router pods ==="
-          kubectl -n "$SYS_NS" get pods -o wide || true
-          echo "=== broker describe + logs ==="
-          kubectl -n "$SYS_NS" describe deploy/owui-broker --timeout=10s || true
-          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=100 || true
-          echo "=== /readyz + /healthz (probed via port-forward) ==="
-          kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 &
-          PF=$!; sleep 3
-          curl -sS http://localhost:8889/readyz; echo
-          curl -sS http://localhost:8889/healthz; echo
-          kill "$PF" 2>/dev/null || true
-          echo "=== runtime sandboxes + recent events ==="
-          kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
-          kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
       - name: Install test deps
         run: pip install -r requirements-test.txt
 
@@ -350,22 +333,6 @@ jobs:
             -f open-websandbox-platform/chart/values-kind-s3.yaml -n "$SYS_NS"
           kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
 
-      - name: Diagnostics (on failure)
-        if: failure()
-        run: |
-          echo "=== broker/rustfs pods ==="
-          kubectl -n "$SYS_NS" get pods -o wide || true
-          echo "=== broker logs ==="
-          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=200 || true
-          echo "=== runtime sandboxes ==="
-          kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
-          echo "=== runtime pod logs (last 6 by age) ==="
-          for p in $(kubectl -n "$RUNTIME_NS" get pods --sort-by=.metadata.creationTimestamp -o name | tail -6); do
-            echo "--- $p ---"
-            kubectl -n "$RUNTIME_NS" logs "$p" --tail=80 || true
-          done
-          kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
-
       - name: Install test deps
         run: pip install -r requirements-test.txt
 
@@ -383,6 +350,23 @@ jobs:
             pytest tests/e2e/test_s3_tiered.py -v
           kill "$PF"
 
+      - name: Diagnostics (on failure)
+        if: failure()
+        run: |
+          echo "=== broker/router pods ==="
+          kubectl -n "$SYS_NS" get pods -o wide || true
+          echo "=== broker describe + logs ==="
+          kubectl -n "$SYS_NS" describe deploy/owui-broker --timeout=10s || true
+          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=100 || true
+          echo "=== /readyz + /healthz (probed via port-forward) ==="
+          kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 &
+          PF=$!; sleep 3
+          curl -sS http://localhost:8889/readyz; echo
+          curl -sS http://localhost:8889/healthz; echo
+          kill "$PF" 2>/dev/null || true
+          echo "=== runtime sandboxes + recent events ==="
+          kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
+          kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
   # Hybrid PVC×S3 tiering e2e (issues #142/#144): runc-only matrix over the two
   # SLOW (~10 m pytest each) lanes. They stay on dedicated parallel runners —
   # serializing them on one shared cluster would trade +16 m wall-clock for
@@ -537,6 +521,8 @@ jobs:
           kubectl -n "$SYS_NS" get pods -o wide || true
           echo "=== broker logs ==="
           kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=200 || true
+          echo "=== rustfs logs ==="
+          kubectl -n "$SYS_NS" logs deploy/rustfs --tail=100 || true
           echo "=== PVCs ==="
           kubectl -n "$RUNTIME_NS" get pvc -o wide || true
           echo "=== runtime sandboxes ==="
@@ -546,6 +532,31 @@ jobs:
             echo "--- $p ---"
             kubectl -n "$RUNTIME_NS" logs "$p" --tail=80 || true
           done
+          echo "=== S3 bucket listing (users/ tree) ==="
+          kubectl -n "$SYS_NS" port-forward svc/rustfs 9000:9000 &
+          PF2=$!; sleep 3
+          python3 - "$SYS_NS" <<'PYEOF' || true
+          import base64, subprocess, sys
+          import boto3
+          from botocore.client import Config
+          ns = sys.argv[1]
+          def secret(key):
+              r = subprocess.run(["kubectl", "-n", ns, "get", "secret", "owui-s3-creds",
+                                  "-o", f"jsonpath={{.data.{key}}}"],
+                                 capture_output=True, text=True, timeout=30)
+              return base64.b64decode(r.stdout).decode().strip()
+          s3 = boto3.client("s3", endpoint_url="http://localhost:9000",
+                            aws_access_key_id=secret("access-key-id"),
+                            aws_secret_access_key=secret("secret-access-key"),
+                            region_name="us-east-1",
+                            config=Config(s3={"addressing_style": "path"}))
+          for b in [c["Name"] for c in s3.list_buckets().get("Buckets", [])]:
+              r = s3.list_objects_v2(Bucket=b, Prefix="users/")
+              print(f"bucket {b}:")
+              for o in r.get("Contents", []):
+                  print(f"  {o['Key']}  ({o['Size']}B, {o['LastModified']})")
+          PYEOF
+          kill "$PF2" 2>/dev/null || true
           kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
 
       - name: Install test deps
@@ -589,6 +600,50 @@ jobs:
               pytest tests/e2e/test_pvc_persistence.py -v
           fi
           kill "$PF"
+
+      - name: Diagnostics (on failure)
+        if: failure()
+        run: |
+          echo "=== broker/rustfs pods ==="
+          kubectl -n "$SYS_NS" get pods -o wide || true
+          echo "=== broker logs ==="
+          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=200 || true
+          echo "=== rustfs logs ==="
+          kubectl -n "$SYS_NS" logs deploy/rustfs --tail=100 || true
+          echo "=== S3 bucket listing (users/ tree) ==="
+          kubectl -n "$SYS_NS" port-forward svc/rustfs 9000:9000 &
+          PF2=$!; sleep 3
+          python3 - "$SYS_NS" <<'PYEOF' || true
+          import base64, json, subprocess, sys
+          import boto3
+          from botocore.client import Config
+          ns = sys.argv[1]
+          def secret(key):
+              r = subprocess.run(["kubectl", "-n", ns, "get", "secret", "owui-s3-creds",
+                                  "-o", f"jsonpath={{.data.{key}}}"],
+                                 capture_output=True, text=True, timeout=30)
+              return base64.b64decode(r.stdout).decode().strip()
+          s3 = boto3.client("s3", endpoint_url="http://localhost:9000",
+                            aws_access_key_id=secret("access-key-id"),
+                            aws_secret_access_key=secret("secret-access-key"),
+                            region_name="us-east-1",
+                            config=Config(s3={"addressing_style": "path"}))
+          for b in [c["Name"] for c in s3.list_buckets().get("Buckets", [])]:
+              r = s3.list_objects_v2(Bucket=b, Prefix="users/")
+              print(f"bucket {b}:")
+              for o in r.get("Contents", []):
+                  print(f"  {o['Key']}  ({o['Size']}B, {o['LastModified']})")
+          PYEOF
+          kill "$PF2" 2>/dev/null || true
+
+          echo "=== runtime sandboxes ==="
+          kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
+          echo "=== runtime pod logs (last 6 by age) ==="
+          for p in $(kubectl -n "$RUNTIME_NS" get pods --sort-by=.metadata.creationTimestamp -o name | tail -6); do
+            echo "--- $p ---"
+            kubectl -n "$RUNTIME_NS" logs "$p" --tail=80 || true
+          done
+          kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
 
   # FAST PVC-family lanes on ONE shared KIND cluster (issue #177, design B+ of
   # the #175 investigation): the fixed cost — cluster create, broker/runtime/
@@ -752,24 +807,6 @@ jobs:
             -n "$SYS_NS" --create-namespace
           kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
 
-      - name: Diagnostics (per-user-pvc, on failure)
-        if: failure()
-        run: |
-          echo "=== broker pods ==="
-          kubectl -n "$SYS_NS" get pods -o wide || true
-          echo "=== broker logs ==="
-          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=200 || true
-          echo "=== PVCs ==="
-          kubectl -n "$RUNTIME_NS" get pvc -o wide || true
-          echo "=== runtime sandboxes ==="
-          kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
-          echo "=== runtime pod logs (last 6 by age) ==="
-          for p in $(kubectl -n "$RUNTIME_NS" get pods --sort-by=.metadata.creationTimestamp -o name | tail -6); do
-            echo "--- $p ---"
-            kubectl -n "$RUNTIME_NS" logs "$p" --tail=80 || true
-          done
-          kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
-
       - name: Run PVC e2e suite (per-user-pvc)
         run: |
           set -euo pipefail
@@ -791,6 +828,24 @@ jobs:
             pytest tests/e2e/test_pvc_persistence.py -v
           kill "$PF"
 
+      - name: Diagnostics (per-user-pvc, on failure)
+        if: failure()
+        run: |
+          echo "=== broker pods ==="
+          kubectl -n "$SYS_NS" get pods -o wide || true
+          echo "=== broker logs ==="
+          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=200 || true
+          echo "=== PVCs ==="
+          kubectl -n "$RUNTIME_NS" get pvc -o wide || true
+          echo "=== runtime sandboxes ==="
+          kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
+          echo "=== runtime pod logs (last 6 by age) ==="
+          for p in $(kubectl -n "$RUNTIME_NS" get pods --sort-by=.metadata.creationTimestamp -o name | tail -6); do
+            echo "--- $p ---"
+            kubectl -n "$RUNTIME_NS" logs "$p" --tail=80 || true
+          done
+          kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
+
       - name: Reset cluster for next mode (after per-user-pvc)
         run: |
           helm uninstall owui -n "$SYS_NS" --ignore-not-found || true
@@ -805,6 +860,21 @@ jobs:
             -f open-websandbox-platform/chart/values-kind-pvc-shared.yaml \
             -n "$SYS_NS" --create-namespace
           kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
+
+      - name: Run PVC e2e suite (shared-subpath)
+        run: |
+          set -euo pipefail
+          fuser -k 8889/tcp || true
+          nohup kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 >/tmp/broker-pf.log 2>&1 &
+          PF=$!
+          for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
+          SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
+            -o jsonpath='{.data.shared-secret}' | base64 -d)"
+          KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}" \
+          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" \
+          E2E_PVC=1 E2E_PVC_MODE=shared-subpath \
+            pytest tests/e2e/test_pvc_persistence.py -v
+          kill "$PF"
 
       - name: Diagnostics (shared-subpath, on failure)
         if: failure()
@@ -823,21 +893,6 @@ jobs:
             kubectl -n "$RUNTIME_NS" logs "$p" --tail=80 || true
           done
           kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
-
-      - name: Run PVC e2e suite (shared-subpath)
-        run: |
-          set -euo pipefail
-          fuser -k 8889/tcp || true
-          nohup kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 >/tmp/broker-pf.log 2>&1 &
-          PF=$!
-          for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
-          SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
-            -o jsonpath='{.data.shared-secret}' | base64 -d)"
-          KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}" \
-          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" \
-          E2E_PVC=1 E2E_PVC_MODE=shared-subpath \
-            pytest tests/e2e/test_pvc_persistence.py -v
-          kill "$PF"
 
       - name: Reset cluster for next mode (after shared-subpath)
         run: |
@@ -859,6 +914,20 @@ jobs:
             -n "$SYS_NS" --create-namespace
           kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
 
+      - name: Run rate-limit e2e
+        run: |
+          set -euo pipefail
+          fuser -k 8889/tcp || true
+          nohup kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 >/tmp/broker-pf.log 2>&1 &
+          PF=$!
+          for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
+          SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
+            -o jsonpath='{.data.shared-secret}' | base64 -d)"
+          KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}" \
+          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" E2E_RATE_LIMIT=1 \
+            pytest tests/e2e/test_rate_limit.py -v
+          kill "$PF"
+
       - name: Diagnostics (rate-limit, on failure)
         if: failure()
         run: |
@@ -877,20 +946,6 @@ jobs:
           done
           kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
 
-      - name: Run rate-limit e2e
-        run: |
-          set -euo pipefail
-          fuser -k 8889/tcp || true
-          nohup kubectl -n "$SYS_NS" port-forward svc/owui-broker 8889:8080 >/tmp/broker-pf.log 2>&1 &
-          PF=$!
-          for i in $(seq 1 30); do curl -sf http://localhost:8889/healthz >/dev/null && break; sleep 1; done
-          SECRET="$(kubectl -n "$SYS_NS" get secret owui-broker-secret \
-            -o jsonpath='{.data.shared-secret}' | base64 -d)"
-          KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}" \
-          BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" E2E_RATE_LIMIT=1 \
-            pytest tests/e2e/test_rate_limit.py -v
-          kill "$PF"
-
       - name: Reset cluster for next mode (after rate-limit)
         run: |
           helm uninstall owui -n "$SYS_NS" --ignore-not-found || true
@@ -905,24 +960,6 @@ jobs:
             -f open-websandbox-platform/chart/values-kind-pvc.yaml \
             -n "$SYS_NS" --create-namespace
           kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
-
-      - name: Diagnostics (drain, on failure)
-        if: failure()
-        run: |
-          echo "=== broker pods ==="
-          kubectl -n "$SYS_NS" get pods -o wide || true
-          echo "=== broker logs ==="
-          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=200 || true
-          echo "=== PVCs ==="
-          kubectl -n "$RUNTIME_NS" get pvc -o wide || true
-          echo "=== runtime sandboxes ==="
-          kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
-          echo "=== runtime pod logs (last 6 by age) ==="
-          for p in $(kubectl -n "$RUNTIME_NS" get pods --sort-by=.metadata.creationTimestamp -o name | tail -6); do
-            echo "--- $p ---"
-            kubectl -n "$RUNTIME_NS" logs "$p" --tail=80 || true
-          done
-          kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
 
       - name: Run drain e2e suite
         run: |
@@ -944,3 +981,21 @@ jobs:
           kill "$PF"
           # No reset after the final mode: the runner (and its cluster) is
           # torn down with the job.
+
+      - name: Diagnostics (drain, on failure)
+        if: failure()
+        run: |
+          echo "=== broker pods ==="
+          kubectl -n "$SYS_NS" get pods -o wide || true
+          echo "=== broker logs ==="
+          kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=200 || true
+          echo "=== PVCs ==="
+          kubectl -n "$RUNTIME_NS" get pvc -o wide || true
+          echo "=== runtime sandboxes ==="
+          kubectl -n "$RUNTIME_NS" get sandbox -o wide || true
+          echo "=== runtime pod logs (last 6 by age) ==="
+          for p in $(kubectl -n "$RUNTIME_NS" get pods --sort-by=.metadata.creationTimestamp -o name | tail -6); do
+            echo "--- $p ---"
+            kubectl -n "$RUNTIME_NS" logs "$p" --tail=80 || true
+          done
+          kubectl -n "$SYS_NS" get events --sort-by=.lastTimestamp | tail -25 || true
