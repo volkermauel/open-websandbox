@@ -12,6 +12,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-22
+
+### Added — Open Web UI v0.11.4 terminal-server surface (#195, #196)
+
+- `GET /skills` — skill discovery for the `$` / `/` menus: scans
+  `.agents/`, `.cptr/`, `.claude/`, `.codex/skills` under the workspace
+  home, parses `SKILL.md` frontmatter (`name`, `description`, ≤1024
+  chars), first-name-wins dedup, upstream `SkillSummary` shape.
+- `GET /skills/read?name=` and `GET /skills/{name}` — skill detail
+  (content + resources; depth ≤ 4, ≤ 50 files). The path form is the one
+  OWUI v0.11.4's `get_terminal_skill` actually calls; upstream only
+  ships the query form — both are served.
+- `POST /files/compare` — side-by-side file comparison: in-process diff
+  via the `similar` crate (difflib-style `@@` hunks with 3 context
+  lines, paired intraline segments, `ignore_whitespace`, 50 MiB / 2M
+  chars / 50k line caps). Divergence: no Office/PDF extraction (422),
+  matching `/files/read`; path escapes stay 400 per the confinement
+  contract.
+- New `ApiError::UnprocessableEntity` (422); compat matrix re-pinned to
+  upstream open-terminal `main` @ `542094a`; broker OpenAPI snapshot
+  regenerated.
+
+### Changed — RustFS replaces MinIO in CI
+
+- `minio/minio` was yanked from Docker Hub (every S3 CI lane died on
+  the image pull). All live-S3 lanes (integration, e2e-s3, e2e-pvc-s3)
+  now run against pinned `ghcr.io/rustfs/rustfs:1.0.0` — MinIO
+  S3-API-compatible, registry-purge-proof, prod parity with the OKD
+  cluster's object storage. Verified live before the swap
+  (`s3_live` 3/3 + the boto3 path-style surface).
+- rustls → 0.23.45 (RUSTSEC-2026-0285); cargo-audit report-only job is
+  now truly non-blocking (step-level `continue-on-error`).
+
+### Fixed — restore robustness + CI diagnostics
+
+- S3 restore-on-resume prefers the Sandbox's new
+  `broker-s3-last-offloaded-key` stamp over a fresh `latest_key` LIST
+  (a read-after-list race on the backend could restore a stale snapshot
+  over newer data); falls back to the LIST when the stamp is unreadable.
+- All 7 e2e `Diagnostics (on failure)` blocks sat before their pytest
+  step and never fired on test failures; S3 lanes now also dump rustfs
+  logs + the `users/` object listing.
+
+### Release engineering
+
+- Every release now stamps upstream-compatibility tags on all three
+  images: `owui-v0.11.4` (newest OWUI verified end-to-end) and
+  `open-terminal-v0.12.3-skills` (API surface implemented).
+
 ## [0.1.7] - 2026-08-30
 
 ### Fixed — OpenAPI documented query params as path params
