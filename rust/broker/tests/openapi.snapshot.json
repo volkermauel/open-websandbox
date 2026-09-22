@@ -17,6 +17,166 @@
         ],
         "type": "object"
       },
+      "CompareFile": {
+        "description": "File summary embedded in the comparison result.",
+        "properties": {
+          "name": {
+            "description": "Basename.",
+            "type": "string"
+          },
+          "notices": {
+            "description": "Extraction notices (always empty for plain text).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "path": {
+            "description": "Absolute path of the compared file.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "name",
+          "notices"
+        ],
+        "type": "object"
+      },
+      "CompareHunk": {
+        "description": "One hunk: a `@@ -a,b +c,d @@` header plus its lines.",
+        "properties": {
+          "header": {
+            "description": "`@@ -{old_start},{old_len} +{new_start},{new_len} @@`",
+            "type": "string"
+          },
+          "lines": {
+            "description": "The hunk's lines, removed-before-added within each change block.",
+            "items": {
+              "$ref": "#/components/schemas/CompareLine"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "header",
+          "lines"
+        ],
+        "type": "object"
+      },
+      "CompareLine": {
+        "description": "One output line inside a hunk (context / removed / added).",
+        "properties": {
+          "content": {
+            "description": "Line content on the original side.",
+            "type": "string"
+          },
+          "new_number": {
+            "description": "1-based line number on the revised side (`null` for removed lines).",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "old_number": {
+            "description": "1-based line number on the original side (`null` for added lines).",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "revised_content": {
+            "description": "Line content on the revised side (context lines only).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "segments": {
+            "description": "Intraline segmentation (paired removed/added lines only).",
+            "items": {
+              "$ref": "#/components/schemas/Segment"
+            },
+            "type": "array"
+          },
+          "type": {
+            "description": "`context` | `removed` | `added`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "content",
+          "segments"
+        ],
+        "type": "object"
+      },
+      "CompareRequest": {
+        "description": "Request body for `POST /files/compare`.",
+        "properties": {
+          "ignore_whitespace": {
+            "description": "Compare with intra-line whitespace removed (default `false`).",
+            "type": "boolean"
+          },
+          "original": {
+            "description": "Workspace-relative path to the original file.",
+            "type": "string"
+          },
+          "revised": {
+            "description": "Workspace-relative path to the revised file.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "original",
+          "revised"
+        ],
+        "type": "object"
+      },
+      "CompareResponse": {
+        "description": "`POST /files/compare` response (upstream `compare()` result shape).",
+        "properties": {
+          "additions": {
+            "description": "Total added lines.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "deletions": {
+            "description": "Total removed lines.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "hunks": {
+            "description": "Change hunks (3 context lines, difflib-style).",
+            "items": {
+              "$ref": "#/components/schemas/CompareHunk"
+            },
+            "type": "array"
+          },
+          "original": {
+            "$ref": "#/components/schemas/CompareFile",
+            "description": "Original-side summary."
+          },
+          "revised": {
+            "$ref": "#/components/schemas/CompareFile",
+            "description": "Revised-side summary."
+          }
+        },
+        "required": [
+          "original",
+          "revised",
+          "additions",
+          "deletions",
+          "hunks"
+        ],
+        "type": "object"
+      },
       "ConfigResponse": {
         "description": "`GET /api/config` body: feature flags the OWUI terminal UI connection-gates on.",
         "properties": {
@@ -719,6 +879,24 @@
         ],
         "type": "object"
       },
+      "Segment": {
+        "description": "One intraline segment: a run of text, marked changed or unchanged.",
+        "properties": {
+          "changed": {
+            "description": "Whether this run differs between the two sides.",
+            "type": "boolean"
+          },
+          "text": {
+            "description": "The text run.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "changed"
+        ],
+        "type": "object"
+      },
       "ShutdownPolicy": {
         "description": "`spec.shutdownPolicy` — whether the `Sandbox` object survives its pod exiting.",
         "enum": [
@@ -726,6 +904,95 @@
           "Delete"
         ],
         "type": "string"
+      },
+      "SkillReadResponse": {
+        "description": "`GET /skills/read` / `GET /skills/{name}` — upstream `SkillReadResponse`.",
+        "properties": {
+          "content": {
+            "description": "`SKILL.md` body with the frontmatter stripped.",
+            "type": "string"
+          },
+          "description": {
+            "description": "Frontmatter `description` (≤ 1024 chars).",
+            "type": "string"
+          },
+          "id": {
+            "description": "Stable client id: `terminal:<percent-encoded name>`.",
+            "type": "string"
+          },
+          "location": {
+            "description": "Absolute path of the `SKILL.md`.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Frontmatter `name`.",
+            "type": "string"
+          },
+          "resources": {
+            "description": "Relative resource file paths under the skill directory.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "description": "Always `global`.",
+            "type": "string"
+          },
+          "source": {
+            "description": "Always `terminal`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "location",
+          "scope",
+          "source",
+          "content",
+          "resources"
+        ],
+        "type": "object"
+      },
+      "SkillSummary": {
+        "description": "`GET /skills` row — upstream `SkillSummary`.",
+        "properties": {
+          "description": {
+            "description": "Frontmatter `description` (≤ 1024 chars).",
+            "type": "string"
+          },
+          "id": {
+            "description": "Stable client id: `terminal:<percent-encoded name>`.",
+            "type": "string"
+          },
+          "location": {
+            "description": "Absolute path of the `SKILL.md`.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Frontmatter `name` (falls back to the directory name).",
+            "type": "string"
+          },
+          "scope": {
+            "description": "Always `global` (we have no per-chat skill roots).",
+            "type": "string"
+          },
+          "source": {
+            "description": "Always `terminal`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "location",
+          "scope",
+          "source"
+        ],
+        "type": "object"
       },
       "StatusResponse": {
         "description": "`GET /api/status` body: static operator telemetry.",
@@ -1665,6 +1932,63 @@
           }
         ],
         "summary": "`POST /files/archive` — zip the listed paths and stream the archive back.\nDirs recurse (files archived as `<basename>/<rel>`); a single file archives\nas its basename. `application/zip` + `Content-Disposition: attachment`.",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/compare": {
+      "post": {
+        "description": "# Errors\n\nReturns [`ApiError::UnprocessableEntity`] (422, upstream worker-error parity)\nfor missing files, oversized/binary inputs and path escapes;\n[`ApiError::BadRequest`] if the body cannot be parsed.",
+        "operationId": "compare_files",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompareRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompareResponse"
+                }
+              }
+            },
+            "description": "Structured diff"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing / oversized / binary file"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`POST /files/compare` — read-only text diff of two workspace files.",
         "tags": [
           "files"
         ]
@@ -3269,6 +3593,151 @@
         "summary": "`PUT /restore` — unpack a zstd-compressed tar back into the workspace.",
         "tags": [
           "snapshot"
+        ]
+      }
+    },
+    "/skills": {
+      "get": {
+        "description": "# Errors\n\nNever fails on unreadable roots (they simply contribute no skills).",
+        "operationId": "list_skills",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SkillSummary"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Skills visible in this workspace"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /skills` — list terminal-owned skills.",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/skills/read": {
+      "get": {
+        "description": "# Errors\n\nReturns [`ApiError::NotFound`] when no skill carries that exact name.",
+        "operationId": "read_skill",
+        "parameters": [
+          {
+            "description": "Skill name as returned by `GET /skills`.",
+            "in": "query",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillReadResponse"
+                }
+              }
+            },
+            "description": "Skill body + resources"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Skill not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /skills/read?name=` — upstream's read shape (query parameter).",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/skills/{name}": {
+      "get": {
+        "description": "# Errors\n\nReturns [`ApiError::NotFound`] when no skill carries that exact name.",
+        "operationId": "read_skill_by_name",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillReadResponse"
+                }
+              }
+            },
+            "description": "Skill body + resources"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Skill not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /skills/{name}` — the path-parameter alias OWUI v0.11.4's backend calls\n(`get_terminal_skill`); semantically identical to [`read_skill`].",
+        "tags": [
+          "skills"
         ]
       }
     },

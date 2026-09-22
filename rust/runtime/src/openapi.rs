@@ -17,11 +17,13 @@ use utoipa::OpenApi;
 
 // Schema types referenced by `components(schemas(...))` (bare names need them in scope).
 use crate::execute::{ExecuteRequest, ExecuteResponse};
+use crate::files::Segment;
 use crate::files::{
-    ArchiveRequest, ContentMatch, CwdRequest, Entry, FileUpload, ListResponse, MatchResult,
-    MatchesResponse, MoveRequest, PathBody, ReplaceRequest, SearchResponse, SearchResult,
-    WriteRequest,
+    ArchiveRequest, CompareFile, CompareHunk, CompareLine, CompareRequest, CompareResponse,
+    ContentMatch, CwdRequest, Entry, FileUpload, ListResponse, MatchResult, MatchesResponse,
+    MoveRequest, PathBody, ReplaceRequest, SearchResponse, SearchResult, WriteRequest,
 };
+use crate::skills::{SkillReadResponse, SkillSummary};
 use crate::snapshot::RestoreResponse;
 use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
 
@@ -35,6 +37,7 @@ use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
 #[openapi(
     paths(
         crate::execute::execute,
+        crate::files::compare::compare_files,
         crate::files::io::get_cwd,
         crate::files::io::set_cwd,
         crate::files::io::list_dir,
@@ -65,7 +68,10 @@ use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
         crate::terminals::create_terminal,
         crate::terminals::list_terminals,
         crate::terminals::terminal_get_or_ws,
-        crate::terminals::kill_terminal
+        crate::terminals::kill_terminal,
+        crate::skills::list_skills,
+        crate::skills::read_skill,
+        crate::skills::read_skill_by_name
     ),
     components(schemas(
         ExecuteRequest, ExecuteResponse, RestoreResponse,
@@ -73,6 +79,8 @@ use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
         CwdRequest, WriteRequest, PathBody, MoveRequest, ReplaceRequest, ArchiveRequest, FileUpload,
         ListResponse, Entry,
         SearchResponse, SearchResult, MatchesResponse, MatchResult, ContentMatch,
+        CompareRequest, CompareResponse, CompareFile, CompareHunk, CompareLine, Segment,
+        SkillSummary, SkillReadResponse,
         shared::ErrorResponse
     )),
     modifiers(&BearerAddon)

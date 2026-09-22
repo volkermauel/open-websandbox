@@ -48,6 +48,7 @@ nix = { version = "0.31", features = ["resource", "signal", "process", "fs", "us
 percent-encoding = "2"
 portable-pty = "0.9"
 serde.workspace = true
+similar.workspace = true
 serde_json.workspace = true
 tar.workspace = true
 utoipa.workspace = true

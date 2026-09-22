@@ -2,9 +2,10 @@
 
 Open Web UI's *Open Terminal* experience is built against the reference
 sandbox server [open-terminal](https://github.com/open-webui/open-terminal).
-**open-websandbox is client-API compatible with open-terminal v0.12.3 for the
-surface listed below** — verified against upstream `main` @ `c0273cc`
-(post-v0.12.3); the gap research is attached to issue #164.
+**open-websandbox is client-API compatible with open-terminal v0.12.3 (+ the
+post-v0.12.3 skills/compare surface) for the surface listed below** — verified
+against upstream `main` @ `542094a` (post-v0.12.3); the gap research is
+attached to issues #164 and #195.
 
 ## Architecture note
 
@@ -47,6 +48,10 @@ itself.
 | `GET /system` | 0.11.27 | ✅ | Upstream-verbatim LLM prompt (stage 2; `features.system: true`) |
 | `GET /info` | 0.11.6 | ✅ | `{"info": …}`; 404s while `OPEN_TERMINAL_INFO` is unset (stage 2) |
 | `/notebooks` | 0.10.0 | ❌ deferred | Reported `false` in `/api/config` |
+| `GET /skills` | main post-v0.12.3 | ✅ | OWUI v0.11.4 (#195): scans `.agents/`, `.cptr/`, `.claude/`, `.codex/skills` under the workspace home; first-name-wins dedup |
+| `GET /skills/read?name=` | main post-v0.12.3 | ✅ | `SKILL.md` body + resource walk (depth ≤ 4, ≤ 50 files) |
+| `GET /skills/{name}` | — | ✅ | Path-param alias OWUI v0.11.4's backend calls (`get_terminal_skill`); upstream only ships the `?name=` shape |
+| `POST /files/compare` | main post-v0.12.3 | ✅ | Same result shape (hunks, intraline segments, difflib-style headers); **no document extraction** — Office/PDF binaries 422 like `/files/read` divergence below |
 | `GET /snapshot` · `PUT /restore` | — | ➕ | Extension of ours (S3 tiering) |
 
 ## System-prompt provenance
@@ -73,7 +78,11 @@ the runtime route and the broker-fronted `/api/config` (stage 1 had shipped
   results, lower throughput at repo scale.
 - **No document extraction** in `/files/read`: upstream converts
   Office/PDF to text via baked-in LibreOffice before 415-ing; we return 415
-  directly for non-image binaries.
+  directly for non-image binaries. Same divergence applies to
+  `/files/compare` (422 instead of an extracted-text diff).
+- **Validation status code**: `/files/compare` failures (missing file,
+  oversized/binary input) return 422 like upstream's worker errors, but path
+  escapes stay 400 per the repo-wide confinement contract.
 - **Multi-user OS provisioning** (upstream 0.11.x `sudo -u` per user) is not
   implemented: isolation is per-sandbox (one runtime user per chat).
 - **Python sentence in `/system`** (stage 2): upstream's

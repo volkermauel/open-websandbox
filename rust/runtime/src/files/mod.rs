@@ -15,11 +15,13 @@
 // Shared helpers (base_of / modified_secs / file_response) stay here and are
 // `pub(super)` for the submodules. The public surface is unchanged.
 pub mod archive;
+pub mod compare;
 pub mod io;
 pub mod search;
 pub mod tools;
 
 pub use archive::*;
+pub use compare::*;
 pub use io::*;
 pub use search::*;
 pub use tools::*;
@@ -43,6 +45,11 @@ pub(super) fn subdir_from(headers: &HeaderMap) -> Option<&str> {
 
 pub(super) fn base_of(state: &AppState, headers: &HeaderMap) -> Result<PathBuf, ApiError> {
     request_base(&state.config.workdir, subdir_from(headers))
+}
+
+/// Skills-facing alias for [`base_of`] (the workspace home the skill scan roots under).
+pub(crate) fn cwd_base(state: &AppState, headers: &HeaderMap) -> Result<PathBuf, ApiError> {
+    base_of(state, headers)
 }
 
 /// Convert a file mtime to seconds-since-epoch (`float(st.st_mtime)`).

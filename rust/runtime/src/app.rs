@@ -10,11 +10,13 @@ use axum::Router;
 
 use crate::execute::execute;
 use crate::files::{
-    archive, delete_entry, display_file, get_cwd, glob_search, grep, list_dir, match_files, mkdir,
-    move_entry, read_file, replace, search_files, serve_file, set_cwd, tool_download, tool_exists,
-    tool_list, tool_list_root, tool_upload, upload, view_file, write_file,
+    archive, compare_files, delete_entry, display_file, get_cwd, glob_search, grep, list_dir,
+    match_files, mkdir, move_entry, read_file, replace, search_files, serve_file, set_cwd,
+    tool_download, tool_exists, tool_list, tool_list_root, tool_upload, upload, view_file,
+    write_file,
 };
 use crate::ports::{list_ports, port_proxy, port_proxy_path};
+use crate::skills::{list_skills, read_skill, read_skill_by_name};
 use crate::snapshot::{restore, snapshot};
 use crate::state::AppState;
 use crate::system::{get_info, get_system};
@@ -69,6 +71,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/readyz", get(ok))
         // open-terminal 0.8.1 feature discovery — unauthenticated like upstream.
         .route("/api/config", get(api_config))
+        // OWUI v0.11.4 (#195): terminal-owned Agent Skills. `/{name}` is the
+        // path-param alias OWUI's backend calls; `/skills/read?name=` is
+        // upstream open-terminal's shape.
+        .route("/skills", get(list_skills))
+        .route("/skills/read", get(read_skill))
+        .route("/skills/{name}", get(read_skill_by_name))
         // D9: Prometheus exposition (open — scraped without auth, matching the
         //      chart's PodMonitor on :8888/metrics).
         .route("/metrics", get(crate::metrics::metrics))
@@ -95,6 +103,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/files/replace", post(replace))
         .route("/files/grep", get(grep))
         .route("/files/glob", get(glob_search))
+        // OWUI v0.11.4 (#195): read-only text comparison.
+        .route("/files/compare", post(compare_files))
         // PR-B-5: archive (zip) + multipart upload (open-terminal + LLM-tool).
         .route("/files/archive", post(archive))
         .route("/files/upload", post(upload))

@@ -18,6 +18,7 @@ pub mod metrics;
 pub mod openapi;
 pub mod ports;
 pub mod safe_path;
+pub mod skills;
 pub mod snapshot;
 pub mod state;
 pub mod system;
