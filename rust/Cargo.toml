@@ -32,7 +32,7 @@ async-trait = "0.1.89"
 # In-process sequence diff for `/files/compare` (#195): pure-Rust Myers diff
 # (same crate cargo itself uses) — replaces upstream's Python `difflib` worker
 # subprocess; no `unsafe` in its public API and no new system deps.
-similar = "2"
+similar = "3"
 tar = "0.4"
 walkdir = "2"
 # OpenTelemetry stack (D9): the OTLP exporter + SDK + tracing bridge. The
@@ -47,9 +47,9 @@ walkdir = "2"
 # tracing SDK stay always-on; ONLY the OTLP exporter transport is conditional.
 # Tracing remains a no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset — boot+serve
 # never depend on a collector being reachable.
-opentelemetry = "0.32"
-opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "grpc-tonic", "http-proto", "reqwest-client"] }
+opentelemetry = "0.33"
+opentelemetry_sdk = { version = "0.33", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["trace", "grpc-tonic", "http-proto", "reqwest-client"] }
 tracing-opentelemetry = "0.33"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
