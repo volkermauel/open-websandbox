@@ -31,6 +31,9 @@ concurrency:
 
 jobs:
   live-backends:
+    name: broker live backends (KIND + RustFS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     # C2 target: an S3 API on :9000. RustFS (MinIO-API-compatible, Apache-2.0)
     # replaces the original MinIO: minio/minio was yanked from Docker Hub
     # (pull access denied), and the quay mirror could follow the same fate —
