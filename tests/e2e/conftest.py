@@ -137,9 +137,9 @@ def second_broker(second_session) -> Iterator[httpx.Client]:
 
 # --- S3-tiered e2e (issue #52) ------------------------------------------------
 # The s3-tiered e2e is opt-in (E2E_S3=1; the default runc/gvisor matrix is
-# unaffected). It stands up an in-cluster MinIO (tests/e2e/fixtures/minio.yaml),
+# unaffected). It stands up an in-cluster RustFS (tests/e2e/fixtures/rustfs.yaml),
 # points the broker at it, and inspects objects with boto3 run LOCALLY against a
-# port-forwarded MinIO. The Rust broker image is distroless (no Python/shell), so
+# port-forwarded RustFS. The Rust broker image is distroless (no Python/shell), so
 # the original "exec boto3 inside the broker pod" trick no longer applies;
 # instead the test host runs boto3 + reads the same creds the broker uses.
 import base64  # noqa: E402
@@ -147,13 +147,13 @@ import urllib.request  # noqa: E402
 
 S3_SYS_NS = os.environ.get("E2E_SYS_NS", "agent-sandbox-system")
 S3_BUCKET = os.environ.get("E2E_S3_BUCKET", "owsb-e2e")
-# MinIO is reached from the test host via port-forward (in-cluster DNS does not
-# resolve on the host). 9000 matches the s3 port in fixtures/minio.yaml.
+# RustFS is reached from the test host via port-forward (in-cluster DNS does not
+# resolve on the host). 9000 matches the s3 port in fixtures/rustfs.yaml.
 S3_PF_PORT = int(os.environ.get("E2E_S3_PF_PORT", "9000"))
 
 
 def _s3_creds() -> tuple[str, str]:
-    """Read the MinIO root creds from the owui-s3-creds Secret."""
+    """Read the RustFS root creds from the owui-s3-creds Secret."""
     def _val(key: str) -> str:
         r = subprocess.run(
             ["kubectl", "-n", S3_SYS_NS, "get", "secret", "owui-s3-creds",
@@ -167,7 +167,7 @@ def _s3_creds() -> tuple[str, str]:
 
 
 def _s3_client():
-    """A boto3 S3 client pointed at the port-forwarded MinIO (path-style)."""
+    """A boto3 S3 client pointed at the port-forwarded RustFS (path-style)."""
     import boto3
     from botocore.config import Config
     ak, sk = _s3_creds()
@@ -182,10 +182,10 @@ def _s3_client():
 
 
 @pytest.fixture(scope="session")
-def minio_port_forward():
-    """Port-forward svc/minio to localhost for the s3-tiered session."""
+def s3_port_forward():
+    """Port-forward svc/rustfs to localhost for the s3-tiered session."""
     pf = subprocess.Popen(
-        ["kubectl", "-n", S3_SYS_NS, "port-forward", "svc/minio",
+        ["kubectl", "-n", S3_SYS_NS, "port-forward", "svc/rustfs",
          f"{S3_PF_PORT}:9000"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
@@ -193,13 +193,13 @@ def minio_port_forward():
         for _ in range(30):
             try:
                 with urllib.request.urlopen(
-                    f"http://localhost:{S3_PF_PORT}/minio/health/live", timeout=2,
+                    f"http://localhost:{S3_PF_PORT}/health", timeout=2,
                 ):
                     break
             except Exception:
                 time.sleep(1)
         else:
-            raise RuntimeError(f"MinIO port-forward :{S3_PF_PORT} never became healthy")
+            raise RuntimeError(f"RustFS port-forward :{S3_PF_PORT} never became healthy")
         yield
     finally:
         pf.terminate()
@@ -213,15 +213,15 @@ def minio_port_forward():
 def require_s3(request) -> None:
     """Gate the s3-tiered e2e: skip unless E2E_S3=1. Ensures the bucket exists.
 
-    The gate MUST run before the MinIO port-forward is requested: taking
-    `minio_port_forward` as a parameter would instantiate it first (pytest
+    The gate MUST run before the RustFS port-forward is requested: taking
+    `s3_port_forward` as a parameter would instantiate it first (pytest
     resolves dependencies before the fixture body), so lanes without in-cluster
-    MinIO (the runc/gvisor matrix) would spend 30s on a dead port-forward and
+    RustFS (the runc/gvisor matrix) would spend 30s on a dead port-forward and
     ERROR instead of skipping. Resolve it lazily, only after the gate passes.
     """
     if not os.environ.get("E2E_S3"):
         pytest.skip("S3-tiered e2e is opt-in (set E2E_S3=1)")
-    request.getfixturevalue("minio_port_forward")
+    request.getfixturevalue("s3_port_forward")
     from botocore.exceptions import ClientError
     c = _s3_client()
     try:
@@ -232,8 +232,8 @@ def require_s3(request) -> None:
             raise
 
 
-def minio_list_objects(prefix: str = "users/") -> list[str]:
-    """List object keys under `prefix` in the e2e MinIO bucket (local boto3)."""
+def s3_list_objects(prefix: str = "users/") -> list[str]:
+    """List object keys under `prefix` in the e2e S3 bucket (local boto3)."""
     r = _s3_client().list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
     return [o["Key"] for o in r.get("Contents", [])]
 

@@ -37,8 +37,9 @@ install is unchanged.
 
 ## Provider + auth (bring-your-own)
 
-Point the broker at any S3-compatible endpoint — AWS S3, MinIO, Cloudflare R2, Proxmox S3
-API. Auth is a **static access key in a Kubernetes Secret** (portable), projected into the
+Point the broker at any S3-compatible endpoint — AWS S3, MinIO, RustFS, Cloudflare R2,
+Proxmox S3 API (the CI cold-tier lanes run against a pinned RustFS). Auth is a
+**static access key in a Kubernetes Secret** (portable), projected into the
 broker at `/etc/s3-creds`:
 
 ```yaml

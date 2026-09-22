@@ -126,7 +126,7 @@ pub trait ColdStore: Send + Sync {
 /// Real cold-tier backend: an `aws-sdk-s3` client (decision D4).
 ///
 /// Built once from [`BrokerConfig`] with path-style addressing
-/// (MinIO/R2/Proxmox + works on AWS S3), an optional custom endpoint, and
+/// (MinIO/RustFS/R2/Proxmox + works on AWS S3), an optional custom endpoint, and
 /// static credentials when provided (else the SDK default chain applies).
 pub struct AwsColdStore {
     client: aws_sdk_s3::Client,

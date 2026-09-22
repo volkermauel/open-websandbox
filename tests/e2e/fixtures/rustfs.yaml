@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: 2026 the open-websandbox contributors
+# SPDX-FileCopyrightText: 2026 RustFS contributors (Apache-2.0, image reference only)
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Lightweight in-cluster RustFS (S3-compatible object storage) for the S3-tiered
+# e2e (issue #52). Applied to the KIND cluster BEFORE the helm install so the
+# broker can reach http://rustfs:9000 and offload / restore against a REAL S3 API.
+# The owui-s3-creds Secret here is the same one broker.s3.credentialsSecret
+# references (bring-your-own, but for e2e we provision it). The bucket itself is
+# created by the test harness (tests/e2e/conftest.py) via the broker's own boto3
+# + projected creds, so this manifest only stands up the server.
+#
+# RustFS replaced the original MinIO fixture: minio/minio was yanked from Docker
+# Hub (pull access denied), so the pinned RustFS release on ghcr.io keeps the
+# fixture immune to registry purges. RustFS implements the MinIO S3 API surface
+# this repo exercises (SigV4, path-style, create_bucket, put/get/list/delete —
+# verified live by rust/broker/tests/s3_live.rs and the boto3 conftest helpers).
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: owui-s3-creds
+  namespace: agent-sandbox-system
+type: Opaque
+stringData:
+  access-key-id: owsb-e2e
+  secret-access-key: owsb-e2e-secret
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rustfs-data
+  namespace: agent-sandbox-system
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustfs
+  namespace: agent-sandbox-system
+  labels: {app: rustfs}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: rustfs}}
+  template:
+    metadata: {labels: {app: rustfs}}
+    spec:
+      containers:
+      - name: rustfs
+        image: ghcr.io/rustfs/rustfs:1.0.0
+        args: [server, /data]
+        env:
+        - {name: RUSTFS_ACCESS_KEY, value: owsb-e2e}
+        - {name: RUSTFS_SECRET_KEY, value: owsb-e2e-secret}
+        ports:
+        - {name: s3, containerPort: 9000}
+        readinessProbe:
+          httpGet: {path: /health/ready, port: 9000}
+          periodSeconds: 3
+        volumeMounts:
+        - {name: data, mountPath: /data}
+      volumes:
+      - name: data
+        persistentVolumeClaim: {claimName: rustfs-data}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs
+  namespace: agent-sandbox-system
+spec:
+  selector: {app: rustfs}
+  ports:
+  - {name: s3, port: 9000, targetPort: 9000}

@@ -1,18 +1,20 @@
 //! Live S3 cold-tier integration test (issue #101, item **C2**).
 //!
-//! Exercises the real `aws-sdk-s3` [`AwsColdStore`] against a local MinIO
+//! Exercises the real `aws-sdk-s3` [`AwsColdStore`] against a local RustFS
 //! container so the production `put_object` / `get_object` / `latest_key` /
 //! `delete_prefix_except` path is verified against a real S3-compatible store —
 //! not just the in-memory double (`InMemoryColdStore`).
+//! RustFS (MinIO S3-API compatible) replaced the original MinIO container when
+//! minio/minio was yanked from Docker Hub; ghcr.io is immune to that fate.
 //!
 //! **Env-gated**: returns (passes) unless `OWUI_S3_LIVE=1` (any of
 //! `1`/`true`/`yes`/`on`), so `cargo test --workspace` stays green without the
-//! MinIO container. Run it locally:
+//! RustFS container. Run it locally:
 //!
 //! ```text
-//! docker run -d --rm --name owui-minio -p 9000:9000 \
-//!   -e MINIO_ROOT_USER=minio -e MINIO_ROOT_PASSWORD=minio123 \
-//!   minio/minio server /data
+//! docker run -d --rm --name owui-rustfs -p 9000:9000 \
+//!   -e RUSTFS_ACCESS_KEY=minio -e RUSTFS_SECRET_KEY=minio123 \
+//!   ghcr.io/rustfs/rustfs:1.0.0 server /data
 //! OWUI_S3_LIVE=1 cargo test -p broker --test s3_live -- --nocapture
 //! ```
 //!
@@ -29,7 +31,7 @@ use bytes::Bytes;
 use shared::BrokerConfig;
 
 /// Run only when the operator opted in (`OWUI_S3_LIVE=1`); otherwise every test
-/// returns (passes) so a plain `cargo test` needs no MinIO.
+/// returns (passes) so a plain `cargo test` needs no RustFS.
 fn gated() -> bool {
     std::env::var("OWUI_S3_LIVE").is_ok_and(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
 }
@@ -43,10 +45,10 @@ fn uniq(tag: &str) -> String {
     format!("{}-{n}-{tag}", std::process::id())
 }
 
-/// `BrokerConfig` pointed at a local MinIO on `:9000` with static creds. `s3_sse`
-/// is left empty — dev MinIO has no SSE backend, and `AwsColdStore` only requests
+/// `BrokerConfig` pointed at a local RustFS on `:9000` with static creds. `s3_sse`
+/// is left empty — dev RustFS has no SSE backend, and `AwsColdStore` only requests
 /// SSE-S3 when `s3_sse` is non-empty / non-`none`.
-fn minio_config(bucket: &str) -> BrokerConfig {
+fn local_s3_config(bucket: &str) -> BrokerConfig {
     BrokerConfig {
         s3_enabled: true,
         s3_endpoint: "http://localhost:9000".to_string(),
@@ -61,7 +63,7 @@ fn minio_config(bucket: &str) -> BrokerConfig {
     }
 }
 
-/// Create the bucket on MinIO via a raw S3 client. [`AwsColdStore`] assumes the
+/// Create the bucket on RustFS via a raw S3 client. [`AwsColdStore`] assumes the
 /// bucket already exists; `BucketAlreadyOwnedByYou` / `BucketAlreadyExists` is
 /// tolerated so a re-run of the suite reuses the bucket. Mirrors the client
 /// construction in `AwsColdStore::new` exactly.
@@ -93,13 +95,13 @@ async fn ensure_bucket(cfg: &BrokerConfig) {
 /// A fresh `AwsColdStore` + its own unique bucket for one test.
 async fn store(tag: &str) -> AwsColdStore {
     let bucket = uniq(&format!("b-{tag}"));
-    let cfg = minio_config(&bucket);
+    let cfg = local_s3_config(&bucket);
     ensure_bucket(&cfg).await;
     AwsColdStore::new(&cfg)
 }
 
 /// Poll `latest_key(ns)` until it returns `want`, for up to ~5s, so the test is
-/// robust to MinIO's brief list-consistency lag without sleeping the full time.
+/// robust to the backend's brief list-consistency lag without sleeping the full time.
 async fn assert_latest_becomes(store: &AwsColdStore, ns: &str, want: &str) {
     for _ in 0..25 {
         if let Some(got) = store.latest_key(ns).await.expect("latest_key") {

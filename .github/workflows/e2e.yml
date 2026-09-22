@@ -341,8 +341,8 @@ jobs:
           # (see the matrix profile step for rationale).
           kubectl apply -f open-websandbox-platform/chart/crds/
           kubectl wait --for=condition=Established --all crd --timeout=120s || true
-          kubectl -n "$SYS_NS" apply -f tests/e2e/fixtures/minio.yaml
-          kubectl -n "$SYS_NS" rollout status deploy/minio --timeout=180s
+          kubectl -n "$SYS_NS" apply -f tests/e2e/fixtures/rustfs.yaml
+          kubectl -n "$SYS_NS" rollout status deploy/rustfs --timeout=180s
 
       - name: Helm install (s3-tiered profile)
         run: |
@@ -353,7 +353,7 @@ jobs:
       - name: Diagnostics (on failure)
         if: failure()
         run: |
-          echo "=== broker/minio pods ==="
+          echo "=== broker/rustfs pods ==="
           kubectl -n "$SYS_NS" get pods -o wide || true
           echo "=== broker logs ==="
           kubectl -n "$SYS_NS" logs deploy/owui-broker --tail=200 || true
@@ -511,8 +511,8 @@ jobs:
       - name: Deploy MinIO fixture (hybrid lanes only)
         if: matrix.mode == 'pvc-s3' || matrix.mode == 'pvc-s3-shared'
         run: |
-          kubectl -n "$SYS_NS" apply -f tests/e2e/fixtures/minio.yaml
-          kubectl -n "$SYS_NS" rollout status deploy/minio --timeout=180s
+          kubectl -n "$SYS_NS" apply -f tests/e2e/fixtures/rustfs.yaml
+          kubectl -n "$SYS_NS" rollout status deploy/rustfs --timeout=180s
 
       - name: Helm install (${{ matrix.mode }} profile)
         run: |
@@ -571,7 +571,7 @@ jobs:
             # The reaper offloads to MinIO regardless of which module runs;
             # create the bucket BEFORE pytest so non-s3 modules (which never
             # resolve require_s3) don't fight offload failures.
-            python tests/e2e/ensure_minio_bucket.py
+            python tests/e2e/ensure_s3_bucket.py
             # #142/#144 hybrid: PVC tests + the s3-tiered suite (hot-tier-agnostic)
             # + the hybrid tiering suite — against EITHER PVC hot tier.
             if [ "${{ matrix.mode }}" = "pvc-s3" ]; then

@@ -185,13 +185,14 @@ fn decode_text(raw: &[u8]) -> Result<String, String> {
 fn decode_utf16(raw: &[u8]) -> Result<String, String> {
     let body = &raw[2..];
     let be = raw[1] == 0xff;
-    let units: Vec<u16> = body
-        .chunks_exact(2)
+    let (chunks, _rest) = body.as_chunks::<2>();
+    let units: Vec<u16> = chunks
+        .iter()
         .map(|c| {
             if be {
-                u16::from_be_bytes([c[0], c[1]])
+                u16::from_be_bytes(*c)
             } else {
-                u16::from_le_bytes([c[0], c[1]])
+                u16::from_le_bytes(*c)
             }
         })
         .collect();
@@ -202,12 +203,14 @@ fn decode_utf32(raw: &[u8]) -> Result<Vec<u32>, String> {
     let body = &raw[4..];
     let be = raw[0] == 0x00;
     let units: Vec<u32> = body
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| {
             if be {
-                u32::from_be_bytes([c[0], c[1], c[2], c[3]])
+                u32::from_be_bytes(*c)
             } else {
-                u32::from_le_bytes([c[0], c[1], c[2], c[3]])
+                u32::from_le_bytes(*c)
             }
         })
         .collect();
