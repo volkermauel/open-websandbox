@@ -62,7 +62,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # `zip` builds the in-memory ZIP returned by `POST /files/archive` (the Python
 # runtime used stdlib `zipfile`). `default-features = false` + `deflate` keeps
 # the audited tree lean (no bzip2/zstd/time deps).
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 walkdir.workspace = true
 
 [dev-dependencies]
@@ -71,7 +71,7 @@ http = "1"
 tempfile = "3"
 # `zip` is already a runtime dependency; re-declared here so the
 # upload/archive contract tests can read archives back + assert their entries.
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect"] }
 
 # Issue #100 / B5: opt into the workspace-wide lint config (clippy::pedantic
