@@ -71,7 +71,7 @@ metrics = "0.24"
 metrics-exporter-prometheus = "0.18"
 subtle = "2.6.1"
 thiserror = "2.0.20"
-utoipa = "5.5.0"
+utoipa = "=5.5.0"
 
 # Workspace-wide lint configuration (issue #100 / B5). `clippy::pedantic` is
 # enabled at `warn` with a *negative* priority so individual crate/item-level
