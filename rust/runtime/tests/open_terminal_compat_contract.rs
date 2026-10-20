@@ -402,11 +402,10 @@ async fn matches_unifies_name_and_content_with_pagination() {
     assert_eq!(results.len(), 2);
     assert_eq!(results[0]["name"], serde_json::json!("zebra.png"));
     assert!(results[0]["name_match"].as_bool().unwrap());
-    let matches_empty = results[0]["content_matches"]
-        .as_array()
-        .map(|a| a.is_empty())
-        .unwrap_or(true);
-    assert!(matches_empty);
+    assert_eq!(
+        results[0]["content_matches"].as_array().map(|a| a.len()),
+        Some(0)
+    );
     assert_eq!(results[1]["name"], serde_json::json!("zebra.txt"));
     assert!(results[1]["name_match"].as_bool().unwrap());
     let hits = results[1]["content_matches"].as_array().unwrap();
