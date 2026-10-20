@@ -82,6 +82,7 @@
       "additionalProperties": false,
       "required": [
         "sharedSecret",
+        "poolRuntimeKey",
         "warmPool",
         "runtimeNs",
         "routerUrl",
@@ -108,6 +109,10 @@
           "not": {
             "const": "dev-shared-secret-change-me"
           }
+        },
+        "poolRuntimeKey": {
+          "type": "string",
+          "description": "POOL-scoped runtime API key for ephemeral warm-pool claiming (owui-pool-key Secret, mounted by the warmPool.templateName template). Set `openssl rand -hex 32` in production; empty is a placeholder the runtime refuses to boot on. Ignored when warmPool.replicas is 0."
         },
         "warmPool": {
           "type": "string",

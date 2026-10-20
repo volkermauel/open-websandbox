@@ -12,3 +12,8 @@ broker:
 sharedPvc:
   storageClass: standard          # KIND default; stays Pending (RWX, unused in ephemeral)
 # sandboxTemplate.runtimeClassName stays at the chart default: gvisor
+
+warmPool:
+  # KIND e2e: disable claiming — the pool key is not provisioned here and the
+  # ephemeral lanes assert the direct-Sandbox contract.
+  replicas: 0

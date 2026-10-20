@@ -82,16 +82,34 @@ opt-out (`--no-default-features`) trims ~1.9 MiB stripped / ~2.8 MiB unstripped.
 
 ## Warm pool tuning
 
-The warm pool pre-warms `N` sandboxes from `code-standard-v1` so a fresh
-ephemeral claim binds instantly instead of paying cold-start. Config lives in
+The warm pool pre-warms `N` sandboxes from the dedicated pool template
+(`code-standard-ephemeral-v1` = `code-standard-v1` + the pool-scoped key)
+so a fresh **ephemeral** claim binds instantly instead of paying cold-start:
+the broker creates a `SandboxClaim` and the upstream controller adopts a
+ready pool Sandbox in place (ownership transfers, the pool replenishes).
+Config lives in
 [`sandboxwarmpool-code-standard.yaml`](../open-websandbox-platform/deploy/base/sandboxwarmpool-code-standard.yaml):
 
 ```yaml
 spec:
-  replicas: 2                      # free, always-Running sandboxes
+  replicas: 1                      # free, always-Running sandboxes
   sandboxTemplateRef:
-    name: code-standard-v1
+    name: code-standard-ephemeral-v1
 ```
+
+Set `broker.warmPool` (env `BROKER_WARMPOOL`) to empty to disable claiming —
+ephemeral then cold-starts a direct per-session Sandbox as before.
+
+**Pool-key auth trade-off.** A warm pod exists before its session, so it
+cannot carry a per-session key Secret (#4) — the runtime's fail-closed boot
+guard would never let it come up. The pool's own template therefore mounts
+the POOL-scoped `owui-pool-key` Secret (`broker.poolRuntimeKey`, set
+`openssl rand -hex 32` in production), and the broker authenticates
+broker→pod hops for claimed ephemeral sandboxes with that shared key (the
+bound Sandbox is labeled `owui.io/auth=pool-key`). Persistent sandboxes keep
+per-session keys + rotate-on-resume, unchanged. Accepted because ephemeral
+workspaces are disposable emptyDir with ingress restricted to the
+`agent-sandbox-system` namespace.
 
 Tune `replicas` to roughly **peak concurrent new sessions per minute**. Too few
 and first-call latency jumps (the broker waits up to `BROKER_CLAIM_TIMEOUT_SECONDS`
@@ -107,7 +125,37 @@ counts against the runtime-namespace `ResourceQuota` (see
 [Capacity limits](#capacity-limits)) — the quota's `count/pods: "20"` is the
 hard ceiling on *warm + claimed* pods combined. Note that **persistent** sandboxes
 always cold-start (warm pods have no PVC), so the warm pool only serves the
-ephemeral profile.
+ephemeral profile. Idle **ephemeral reaps delete the claim** (cascade removes
+the Sandbox + pod; the pool replenishes), not the Sandbox directly.
+
+## Terminal-open latency
+
+Measured on a production deployment (2026-10-20, resume-from-parked path):
+opening a terminal took ~4.5 s. Budget after the pod-direct readiness fix
+(openspec/changes/terminal-open-latency):
+
+| Phase | Before | After |
+|-------|--------|-------|
+| Controller creates pod → container start (cold/resume) | ~0.6 s | ~0.6 s |
+| Runtime boot | ~1 ms | ~1 ms |
+| Readiness probe pass (`periodSeconds` 2 → 1) | 0.7–2 s | 0–1 s |
+| Controller mirrors Ready → `Sandbox.status` (workqueue backoff) | ~2.4 s | bypassed |
+| Broker poll + key + PTY + upstream WS | ~0.3 s | ~0.3 s |
+| **Cold open (resume from park)** | **~4.5 s** | **~2 s** |
+| **Warm open (sandbox Running)** | <0.5 s | <0.5 s |
+
+How: the broker's resolve polls the **Pod object** (`Ready` + `podIP`)
+directly — pod name == sandbox name — instead of waiting for the controller
+to mirror Ready into `Sandbox.status` (controller-runtime workqueue backoff
+cost ~2.4 s on every cold open). The Sandbox-status path stays as fallback;
+the timeout 503 digest includes pod conditions (`Unschedulable`, …).
+
+`BROKER_PARK_IDLE_SECONDS` (default 900) is the dominant knob for how often
+users hit the cold path at all — see [Idle policy](#idle-policy-park--reap).
+
+Installations without a gVisor RuntimeClass run sandboxes under plain
+`runc` (`runtimeClassName: ""`) — weaker isolation than the chart default;
+see [gVisor vs. runc](deploy.md#gvisor-vs-runc) before choosing.
 
 ## Idle policy: park & reap
 
@@ -121,16 +169,17 @@ annotation (see [Lifecycle](architecture.md#lifecycle)). Defaults:
 | Knob (broker env) | Default | Effect |
 |-------------------|---------|--------|
 | `BROKER_IDLE_TTL_SECONDS` | `120` | **Ephemeral** claim reaped → sandbox released back to the warm pool. |
-| `BROKER_PARK_IDLE_SECONDS` | `120` | **Persistent** sandbox parked (`operatingMode: Suspended`): pod deleted, node freed, PVC retained. |
+| `BROKER_PARK_IDLE_SECONDS` | `900` | **Persistent** sandbox parked (`operatingMode: Suspended`): pod deleted, node freed, PVC retained. 900 s so chats revisited within 15 min resolve warm instead of paying a cold resume. |
 | `BROKER_REAP_SECONDS` | `604800` (7 d) | **Persistent** claim + PVC fully deleted. |
 
 Notes when changing these:
 
-- **Park vs. reap trade-off.** Parking frees the node but keeps the PVC (and its
-  storage quota). Lower `BROKER_PARK_IDLE_SECONDS` to reclaim nodes faster at
-  the cost of a 1–6 s cold resume on the next request; raise it to keep chats
-  instant at the cost of node occupancy. Lower `BROKER_REAP_SECONDS` to reclaim
-  storage faster (and lose parked-but-unused workspaces sooner).
+- **Park vs. reap trade-off.** Parking frees the node but keeps the PVC (and
+  its storage quota). Lower `BROKER_PARK_IDLE_SECONDS` to reclaim nodes faster
+  at the cost of a ~2 s cold resume on the next request; raise it to keep chats
+  warm (<0.5 s) at the cost of idle pods holding their requests (250m/512Mi
+  each). Lower `BROKER_REAP_SECONDS` to reclaim storage faster (and lose
+  parked-but-unused workspaces sooner).
 - **Ephemeral has no park.** Ephemeral sandboxes are always `Running` while
   claimed; idle just reaps them. Tune `BROKER_IDLE_TTL_SECONDS`, not park.
 - The reaper is **stateless and idempotent** — restarting the broker re-derives

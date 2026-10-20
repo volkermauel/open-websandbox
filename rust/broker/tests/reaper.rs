@@ -319,3 +319,71 @@ async fn offload_success_then_delete_uses_default_noop() {
     assert_eq!(stats.reaped, 1);
     assert!(!store.snapshot().contains_key("owui-eph-8"));
 }
+
+#[tokio::test]
+async fn claimed_ephemeral_reap_deletes_claim_not_sandbox_directly() {
+    let store = Arc::new(StubSandboxStore::new());
+    let mut sbx = seed(
+        "owui-warm000001",
+        "ephemeral",
+        NOW - 200,
+        Some(OperatingMode::Running),
+    );
+    // Claimed stamp: the reaper must delete the CLAIM (cascade), not the
+    // Sandbox object directly.
+    sbx.metadata
+        .annotations
+        .as_mut()
+        .unwrap()
+        .insert("broker-claim".to_string(), "owui-claim1".to_string());
+    store.insert_sandbox(sbx);
+    let claim = shared::SandboxClaim::new(
+        "owui-claim1",
+        shared::SandboxClaimSpec {
+            warm_pool_ref: shared::SandboxPoolRef {
+                name: "code-standard-warmpool".into(),
+            },
+            additional_pod_metadata: None,
+        },
+    );
+    store.insert_claim(claim);
+    let store_dyn: Arc<dyn SandboxStore> = store.clone();
+    let c = cfg(120, 120, 604_800);
+
+    let stats = reap_once(store_dyn.as_ref(), &NoopOffload, &c, NOW).await;
+
+    assert_eq!(stats.reaped, 1);
+    assert!(
+        !store.snapshot_claims().contains_key("owui-claim1"),
+        "the claim is deleted"
+    );
+    assert!(
+        !store.snapshot().contains_key("owui-warm000001"),
+        "the bound sandbox cascade-deletes with the claim stub"
+    );
+}
+
+#[tokio::test]
+async fn claimed_ephemeral_reap_claim_gone_falls_back_to_sandbox() {
+    let store = Arc::new(StubSandboxStore::new());
+    let mut sbx = seed(
+        "owui-warm000002",
+        "ephemeral",
+        NOW - 200,
+        Some(OperatingMode::Running),
+    );
+    sbx.metadata
+        .annotations
+        .as_mut()
+        .unwrap()
+        .insert("broker-claim".to_string(), "owui-vanished".to_string());
+    store.insert_sandbox(sbx);
+    // NOTE: no claim seeded — the reaper's claim delete 404s and falls back.
+    let store_dyn: Arc<dyn SandboxStore> = store.clone();
+    let c = cfg(120, 120, 604_800);
+
+    let stats = reap_once(store_dyn.as_ref(), &NoopOffload, &c, NOW).await;
+
+    assert_eq!(stats.reaped, 1);
+    assert!(!store.snapshot().contains_key("owui-warm000002"));
+}

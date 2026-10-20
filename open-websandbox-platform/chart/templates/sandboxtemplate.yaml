@@ -1,22 +1,37 @@
-# SandboxTemplate CRD — the runtime pod template.
-# Lets a SandboxClaim bring its own per-user PVC (volumeClaimTemplates); the
-# controller merges a claim's `workspace` VCT into the pod, replacing the
+# SandboxTemplate CRDs — the runtime pod template, rendered TWICE:
+#   * the persistent base template (sandboxTemplate.name) — the broker clones
+#     it per sandbox and injects the PER-SESSION runtime-key Secret (#4);
+#   * the dedicated POOL template (warmPool.templateName, only when the warm
+#     pool is enabled) — carries the POOL-scoped key Secret instead, because a
+#     warm pod exists before its session and cannot take a per-session Secret.
+# Both let a SandboxClaim bring its own per-user PVC (volumeClaimTemplates);
+# the controller merges a claim's `workspace` VCT into the pod, replacing the
 # template's same-named emptyDir — so the SAME template serves ephemeral
 # (emptyDir, warm pool) and persistent (cephfs PVC, cold) profiles.
 {{/* OTLP endpoint for the runtime (broker+runtime traces share the same endpoint;
      see broker.yaml). Explicit monitoring.otlp.endpoint wins; else the bundled
      collector. Empty => runtime tracing disabled. */}}
-{{- $otlp := .Values.monitoring.otlp.endpoint -}}
-{{- if and (not $otlp) .Values.otelCollector.enabled -}}
-{{- $otlp = printf "http://%s-otelCollector.%s.svc.cluster.local:4318" .Release.Name .Release.Namespace -}}
+{{- $otlp := $.Values.monitoring.otlp.endpoint -}}
+{{- if and (not $otlp) $.Values.otelCollector.enabled -}}
+{{- $otlp = printf "http://%s-otelCollector.%s.svc.cluster.local:4318" $.Release.Name $.Release.Namespace -}}
 {{- end -}}
+{{- $poolOn := gt ($.Values.warmPool.replicas | int) 0 }}
+{{- $templates := list (dict "name" $.Values.sandboxTemplate.name "poolKey" "") }}
+{{- if $poolOn -}}
+{{- $templates = append $templates (dict "name" $.Values.warmPool.templateName "poolKey" $.Values.broker.poolRuntimeKey) -}}
+{{- end }}
+{{- range $t := $templates }}
+---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate
 metadata:
-  name: {{ .Values.sandboxTemplate.name }}
-  namespace: {{ include "open-websandbox.runtimeNamespace" . }}
+  name: {{ $t.name }}
+  namespace: {{ include "open-websandbox.runtimeNamespace" $ }}
   labels:
-    {{- include "open-websandbox.labels" . | nindent 4 }}
+    {{- include "open-websandbox.labels" $ | nindent 4 }}
+    {{- if eq $t.name $.Values.warmPool.templateName }}
+    owui.io/role: warm-pool
+    {{- end }}
 spec:
   volumeClaimTemplatesPolicy: Allowed
   podTemplate:
@@ -32,46 +47,46 @@ spec:
       # KUBERNETES_SERVICE_HOST/_PORT kubelet vars are NOT controlled by this flag and are
       # scrubbed explicitly below. (issue #48)
       enableServiceLinks: false
-{{- with .Values.imagePullSecrets }}
+{{- with $.Values.imagePullSecrets }}
       imagePullSecrets:
 {{- toYaml . | nindent 8 }}
 {{- end }}
-      {{- with .Values.sandboxTemplate.runtimeClassName }}
+      {{- with $.Values.sandboxTemplate.runtimeClassName }}
       runtimeClassName: {{ . }}
       {{- end }}
-{{- with .Values.sandboxTemplate.nodeSelector }}
+{{- with $.Values.sandboxTemplate.nodeSelector }}
       nodeSelector:
 {{- toYaml . | nindent 8 }}
 {{- end }}
-{{- with .Values.sandboxTemplate.tolerations }}
+{{- with $.Values.sandboxTemplate.tolerations }}
       tolerations:
 {{- toYaml . | nindent 8 }}
 {{- end }}
-{{- with .Values.sandboxTemplate.affinity }}
+{{- with $.Values.sandboxTemplate.affinity }}
       affinity:
 {{- toYaml . | nindent 8 }}
 {{- end }}
-      dnsPolicy: {{ .Values.sandboxTemplate.dns.policy }}
+      dnsPolicy: {{ $.Values.sandboxTemplate.dns.policy }}
       dnsConfig:
         nameservers:
-        {{- range .Values.sandboxTemplate.dns.nameservers }}
+        {{- range $.Values.sandboxTemplate.dns.nameservers }}
         - {{ . }}
         {{- end }}
         searches: []                    # no namespace search domain
         options:
         - name: ndots
-          value: {{ .Values.sandboxTemplate.dns.ndots | quote }}
+          value: {{ $.Values.sandboxTemplate.dns.ndots | quote }}
       securityContext:
         runAsNonRoot: true
-        runAsUser: {{ .Values.sandboxTemplate.uid }}
-        runAsGroup: {{ .Values.sandboxTemplate.uid }}
-        fsGroup: {{ .Values.sandboxTemplate.uid }}
+        runAsUser: {{ $.Values.sandboxTemplate.uid }}
+        runAsGroup: {{ $.Values.sandboxTemplate.uid }}
+        fsGroup: {{ $.Values.sandboxTemplate.uid }}
         seccompProfile:
           type: RuntimeDefault
       containers:
       - name: runtime
-        image: {{ include "open-websandbox.image" (dict "Values" .Values "repo" .Values.sandboxTemplate.runtimeRepository) }}
-        imagePullPolicy: {{ .Values.imagePullPolicy }}
+        image: {{ include "open-websandbox.image" (dict "Values" $.Values "repo" $.Values.sandboxTemplate.runtimeRepository) }}
+        imagePullPolicy: {{ $.Values.imagePullPolicy }}
         ports:
         - containerPort: 8888
         env:
@@ -79,21 +94,21 @@ spec:
           value: "600"
         # Per-sandbox process cap (RLIMIT_NPROC); gVisor enforces it.
         - name: MAX_PROCS
-          value: {{ .Values.sandboxTemplate.maxProcs | quote }}
+          value: {{ $.Values.sandboxTemplate.maxProcs | quote }}
         # Terminal scrollback ring (issue #129): replayed on WS reattach and
         # flushed to the workspace on SIGTERM (pod eviction / node drain).
         - name: TERMINAL_SCROLLBACK_BYTES
-          value: {{ .Values.sandboxTemplate.terminalScrollbackBytes | quote }}
+          value: {{ $.Values.sandboxTemplate.terminalScrollbackBytes | quote }}
         # How long a detached terminal survives awaiting a WS resume (seconds).
         - name: TERMINAL_DETACH_TTL_SECS
-          value: {{ .Values.sandboxTemplate.terminalDetachTtlSecs | quote }}
+          value: {{ $.Values.sandboxTemplate.terminalDetachTtlSecs | quote }}
         # Workbench capability manifest (openspec/changes/2026-08-29-workbench-toolchain):
         # /system appends the baked-in toolchain inventory + workspace
         # conventions. Disabled renders the env EXPLICITLY empty (the image
         # ENV would otherwise keep it enabled — same scrub pattern as the
         # KUBERNETES_* vars above).
         - name: SANDBOX_TOOLS_MANIFEST
-          value: {{ if .Values.sandboxTemplate.toolsManifest }}/usr/local/share/sandbox-capabilities.md{{ else }}""{{ end }}
+          value: {{ if $.Values.sandboxTemplate.toolsManifest }}/usr/local/share/sandbox-capabilities.md{{ else }}""{{ end }}
         # Suppress kubelet-injected KUBERNETES_* env (leaks service-CIDR / API IP).
         - name: KUBERNETES_SERVICE_HOST
           value: ""
@@ -113,11 +128,11 @@ spec:
           value: ""
         # #162: raise axum's 2 MiB default body limit for multipart uploads.
         - name: MAX_UPLOAD_BYTES
-          value: {{ include "open-websandbox.sizeBytes" .Values.sandboxTemplate.maxUploadBytes | quote }}
-        {{- if eq .Values.broker.persistentMode "empty-dir" }}
+          value: {{ include "open-websandbox.sizeBytes" $.Values.sandboxTemplate.maxUploadBytes | quote }}
+        {{- if eq $.Values.broker.persistentMode "empty-dir" }}
         # empty-dir hot tier (#142): cap snapshot/restore at the hot-tier sizeLimit (D9).
         - name: MAX_WORKSPACE_BYTES
-          value: {{ include "open-websandbox.sizeBytes" .Values.broker.s3.sizeLimit | quote }}
+          value: {{ include "open-websandbox.sizeBytes" $.Values.broker.s3.sizeLimit | quote }}
         {{- end }}
         {{- if $otlp }}
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
@@ -136,8 +151,8 @@ spec:
           allowPrivilegeEscalation: true
           readOnlyRootFilesystem: false
           runAsNonRoot: true
-          runAsUser: {{ .Values.sandboxTemplate.uid }}
-          runAsGroup: {{ .Values.sandboxTemplate.uid }}
+          runAsUser: {{ $.Values.sandboxTemplate.uid }}
+          runAsGroup: {{ $.Values.sandboxTemplate.uid }}
           capabilities:
             drop: ["ALL"]
             add:
@@ -158,7 +173,9 @@ spec:
           httpGet:
             path: "/"
             port: 8888
-          periodSeconds: 2
+          # 1s period: the broker's resolve polls the pod directly (pod-direct
+          # readiness), so a fast Ready signal cuts cold-open latency ~1s.
+          periodSeconds: 1
         livenessProbe:
           httpGet:
             path: "/"
@@ -183,20 +200,38 @@ spec:
           mountPath: /tmp
         - name: packages
           mountPath: /packages
+        {{- if eq $t.name $.Values.warmPool.templateName }}
+        # POOL-scoped runtime key (ephemeral warm-pool claiming): a warm pod
+        # exists before its session and cannot carry a per-session Secret (#4).
+        # The broker authenticates pod-hops for claimed sandboxes with this
+        # key (owui.io/auth=pool-key fallback).
+        - name: runtime-key
+          mountPath: /etc/runtime-key
+          readOnly: true
+        {{- end }}
       volumes:
       - name: workspace
         emptyDir:
-          sizeLimit: {{ .Values.sandboxTemplate.storage.workspace }}
+          sizeLimit: {{ $.Values.sandboxTemplate.storage.workspace }}
       - name: home
         emptyDir:
-          sizeLimit: {{ .Values.sandboxTemplate.storage.home }}
+          sizeLimit: {{ $.Values.sandboxTemplate.storage.home }}
       - name: tmp
         emptyDir:
-          {{- with .Values.sandboxTemplate.storage.tmp }}
+          {{- with $.Values.sandboxTemplate.storage.tmp }}
           medium: {{ .medium }}
           sizeLimit: {{ .sizeLimit }}
           {{- end }}
       - name: packages
         emptyDir:
-          sizeLimit: {{ .Values.sandboxTemplate.storage.packages }}
+          sizeLimit: {{ $.Values.sandboxTemplate.storage.packages }}
+      {{- if eq $t.name $.Values.warmPool.templateName }}
+      - name: runtime-key
+        secret:
+          secretName: owui-pool-key
+          items:
+          - key: api-key
+            path: api-key
+      {{- end }}
       restartPolicy: OnFailure
+{{- end }}

@@ -178,6 +178,87 @@ pub struct SandboxStatus {
     pub message: Option<String>,
 }
 
+/// Spec of a [`SandboxClaim`] — the broker's request for a sandbox bound from
+/// a [`SandboxWarmPool`](unknown) (upstream `extensions.agents.x-k8s.io/v1beta1`).
+///
+/// Upstream v0.5.6 semantics (api.md): the controller binds a claim to a
+/// ready pool Sandbox IN PLACE (ownership transfers, "claimed Sandboxes are
+/// never replaced") and mirrors the bound name into `status.sandbox.name`.
+/// `spec.env` / `volumeClaimTemplates` force a cold start, so the broker sets
+/// NEITHER — only labels via `additionalPodMetadata`, which propagate to the
+/// running pod without recreating it.
+#[derive(CustomResource, Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[kube(
+    group = "extensions.agents.x-k8s.io",
+    version = "v1beta1",
+    kind = "SandboxClaim",
+    namespaced,
+    status = "SandboxClaimStatus"
+)]
+pub struct SandboxClaimSpec {
+    /// Pool the claim binds from (required upstream). The pool carries the
+    /// `sandboxTemplateRef` in v1beta1 — the claim itself does not name a
+    /// template.
+    pub warm_pool_ref: SandboxPoolRef,
+
+    /// Labels/annotations propagated onto the bound pod WITHOUT a recreate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additional_pod_metadata: Option<AdditionalPodMetadata>,
+}
+
+/// `spec.warmPoolRef` — the pool a claim binds from.
+#[derive(
+    Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, utoipa::ToSchema,
+)]
+pub struct SandboxPoolRef {
+    /// Pool object name.
+    pub name: String,
+}
+
+/// `spec.additionalPodMetadata` — pod labels/annotations from the claim.
+#[derive(
+    Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, utoipa::ToSchema,
+)]
+pub struct AdditionalPodMetadata {
+    /// Pod labels (upstream restricts keys to its allowlist).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub labels: Option<std::collections::BTreeMap<String, String>>,
+
+    /// Pod annotations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<std::collections::BTreeMap<String, String>>,
+}
+
+/// Status of a [`SandboxClaim`] — the bound sandbox mirror.
+#[derive(
+    Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, utoipa::ToSchema,
+)]
+pub struct SandboxClaimStatus {
+    /// The Sandbox this claim bound/created: its name (pool-generated for a
+    /// warm adoption) + pod IPs, mirrored so consumers need only the claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<SandboxRef>,
+
+    /// Status conditions (upstream `Ready` mirrors the bound sandbox).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conditions: Option<Vec<SandboxCondition>>,
+}
+
+/// `status.sandbox` — object reference to the bound Sandbox.
+#[derive(
+    Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, utoipa::ToSchema,
+)]
+pub struct SandboxRef {
+    /// Bound Sandbox object name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    /// Pod IPs, mirrored from the bound sandbox.
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "podIPs")]
+    pub pod_i_ps: Option<Vec<String>>,
+}
+
 impl SandboxStatus {
     /// True when a `Ready`/`True` condition is present — the readiness
     /// predicate applied before proxying.

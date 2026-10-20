@@ -23,7 +23,8 @@ pub use config::{
     is_placeholder_secret, BrokerConfig, ConfigError, PersistentMode, Profile, PLACEHOLDER_SECRETS,
 };
 pub use crd::{
-    OperatingMode, PodIpEntry, Sandbox, SandboxCondition, SandboxSpec, SandboxStatus,
+    AdditionalPodMetadata, OperatingMode, PodIpEntry, Sandbox, SandboxClaim, SandboxClaimSpec,
+    SandboxClaimStatus, SandboxCondition, SandboxPoolRef, SandboxRef, SandboxSpec, SandboxStatus,
     SandboxTemplate, SandboxTemplateSpec, ShutdownPolicy,
 };
 pub use metrics::{gather, install, HttpMetrics};

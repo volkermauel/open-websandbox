@@ -1,0 +1,189 @@
+# Pool SandboxTemplate — code-standard-v1 + the POOL-scoped runtime-key
+# Secret (ephemeral warm-pool claiming). A warm pod exists before its
+# session and cannot carry a per-session key Secret (#4), so the pool's
+# pods boot with the shared pool key (broker.poolRuntimeKey); the broker
+# authenticates pod-hops for claimed ephemeral sandboxes with it
+# (owui.io/auth=pool-key). Persistent sandboxes keep per-session keys.
+# Kept byte-for-byte in sync with `helm template` (the chart renders this
+# from sandboxtemplate.yaml when warmPool.replicas > 0).
+# Source: open-websandbox/templates/sandboxtemplate.yaml
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: code-standard-ephemeral-v1
+  namespace: agent-sandbox-runtime
+  labels:
+    app.kubernetes.io/name: open-websandbox
+    helm.sh/chart: open-websandbox-0.2.7
+    app.kubernetes.io/instance: open-websandbox
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: open-websandbox
+    owui.io/role: warm-pool
+spec:
+  volumeClaimTemplatesPolicy: Allowed
+  podTemplate:
+    metadata:
+      labels:
+        app: code-standard
+        profile: ephemeral
+    spec:
+      automountServiceAccountToken: false
+      # Suppress kubelet-injected <SERVICE>_SERVICE_HOST/_PORT env for every Service in
+      # the namespace (enableServiceLinks=false). Those vars would leak cluster topology
+      # (service CIDR, peer services) to the untrusted code running in the sandbox. The
+      # KUBERNETES_SERVICE_HOST/_PORT kubelet vars are NOT controlled by this flag and are
+      # scrubbed explicitly below. (issue #48)
+      enableServiceLinks: false
+      runtimeClassName: gvisor
+      dnsPolicy: None
+      dnsConfig:
+        nameservers:
+        - 8.8.8.8
+        - 1.1.1.1
+        searches: []                    # no namespace search domain
+        options:
+        - name: ndots
+          value: "1"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: runtime
+        image: open-websandbox-runtime:v0.2.0
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8888
+        env:
+        - name: MAX_TIMEOUT
+          value: "600"
+        # Per-sandbox process cap (RLIMIT_NPROC); gVisor enforces it.
+        - name: MAX_PROCS
+          value: "256"
+        # Terminal scrollback ring (issue #129): replayed on WS reattach and
+        # flushed to the workspace on SIGTERM (pod eviction / node drain).
+        - name: TERMINAL_SCROLLBACK_BYTES
+          value: "131072"
+        # How long a detached terminal survives awaiting a WS resume (seconds).
+        - name: TERMINAL_DETACH_TTL_SECS
+          value: "900"
+        # Workbench capability manifest (openspec/changes/2026-08-29-workbench-toolchain):
+        # /system appends the baked-in toolchain inventory + workspace
+        # conventions. Disabled renders the env EXPLICITLY empty (the image
+        # ENV would otherwise keep it enabled — same scrub pattern as the
+        # KUBERNETES_* vars above).
+        - name: SANDBOX_TOOLS_MANIFEST
+          value: /usr/local/share/sandbox-capabilities.md
+        # Suppress kubelet-injected KUBERNETES_* env (leaks service-CIDR / API IP).
+        - name: KUBERNETES_SERVICE_HOST
+          value: ""
+        - name: KUBERNETES_SERVICE_PORT
+          value: ""
+        - name: KUBERNETES_SERVICE_PORT_HTTPS
+          value: ""
+        - name: KUBERNETES_PORT
+          value: ""
+        - name: KUBERNETES_PORT_443_TCP
+          value: ""
+        - name: KUBERNETES_PORT_443_TCP_ADDR
+          value: ""
+        - name: KUBERNETES_PORT_443_TCP_PORT
+          value: ""
+        - name: KUBERNETES_PORT_443_TCP_PROTO
+          value: ""
+        # #162: raise axum's 2 MiB default body limit for multipart uploads.
+        - name: MAX_UPLOAD_BYTES
+          value: "1073741824"
+        securityContext:
+          # Workbench sudo-apt surface (openspec/changes/2026-08-29-workbench-toolchain):
+          # the whitelisted `sudo apt-get` needs (a) privilege escalation so the
+          # setuid sudo binary can transition to root, and (b) a WRITABLE rootfs —
+          # installed packages land in the ephemeral per-pod rootfs and vanish on
+          # pod restart (docs/security.md § sudo posture). This opts the runtime
+          # container out of the restricted profile on these axes; it still runs
+          # as uid 1000 and keeps only the container-default capability set
+          # (minus NET_RAW) — a fully empty bounding set would strip the setuid
+          # sudo binary of every capability at exec, breaking the apt whitelist.
+          allowPrivilegeEscalation: true
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities:
+            drop: ["ALL"]
+            add:
+              - AUDIT_WRITE
+              - CHOWN
+              - DAC_OVERRIDE
+              - FOWNER
+              - FSETID
+              - KILL
+              - MKNOD
+              - NET_BIND_SERVICE
+              - SETFCAP
+              - SETGID
+              - SETPCAP
+              - SETUID
+              - SYS_CHROOT
+        readinessProbe:
+          httpGet:
+            path: "/"
+            port: 8888
+          # 1s period: the broker's resolve polls the pod directly (pod-direct
+          # readiness), so a fast Ready signal cuts cold-open latency ~1s.
+          periodSeconds: 1
+        livenessProbe:
+          httpGet:
+            path: "/"
+            port: 8888
+          initialDelaySeconds: 3
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+            ephemeral-storage: 2Gi
+          limits:
+            cpu: "2"
+            memory: 4Gi
+            ephemeral-storage: 12Gi
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: home
+          mountPath: /home/sandbox
+        - name: tmp
+          mountPath: /tmp
+        - name: packages
+          mountPath: /packages
+        # POOL-scoped runtime key (ephemeral warm-pool claiming): a warm pod
+        # exists before its session and cannot carry a per-session Secret (#4).
+        # The broker authenticates pod-hops for claimed sandboxes with this
+        # key (owui.io/auth=pool-key fallback).
+        - name: runtime-key
+          mountPath: /etc/runtime-key
+          readOnly: true
+      volumes:
+      - name: workspace
+        emptyDir:
+          sizeLimit: 4Gi
+      - name: home
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: tmp
+        emptyDir:
+          medium: Memory
+          sizeLimit: 2Gi
+      - name: packages
+        emptyDir:
+          sizeLimit: 4Gi
+      - name: runtime-key
+        secret:
+          secretName: owui-pool-key
+          items:
+          - key: api-key
+            path: api-key
+      restartPolicy: OnFailure

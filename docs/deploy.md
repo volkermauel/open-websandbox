@@ -202,13 +202,15 @@ broker:
   persistentAccessModes: [ReadWriteMany]
   perUserPvcPrefix: workspace-p-
   idleTtlSeconds: 120                 # ephemeral reap (also empty-dir persistent reap)
-  parkIdleSeconds: 120                # persistent park (suspend; PVC tiers only)
+  parkIdleSeconds: 900                # persistent park (suspend; PVC tiers only)
   reapSeconds: 604800                 # persistent reap (7d)
 
 warmPool:
-  replicas: 2                         # pre-warmed ephemeral sandboxes
-  templateRef: code-standard-v1
+  replicas: 1                         # pre-warmed ephemeral sandboxes (0 disables claiming)
+  templateName: code-standard-ephemeral-v1  # pool template = base + pool key
 
+# in the broker block above:
+  poolRuntimeKey: "<openssl rand -hex 32>"  # POOL-scoped key (claimed ephemeral hop auth)
 sharedPvc:                            # rendered ONLY in shared-subpath mode (#140)
   name: workspace-shared
   storageClassName: cephfs
@@ -279,6 +281,7 @@ install, set at least these in your values file:
 | `imageTag` | `v0.1.1` | A pinned tag; **pin by digest** for production. |
 | `imagePullPolicy` | `Never` | `IfNotPresent` once images are pulled from a registry (not pre-loaded). |
 | `broker.sharedSecret` | `dev-shared-secret-change-me` | `openssl rand -hex 32` — **must override**. Becomes the broker's `BROKER_SHARED_SECRET`. |
+| `broker.poolRuntimeKey` | `""` | `openssl rand -hex 32` — **must override when `warmPool.replicas` > 0** (the default). POOL-scoped key for claimed ephemeral sandboxes (`owui-pool-key` Secret); the runtime refuses to boot on an empty/placeholder key. |
 | `router.kubeApiServerCidr` | `10.96.0.1/32` (kubeadm; default) | ClusterIP of the `kubernetes` Service. k3s: `10.43.0.1/32`; MicroK8s: `10.152.183.1/32`. Wrong here and the router can't reach the API server. |
 | `router.kubeDnsCidr` | `10.96.0.10/32` (kubeadm; default) | ClusterIP of kube-dns/CoreDNS. k3s: `10.43.0.10/32`; MicroK8s: `10.152.183.10/32`. |
 | `sharedPvc.storageClass` | `cephfs` | Your RWX StorageClass. Persistent sandboxes need RWX for park/resume. |
@@ -405,7 +408,7 @@ a Helm value unset to inherit the default.
 | Helm value path | Env var | Default | Purpose |
 |-----------------|---------|---------|---------|
 | `broker.sharedSecret` | `BROKER_SHARED_SECRET` | *(from Secret)* | Shared bearer; empty = auth disabled (dev only). |
-| `broker.warmPool` | `BROKER_WARMPOOL` | `code-standard-warmpool` | Warm pool (ephemeral profile) the broker binds claims to. |
+| `broker.warmPool` | `BROKER_WARMPOOL` | `code-standard-warmpool` | Warm pool (ephemeral profile) the broker binds `SandboxClaim`s to — the controller adopts a ready pool Sandbox in place. Empty disables claiming (ephemeral cold-starts a direct Sandbox). |
 | `namespaces.runtime` | `BROKER_RUNTIME_NS` | `agent-sandbox-runtime` | Namespace holding templates/pools/claims/sandboxes. |
 | `broker.routerUrl` | `BROKER_ROUTER_URL` | `http://sandbox-router-svc.agent-sandbox-system:8080` | Where the broker proxies HTTP requests. |
 | `broker.defaultProfile` | `BROKER_DEFAULT_PROFILE` | `persistent` | Default profile (`ephemeral` \| `persistent`). Deploy-fixed. |
@@ -413,7 +416,7 @@ a Helm value unset to inherit the default.
 | `broker.persistentStorage` | `BROKER_PERSISTENT_STORAGE` | `10Gi` | Per-user PVC size (per-user-pvc mode). |
 | `broker.persistentStorageClass` | `BROKER_PERSISTENT_STORAGE_CLASS` | `""` | Per-user PVC StorageClass ("" = cluster default; prod: an RWX class such as CephFS). |
 | `broker.idleTtlSeconds` | `BROKER_IDLE_TTL_SECONDS` | `120` | Ephemeral reap age — claim deleted, sandbox returns to the warm pool. Also the reap age of `empty-dir` persistent sandboxes. |
-| `broker.parkIdleSeconds` | `BROKER_PARK_IDLE_SECONDS` | `120` | Persistent **park** age — sandbox `Suspended` (pod gone, PVC kept). Cold resume ~1–6 s. PVC hot tiers only; `empty-dir` never parks. |
+| `broker.parkIdleSeconds` | `BROKER_PARK_IDLE_SECONDS` | `900` | Persistent **park** age — sandbox `Suspended` (pod gone, PVC kept). Cold resume ~2 s; chats revisited inside the window resolve warm (<0.5 s). Cost: idle pods hold their requests longer. PVC hot tiers only; `empty-dir` never parks. |
 | `broker.wsTouchIntervalSeconds` | `BROKER_WS_TOUCH_INTERVAL_SECONDS` | `45` | #158: WS terminal frames refresh `broker-last-used` at most once per this interval, so an actively-used terminal is never parked mid-session. Keep well below `parkIdleSeconds`; `0` disables (old behavior). |
 | `broker.reapSeconds` | `BROKER_REAP_SECONDS` | `604800` (7 d) | Persistent **reap** age — with the cold tier on, reap offloads to S3 first and frees the hot tier (#142); the per-user PVC itself is kept. |
 | `broker.claimTimeoutSeconds` | `BROKER_CLAIM_TIMEOUT_SECONDS` | `60` | Wait for `Ready` (else HTTP 504). |

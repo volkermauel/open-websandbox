@@ -42,3 +42,8 @@ broker:
 sharedPvc:
   storageClass: standard            # local-path
   accessModes: [ReadWriteOnce]      # local-path is RWO (unused in this lane)
+
+warmPool:
+  # KIND e2e: disable claiming — the pool key is not provisioned here and the
+  # ephemeral lanes assert the direct-Sandbox contract.
+  replicas: 0

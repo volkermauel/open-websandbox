@@ -1,10 +1,13 @@
-# Pre-warm 2 sandboxes from code-standard-v1 so first-call latency is low.
+# Pre-warm sandboxes from the dedicated POOL template (code-standard-v1 + the
+# pool-scoped key) so a fresh ephemeral claim binds instantly. The broker's
+# BROKER_WARMPOOL default names this pool; persistent sandboxes never claim.
+# Kept byte-for-byte in sync with the chart (warmPool.replicas default 1).
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool
 metadata:
   name: code-standard-warmpool
   namespace: agent-sandbox-runtime
 spec:
-  replicas: 2
+  replicas: 1
   sandboxTemplateRef:
-    name: code-standard-v1
+    name: code-standard-ephemeral-v1

@@ -43,6 +43,19 @@ pub const SESSION_KEY: &str = "broker-session";
 /// Label key recording a persistent Sandbox's hot-tier backing
 /// (`per-user-pvc` / `shared-subpath` / `s3-tiered`) — #140.
 pub const PERSISTENT_MODE_LABEL_KEY: &str = "broker-persistent-mode";
+/// Annotation on a claimed ephemeral Sandbox naming its owning
+/// `SandboxClaim` — the reaper deletes the claim (cascade removes the
+/// Sandbox; the pool replenishes) instead of the Sandbox directly.
+pub const CLAIM_ANNOTATION_KEY: &str = "broker-claim";
+/// Label marking a claimed ephemeral Sandbox as authenticating broker→pod
+/// hops with the POOL key (`owui-pool-key`) — warm pods cannot carry a
+/// per-session Secret (upstream adopts the running pod in place).
+pub const AUTH_LABEL_KEY: &str = "owui.io/auth";
+/// [`AUTH_LABEL_KEY`] value selecting pool-key hop auth.
+pub const AUTH_POOL_KEY: &str = "pool-key";
+/// Name of the pool-scoped runtime key Secret (chart-rendered, mounted by
+/// the dedicated pool template).
+pub const POOL_KEY_SECRET: &str = "owui-pool-key";
 
 /// Extract the template's `podTemplate` (opaque JSON) to clone into a Sandbox.
 ///

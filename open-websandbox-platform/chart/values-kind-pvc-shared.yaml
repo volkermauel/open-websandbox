@@ -18,3 +18,8 @@ sharedPvc:
   storageClass: standard            # KIND local-path
   accessModes: [ReadWriteOnce]      # single-node KIND: RWO suffices
   size: 5Gi
+
+warmPool:
+  # KIND e2e: disable claiming — the pool key is not provisioned here and the
+  # ephemeral lanes assert the direct-Sandbox contract.
+  replicas: 0

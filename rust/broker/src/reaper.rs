@@ -226,8 +226,53 @@ pub async fn reap_once(
             ReaperAction::Reap => {
                 // C-4 seam: offload first; on failure keep-alive for the next tick (D7).
                 match offload.offload_on_reap(sbx).await {
-                    Ok(()) => match store.delete_sandbox(&name).await {
-                        Ok(true) => {
+                    Ok(()) => {
+                        // Claimed ephemeral (warm-pool): delete the CLAIM —
+                        // cascade removes the bound Sandbox + pod and the pool
+                        // replenishes. Fall back to deleting the Sandbox when
+                        // the claim is already gone (orphan cleanup).
+                        let claim = sbx
+                            .metadata
+                            .annotations
+                            .as_ref()
+                            .and_then(|a| a.get(crate::sandbox::CLAIM_ANNOTATION_KEY))
+                            .map(String::as_str);
+                        let deleted = match claim {
+                            // Claim present — delete it; cascade removes the
+                            // Sandbox + pod and the pool replenishes. A claim
+                            // already gone means an orphaned sandbox: delete it.
+                            Some(c) => match store.delete_claim(c).await {
+                                Ok(true) => {
+                                    tracing::info!(
+                                        %name, claim = %c, idle,
+                                        "reaped idle claim (sandbox released, pool replenishes)"
+                                    );
+                                    true
+                                }
+                                Ok(false) => match store.delete_sandbox(&name).await {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        stats.skipped += 1;
+                                        tracing::warn!(%name, error = %e, "reap delete failed");
+                                        continue;
+                                    }
+                                },
+                                Err(e) => {
+                                    stats.skipped += 1;
+                                    tracing::warn!(%name, claim = %c, error = %e, "reap claim delete failed");
+                                    continue;
+                                }
+                            },
+                            None => match store.delete_sandbox(&name).await {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    stats.skipped += 1;
+                                    tracing::warn!(%name, error = %e, "reap delete failed");
+                                    continue;
+                                }
+                            },
+                        };
+                        if deleted {
                             stats.reaped += 1;
                             tracing::info!(%name, idle, "reaped idle sandbox (deleted)");
                             // #99 A6: why this sandbox was reaped (mirrors decide()'s
@@ -248,17 +293,15 @@ pub async fn reap_once(
                                 Profile::Persistent => "persistent_reap_ttl",
                             };
                             metrics::counter!(IDLE_REAPS_TOTAL, "reason" => reason).increment(1);
-                            // PR-C-5 / #4: best-effort reap the per-session key Secret.
+                            // PR-C-5 / #4: best-effort reap the per-session key Secret
+                            // (absent for claimed ephemeral — 404-tolerant).
                             if let Err(e) = store.delete_runtime_key(&name).await {
                                 tracing::warn!(%name, error = %e, "reap runtime key failed");
                             }
+                        } else {
+                            stats.skipped += 1; // already gone (404)
                         }
-                        Ok(false) => stats.skipped += 1, // already gone (404)
-                        Err(e) => {
-                            stats.skipped += 1;
-                            tracing::warn!(%name, error = %e, "reap delete failed");
-                        }
-                    },
+                    }
                     Err(e) => {
                         stats.offload_failed += 1;
                         tracing::warn!(

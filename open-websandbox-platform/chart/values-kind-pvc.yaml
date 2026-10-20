@@ -21,3 +21,8 @@ broker:
 sharedPvc:
   storageClass: standard
   accessModes: [ReadWriteOnce]      # unused in per-user-pvc mode (schema requires it)
+
+warmPool:
+  # KIND e2e: disable claiming — the pool key is not provisioned here and the
+  # ephemeral lanes assert the direct-Sandbox contract.
+  replicas: 0

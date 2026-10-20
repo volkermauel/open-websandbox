@@ -10,9 +10,10 @@
 #![forbid(unsafe_code)]
 
 use async_trait::async_trait;
+use k8s_openapi::api::core::v1::Pod;
 use kube::api::{DeleteParams, ListParams, PostParams};
 use kube::Api;
-use shared::{Sandbox, SandboxTemplate};
+use shared::{Sandbox, SandboxClaim, SandboxTemplate};
 
 /// A failure from a Kubernetes lifecycle call, classified for HTTP mapping.
 #[derive(Debug, thiserror::Error)]
@@ -59,6 +60,12 @@ pub trait SandboxStore: Send + Sync {
 
     /// Fetch a `Sandbox` by name (`Ok(None)` when absent).
     async fn get_sandbox(&self, name: &str) -> Result<Option<Sandbox>, StoreError>;
+
+    /// Fetch the sandbox's Pod object (pod name == sandbox name) —
+    /// `Ok(None)` when absent. Readiness probing reads the Pod directly
+    /// because the controller mirrors Ready into `Sandbox.status` seconds
+    /// later (workqueue backoff); the pod carries `podIP` + Ready first.
+    async fn get_pod(&self, name: &str) -> Result<Option<Pod>, StoreError>;
 
     /// Delete a `Sandbox` by name. Returns whether the object existed
     /// (404-tolerant).
@@ -108,15 +115,40 @@ pub trait SandboxStore: Send + Sync {
     /// runtime-key volume is satisfiable at pod-creation.
     async fn ensure_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError>;
 
-    /// Stateless per-hop lookup of the per-session runtime API key. `Ok(None)`
-    /// when the Secret is missing (misconfig / reaped session) so the hop goes
-    /// out unauthenticated and the runtime fails closed (401/503). (PR-C-5 / #4)
+    /// Stateless per-hop lookup of the runtime API key for a sandbox:
+    /// the per-session Secret first; on NotFound AND the sandbox labeled
+    /// `owui.io/auth=pool-key` (claimed ephemeral — warm pods cannot carry a
+    /// per-session Secret), the pool key `owui-pool-key`. `Ok(None)` when
+    /// neither resolves so the hop fails closed at the runtime.
     async fn read_runtime_key(&self, sandbox_name: &str) -> Result<Option<String>, StoreError>;
+
+    /// Read the pool-scoped runtime key Secret directly (resolve-path use:
+    /// priming + tests). `Ok(None)` when absent.
+    async fn read_pool_key(&self) -> Result<Option<String>, StoreError>;
+
+    /// Create a `SandboxClaim` (ephemeral warm-pool binding). Returns
+    /// [`StoreError::Conflict`] when the claim already exists.
+    async fn create_claim(&self, claim: SandboxClaim) -> Result<SandboxClaim, StoreError>;
+
+    /// Fetch a `SandboxClaim` by name (`Ok(None)` when absent).
+    async fn get_claim(&self, name: &str) -> Result<Option<SandboxClaim>, StoreError>;
+
+    /// Delete a `SandboxClaim` (cascade removes the bound Sandbox; the pool
+    /// replenishes). 404-tolerant; returns whether the claim existed.
+    async fn delete_claim(&self, name: &str) -> Result<bool, StoreError>;
+
+    /// Merge labels onto a Sandbox's metadata (claimed-sandbox stamping:
+    /// managed-by/profile/auth labels land AFTER the controller binds — the
+    /// broker does not build that Sandbox object itself).
+    async fn label_sandbox(
+        &self,
+        name: &str,
+        labels: &[(String, String)],
+    ) -> Result<(), StoreError>;
 
     /// Best-effort reap of the per-session key Secret with the sandbox
     /// (404-tolerant).
     async fn delete_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError>;
-
     /// Ensure the workspace PVC backing a persistent sandbox exists in the
     /// runtime namespace (#140).
     ///
@@ -208,6 +240,24 @@ impl KubeSandboxStore {
         Api::namespaced(self.client.clone(), &self.namespace)
     }
 
+    fn claim_api(&self) -> Api<SandboxClaim> {
+        Api::namespaced(self.client.clone(), &self.namespace)
+    }
+
+    /// Read a Secret's runtime-key data entry by secret name.
+    async fn read_secret_key(&self, secret_name: &str) -> Result<Option<String>, StoreError> {
+        use k8s_openapi::api::core::v1::Secret;
+        let secrets: Api<Secret> = Api::namespaced(self.client.clone(), &self.namespace);
+        match secrets.get(secret_name).await {
+            Ok(sec) => Ok(sec
+                .data
+                .and_then(|d| d.get(crate::runtime_key::DATA_KEY).cloned())
+                .and_then(|b| String::from_utf8(b.0).ok())),
+            Err(kube::Error::Api(e)) if e.code == 404 => Ok(None),
+            Err(err) => Err(StoreError::classify(err)),
+        }
+    }
+
     fn template_api(&self) -> Api<SandboxTemplate> {
         Api::namespaced(self.client.clone(), &self.namespace)
     }
@@ -240,6 +290,66 @@ impl SandboxStore for KubeSandboxStore {
                 other => Err(other),
             },
         }
+    }
+
+    async fn get_pod(&self, name: &str) -> Result<Option<Pod>, StoreError> {
+        let pods: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
+        match pods.get(name).await {
+            Ok(p) => Ok(Some(p)),
+            Err(err) => match StoreError::classify(err) {
+                StoreError::NotFound => Ok(None),
+                other => Err(other),
+            },
+        }
+    }
+
+    async fn create_claim(&self, claim: SandboxClaim) -> Result<SandboxClaim, StoreError> {
+        self.claim_api()
+            .create(&PostParams::default(), &claim)
+            .await
+            .map_err(StoreError::classify)
+    }
+
+    async fn get_claim(&self, name: &str) -> Result<Option<SandboxClaim>, StoreError> {
+        match self.claim_api().get(name).await {
+            Ok(c) => Ok(Some(c)),
+            Err(err) => match StoreError::classify(err) {
+                StoreError::NotFound => Ok(None),
+                other => Err(other),
+            },
+        }
+    }
+
+    async fn delete_claim(&self, name: &str) -> Result<bool, StoreError> {
+        match self
+            .claim_api()
+            .delete(name, &DeleteParams::default())
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(err) => match StoreError::classify(err) {
+                StoreError::NotFound => Ok(false),
+                other => Err(other),
+            },
+        }
+    }
+
+    async fn label_sandbox(
+        &self,
+        name: &str,
+        labels: &[(String, String)],
+    ) -> Result<(), StoreError> {
+        use kube::api::Patch;
+        use kube::api::PatchParams;
+        let mut patch = serde_json::json!({"metadata": {"labels": {}}});
+        for (k, v) in labels {
+            patch["metadata"]["labels"][k] = serde_json::Value::String(v.clone());
+        }
+        self.sandbox_api()
+            .patch(name, &PatchParams::default(), &Patch::Merge(&patch))
+            .await
+            .map(|_: Sandbox| ())
+            .map_err(StoreError::classify)
     }
 
     async fn delete_sandbox(&self, name: &str) -> Result<bool, StoreError> {
@@ -279,19 +389,33 @@ impl SandboxStore for KubeSandboxStore {
     }
 
     async fn read_runtime_key(&self, sandbox_name: &str) -> Result<Option<String>, StoreError> {
-        use k8s_openapi::api::core::v1::Secret;
-        let secrets: Api<Secret> = Api::namespaced(self.client.clone(), &self.namespace);
-        match secrets
-            .get(&crate::runtime_key::secret_name(sandbox_name))
+        match self
+            .read_secret_key(&crate::runtime_key::secret_name(sandbox_name))
             .await
         {
-            Ok(sec) => Ok(sec
-                .data
-                .and_then(|d| d.get(crate::runtime_key::DATA_KEY).cloned())
-                .and_then(|b| String::from_utf8(b.0).ok())),
-            Err(kube::Error::Api(e)) if e.code == 404 => Ok(None),
-            Err(err) => Err(StoreError::classify(err)),
+            Ok(Some(key)) => Ok(Some(key)),
+            // Claimed ephemeral (warm-pool adoption): the running warm pod
+            // carries the POOL key, not a per-session Secret. Fall back only
+            // when the sandbox is explicitly labeled for it.
+            Ok(None) => {
+                let claimed = self
+                    .get_sandbox(sandbox_name)
+                    .await?
+                    .and_then(|s| s.metadata.labels)
+                    .and_then(|l| l.get(crate::sandbox::AUTH_LABEL_KEY).cloned())
+                    .is_some_and(|v| v == crate::sandbox::AUTH_POOL_KEY);
+                if claimed {
+                    self.read_pool_key().await
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(e) => Err(e),
         }
+    }
+
+    async fn read_pool_key(&self) -> Result<Option<String>, StoreError> {
+        self.read_secret_key(crate::sandbox::POOL_KEY_SECRET).await
     }
 
     async fn delete_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError> {
@@ -487,8 +611,9 @@ impl SandboxStore for KubeSandboxStore {
 pub mod test_fakes {
     use super::{SandboxStore, StoreError, WorkspacePvcSpec};
     use async_trait::async_trait;
+    use k8s_openapi::api::core::v1::Pod;
     use kube::ResourceExt;
-    use shared::{Sandbox, SandboxTemplate};
+    use shared::{Sandbox, SandboxClaim, SandboxTemplate};
     use std::collections::{BTreeMap, HashMap};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
@@ -518,6 +643,16 @@ pub mod test_fakes {
         /// Recorded move_workspace_dir calls (draft adoption, #157), oldest
         /// first — lets tests assert the exact move the broker planned.
         job_moves: Mutex<Vec<WorkspaceMove>>,
+        /// Pod objects keyed by name (pod-direct readiness):
+        /// [`Self::mark_pod_ready`] stamps a Ready status + podIP;
+        /// [`Self::delete_pod`] simulates the controller deleting the pod
+        /// on park.
+        pods: Mutex<HashMap<String, Pod>>,
+        /// `SandboxClaim` objects keyed by name (ephemeral warm-pool claiming).
+        claims: Mutex<HashMap<String, SandboxClaim>>,
+        /// Pool-scoped runtime key (`owui-pool-key`); `None` (default) = the
+        /// pool key is not provisioned and pool-key fallback fails closed.
+        pool_key: Mutex<Option<String>>,
     }
 
     impl StubSandboxStore {
@@ -532,6 +667,9 @@ pub mod test_fakes {
                 runtime_keys: Mutex::new(HashMap::new()),
                 pvcs: Mutex::new(Vec::new()),
                 job_moves: Mutex::new(Vec::new()),
+                pods: Mutex::new(HashMap::new()),
+                claims: Mutex::new(HashMap::new()),
+                pool_key: Mutex::new(None),
             }
         }
 
@@ -606,6 +744,61 @@ pub mod test_fakes {
             }
         }
 
+        /// Insert/update a Pod object directly (pod-direct readiness). Use with
+        /// `make_pod` below; `mark_pod_ready` is the common shorthand.
+        pub fn put_pod(&self, pod: Pod) {
+            let name = pod.metadata.name.clone().unwrap_or_default();
+            self.pods.lock().expect("stub pods").insert(name, pod);
+        }
+
+        /// Stamp a Ready pod (name == sandbox name) with `pod_ip`.
+        pub fn mark_pod_ready(&self, name: &str, pod_ip: &str) {
+            self.put_pod(make_pod(name, pod_ip, true));
+        }
+
+        /// Remove a pod (simulates park/reap deleting it).
+        pub fn delete_pod(&self, name: &str) {
+            self.pods.lock().expect("stub pods").remove(name);
+        }
+
+        /// Seed a claim the store will return from [`get_claim`](SandboxStore::get_claim).
+        pub fn insert_claim(&self, claim: SandboxClaim) {
+            let name = claim.metadata.name.clone().unwrap_or_default();
+            self.claims.lock().expect("stub claims").insert(name, claim);
+        }
+
+        /// Bind a claim to a sandbox: stamps `status.sandbox.name` (what the
+        /// upstream controller mirrors on adoption). Returns `false` when the
+        /// claim is absent.
+        pub fn mark_claim_bound(&self, claim: &str, sandbox: &str) -> bool {
+            let mut claims = self.claims.lock().expect("stub claims");
+            match claims.get_mut(claim) {
+                Some(c) => {
+                    c.status = Some(shared::SandboxClaimStatus {
+                        sandbox: Some(shared::SandboxRef {
+                            name: Some(sandbox.to_string()),
+                            pod_i_ps: None,
+                        }),
+                        conditions: None,
+                    });
+                    true
+                }
+                None => false,
+            }
+        }
+
+        /// Snapshot of the claims map, for assertions.
+        #[must_use]
+        pub fn snapshot_claims(&self) -> HashMap<String, SandboxClaim> {
+            self.claims.lock().expect("stub claims").clone()
+        }
+
+        /// Provision the pool-scoped runtime key (the chart renders the
+        /// `owui-pool-key` Secret; the stub just stores the value).
+        pub fn set_pool_key(&self, key: &str) {
+            *self.pool_key.lock().expect("stub pool key") = Some(key.to_string());
+        }
+
         /// Snapshot of the current sandbox store (name → `Sandbox`), for assertions.
         #[must_use]
         pub fn snapshot(&self) -> HashMap<String, Sandbox> {
@@ -664,7 +857,12 @@ pub mod test_fakes {
                 .cloned())
         }
 
+        async fn get_pod(&self, name: &str) -> Result<Option<Pod>, StoreError> {
+            Ok(self.pods.lock().expect("stub pods").get(name).cloned())
+        }
+
         async fn delete_sandbox(&self, name: &str) -> Result<bool, StoreError> {
+            self.pods.lock().expect("stub pods").remove(name);
             Ok(self
                 .sandboxes
                 .lock()
@@ -784,12 +982,33 @@ pub mod test_fakes {
         }
 
         async fn read_runtime_key(&self, sandbox_name: &str) -> Result<Option<String>, StoreError> {
-            Ok(self
+            if let Some(key) = self
                 .runtime_keys
                 .lock()
                 .expect("stub runtime_keys")
                 .get(sandbox_name)
-                .cloned())
+                .cloned()
+            {
+                return Ok(Some(key));
+            }
+            // Pool-key fallback mirrors the kube store: claimed ephemeral only.
+            let claimed = self
+                .sandboxes
+                .lock()
+                .expect("stub sandboxes")
+                .get(sandbox_name)
+                .and_then(|s| s.metadata.labels.as_ref())
+                .and_then(|l| l.get(crate::sandbox::AUTH_LABEL_KEY))
+                .is_some_and(|v| v == crate::sandbox::AUTH_POOL_KEY);
+            if claimed {
+                Ok(self.pool_key.lock().expect("stub pool key").clone())
+            } else {
+                Ok(None)
+            }
+        }
+
+        async fn read_pool_key(&self) -> Result<Option<String>, StoreError> {
+            Ok(self.pool_key.lock().expect("stub pool key").clone())
         }
 
         async fn delete_runtime_key(&self, sandbox_name: &str) -> Result<(), StoreError> {
@@ -798,6 +1017,63 @@ pub mod test_fakes {
                 .expect("stub runtime_keys")
                 .remove(sandbox_name);
             Ok(())
+        }
+
+        async fn create_claim(&self, claim: SandboxClaim) -> Result<SandboxClaim, StoreError> {
+            let name = claim.metadata.name.clone().unwrap_or_default();
+            let mut claims = self.claims.lock().expect("stub claims");
+            if claims.contains_key(&name) {
+                return Err(StoreError::Conflict);
+            }
+            claims.insert(name, claim.clone());
+            Ok(claim)
+        }
+
+        async fn get_claim(&self, name: &str) -> Result<Option<SandboxClaim>, StoreError> {
+            Ok(self.claims.lock().expect("stub claims").get(name).cloned())
+        }
+
+        async fn delete_claim(&self, name: &str) -> Result<bool, StoreError> {
+            let existed = self
+                .claims
+                .lock()
+                .expect("stub claims")
+                .remove(name)
+                .is_some();
+            if existed {
+                // Simulate the k8s garbage collector: sandboxes owned by the
+                // claim (stamped with the `broker-claim` annotation) cascade.
+                self.sandboxes
+                    .lock()
+                    .expect("stub sandboxes")
+                    .retain(|_, s| {
+                        s.metadata
+                            .annotations
+                            .as_ref()
+                            .and_then(|a| a.get(crate::sandbox::CLAIM_ANNOTATION_KEY))
+                            .map(String::as_str)
+                            != Some(name)
+                    });
+            }
+            Ok(existed)
+        }
+
+        async fn label_sandbox(
+            &self,
+            name: &str,
+            labels: &[(String, String)],
+        ) -> Result<(), StoreError> {
+            let mut map = self.sandboxes.lock().expect("stub sandboxes");
+            match map.get_mut(name) {
+                Some(sbx) => {
+                    let ls = sbx.metadata.labels.get_or_insert_with(BTreeMap::new);
+                    for (k, v) in labels {
+                        ls.insert(k.clone(), v.clone());
+                    }
+                    Ok(())
+                }
+                None => Err(StoreError::NotFound),
+            }
         }
 
         async fn ensure_workspace_pvc(
@@ -834,6 +1110,29 @@ pub mod test_fakes {
             }]),
             ready: Some(true),
             message: None,
+        }
+    }
+
+    /// Minimal Pod object for the pod-direct readiness path: Ready condition
+    /// (`ready`), `podIP`, Running phase when ready; bare Pending pod otherwise.
+    pub(crate) fn make_pod(name: &str, pod_ip: &str, ready: bool) -> Pod {
+        let conditions = Some(vec![k8s_openapi::api::core::v1::PodCondition {
+            type_: "Ready".to_string(),
+            status: if ready { "True" } else { "False" }.to_string(),
+            ..Default::default()
+        }]);
+        Pod {
+            metadata: k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta {
+                name: Some(name.to_string()),
+                ..Default::default()
+            },
+            status: Some(k8s_openapi::api::core::v1::PodStatus {
+                phase: Some(if ready { "Running" } else { "Pending" }.to_string()),
+                pod_ip: ready.then(|| pod_ip.to_string()),
+                conditions,
+                ..Default::default()
+            }),
+            ..Default::default()
         }
     }
 }

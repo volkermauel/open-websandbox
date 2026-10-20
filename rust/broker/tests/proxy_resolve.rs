@@ -9,7 +9,7 @@ use std::sync::Arc;
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use broker::test_fakes::StubSandboxStore;
-use broker::{build_router, resolve_sandbox, sandbox_name, ApiError, AppState};
+use broker::{build_router, resolve_sandbox, sandbox_name, ApiError, AppState, SandboxStore};
 use shared::{
     BrokerConfig, Profile, Sandbox, SandboxCondition, SandboxSpec, SandboxStatus, SandboxTemplate,
     SandboxTemplateSpec,
@@ -70,10 +70,12 @@ fn config(timeout: u64) -> BrokerConfig {
         base_template: BASE_TEMPLATE.into(),
         runtime_api_key: RT_KEY.into(),
         claim_timeout_seconds: timeout,
+        // Claiming disabled: these tests exercise the direct-Sandbox paths;
+        // claim-path coverage lives in the `ephemeral_warm_pool` tests below.
+        warm_pool: String::new(),
         ..BrokerConfig::default()
     }
 }
-
 fn state(store: Arc<StubSandboxStore>, cfg: BrokerConfig) -> AppState {
     AppState::new(cfg, store)
 }
@@ -416,5 +418,160 @@ async fn rate_limit_returns_429_per_user_when_burst_exhausted() {
         resp.status(),
         StatusCode::OK,
         "open probes are not rate-limited"
+    );
+}
+
+// --- ephemeral warm-pool claiming ----------------------------------------
+
+use std::time::Duration;
+
+/// Config with claiming ENABLED against `test-pool`.
+fn claim_config(timeout: u64) -> BrokerConfig {
+    BrokerConfig {
+        warm_pool: "test-pool".into(),
+        claim_timeout_seconds: timeout,
+        ..config(timeout)
+    }
+}
+
+#[tokio::test]
+async fn ephemeral_warm_pool_claim_binds_stamps_and_resolves() {
+    let store = store_with_template();
+    store.set_pool_key("pool-key-123");
+    let state = state(store.clone(), claim_config(5));
+
+    // Simulate the controller: shortly after the claim lands, bind it to a
+    // pool sandbox, create that sandbox, and flip its pod Ready.
+    let s2 = store.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let claims = s2.snapshot_claims();
+        assert_eq!(claims.len(), 1, "resolve created exactly one claim");
+        let (claim_name, claim) = claims.into_iter().next().expect("claim created");
+        assert_eq!(
+            claim.spec.warm_pool_ref.name, "test-pool",
+            "claim references the configured pool"
+        );
+        let bound = "owui-warm000001";
+        s2.mark_claim_bound(&claim_name, bound);
+        let mut sbx = Sandbox::new(
+            bound,
+            SandboxSpec {
+                template_name: None,
+                operating_mode: None,
+                shutdown_policy: None,
+                pod_template: None,
+            },
+        );
+        sbx.metadata
+            .labels
+            .get_or_insert_with(Default::default)
+            .insert("agents.x-k8s.io/warm-pool-sandbox".to_string(), "x".into());
+        s2.insert_sandbox(sbx);
+        s2.mark_pod_ready(bound, "10.0.0.9");
+    });
+
+    let resolved = resolve_sandbox(&state, "user-1", "chat-1", Profile::Ephemeral)
+        .await
+        .expect("claim binds + pod-direct ready");
+
+    assert_eq!(resolved.name, "owui-warm000001");
+    assert_eq!(resolved.pod_ip, "10.0.0.9");
+
+    // Broker identity stamped onto the bound sandbox object.
+    let snap = store.snapshot();
+    let sbx = snap.get("owui-warm000001").expect("bound sandbox");
+    let labels = sbx.metadata.labels.as_ref().expect("labels");
+    assert_eq!(labels.get("broker-profile").unwrap(), "ephemeral");
+    assert_eq!(labels.get("owui.io/auth").unwrap(), "pool-key");
+    let annots = sbx.metadata.annotations.as_ref().expect("annotations");
+    let claim_name = sandbox_name("user-1", "chat-1", Profile::Ephemeral);
+    assert_eq!(annots.get("broker-claim").unwrap(), &claim_name);
+
+    // Hop auth: no per-session key exists, the pool-key label routes the
+    // read to the pool secret.
+    let key = store
+        .read_runtime_key("owui-warm000001")
+        .await
+        .expect("key readable");
+    assert_eq!(key.as_deref(), Some("pool-key-123"));
+}
+
+#[tokio::test]
+async fn ephemeral_warm_pool_bind_timeout_is_503() {
+    let store = store_with_template();
+    let state = state(store.clone(), claim_config(1));
+
+    // Nothing ever binds the claim.
+    let err = resolve_sandbox(&state, "user-1", "chat-1", Profile::Ephemeral)
+        .await
+        .expect_err("unbound claim times out");
+    match err {
+        ApiError::ServiceUnavailable(detail) => {
+            assert!(detail.contains("did not bind"), "{detail}");
+            assert!(detail.contains("test-pool"), "{detail}");
+        }
+        other => panic!("expected ServiceUnavailable, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn pool_key_fallback_requires_the_auth_label() {
+    let store = store_with_template();
+    store.set_pool_key("pool-key-123");
+    let mut sbx = Sandbox::new(
+        "owui-plain00001",
+        SandboxSpec {
+            template_name: None,
+            operating_mode: None,
+            shutdown_policy: None,
+            pod_template: None,
+        },
+    );
+    store.insert_sandbox(sbx.clone());
+    // No owui.io/auth label → per-session secret missing → fail closed (None).
+    assert_eq!(
+        store
+            .read_runtime_key("owui-plain00001")
+            .await
+            .expect("key"),
+        None
+    );
+
+    sbx.metadata
+        .labels
+        .get_or_insert_with(Default::default)
+        .insert("owui.io/auth".to_string(), "pool-key".into());
+    store.insert_sandbox(sbx);
+    assert_eq!(
+        store
+            .read_runtime_key("owui-plain00001")
+            .await
+            .expect("claim present"),
+        Some("pool-key-123".into())
+    );
+
+    // No pool key provisioned → still fail closed.
+    let empty = StubSandboxStore::new();
+    let mut sbx2 = Sandbox::new(
+        "owui-plain00002",
+        SandboxSpec {
+            template_name: None,
+            operating_mode: None,
+            shutdown_policy: None,
+            pod_template: None,
+        },
+    );
+    sbx2.metadata
+        .labels
+        .get_or_insert_with(Default::default)
+        .insert("owui.io/auth".to_string(), "pool-key".into());
+    empty.insert_sandbox(sbx2);
+    assert_eq!(
+        empty
+            .read_runtime_key("owui-plain00002")
+            .await
+            .expect("key"),
+        None
     );
 }

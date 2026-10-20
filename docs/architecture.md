@@ -105,7 +105,7 @@ sequenceDiagram
         C-->>B: claim bound (warm sandbox)
     else persistent / cold
         C->>P: reconcile pod + bind Pod IP
-        C-->>B: Ready + Pod IP (cold-start 1–6 s)
+        C-->>B: Ready + Pod IP (cold-start ~2 s)
     end
     B->>P: proxy /execute via router (X-Sandbox-Pod-IP)
     P-->>B: stdout / stderr / exit

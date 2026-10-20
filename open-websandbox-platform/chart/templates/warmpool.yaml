@@ -1,3 +1,4 @@
+{{- if gt (.Values.warmPool.replicas | int) 0 }}
 # Pre-warm sandboxes from the template so first-call latency is low.
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool
@@ -10,3 +11,4 @@ spec:
   replicas: {{ .Values.warmPool.replicas }}
   sandboxTemplateRef:
     name: {{ .Values.warmPool.templateName }}
+{{- end }}

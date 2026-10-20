@@ -21,3 +21,8 @@ broker:
     perSecond: 2                  # per chat — tiny for a fast test
     burst: 5
     userMultiplier: 3             # per-user aggregate = 6/15
+
+warmPool:
+  # KIND e2e: disable claiming — the pool key is not provisioned here and the
+  # ephemeral lanes assert the direct-Sandbox contract.
+  replicas: 0

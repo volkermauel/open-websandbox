@@ -15,6 +15,7 @@
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use k8s_openapi::api::core::v1::Pod;
 use sha2::{Digest, Sha256};
 use shared::{PersistentMode, Profile, Sandbox, SandboxStatus};
 
@@ -156,9 +157,15 @@ pub async fn resolve_sandbox(
     session_id: &str,
     profile: Profile,
 ) -> Result<ResolvedSandbox, ApiError> {
+    // Ephemeral + warm pool configured: resolve through a SandboxClaim so the
+    // controller binds a pre-warmed Sandbox in place (instant, no pod boot).
+    // Empty `warm_pool` (claiming disabled) and Persistent fall through to the
+    // direct-Sandbox path below — unchanged behavior.
+    if profile == Profile::Ephemeral && !state.config.warm_pool.is_empty() {
+        return resolve_ephemeral_claim(state, user_id, session_id).await;
+    }
     let name = sandbox_name(user_id, session_id, profile);
     tracing::Span::current().record("sandbox", name.as_str());
-
     // #157 draft adoption: planned in the create branch below, executed
     // after readiness (just before `Ok(resolved)`) so the first file listing
     // already sees the adopted files.
@@ -394,6 +401,133 @@ pub async fn resolve_sandbox(
     Ok(resolved)
 }
 
+/// Ephemeral resolve via `SandboxClaim` (ephemeral warm-pool claiming).
+///
+/// Upstream v0.5.6 binding semantics: the controller adopts a ready pool
+/// Sandbox IN PLACE (ownership transfers to the claim; "claimed Sandboxes
+/// are never replaced") and mirrors the bound name into
+/// `status.sandbox.name`. The broker never env-injects (`spec.env` would
+/// force a cold start) — identity labels land on the bound SANDBOX object
+/// via `label_sandbox`, and hop auth falls back to the pool key via the
+/// `owui.io/auth=pool-key` label (warm pods cannot carry a per-session
+/// Secret).
+async fn resolve_ephemeral_claim(
+    state: &AppState,
+    user_id: &str,
+    session_id: &str,
+) -> Result<ResolvedSandbox, ApiError> {
+    use shared::{SandboxClaimSpec, SandboxPoolRef};
+
+    let claim_name = sandbox_name(user_id, session_id, Profile::Ephemeral);
+    tracing::Span::current().record("sandbox", claim_name.as_str());
+
+    let mut labels = std::collections::BTreeMap::new();
+    labels.insert(
+        crate::sandbox::MANAGED_BY_KEY.to_string(),
+        crate::sandbox::MANAGED_BY_VALUE.to_string(),
+    );
+    let claim = shared::SandboxClaim {
+        metadata: k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta {
+            name: Some(claim_name.clone()),
+            labels: Some(labels),
+            ..Default::default()
+        },
+        spec: SandboxClaimSpec {
+            warm_pool_ref: SandboxPoolRef {
+                name: state.config.warm_pool.clone(),
+            },
+            additional_pod_metadata: None,
+        },
+        status: None,
+    };
+    match state.store.create_claim(claim).await {
+        Ok(_) => {
+            metrics::counter!(SANDBOXES_CREATED_TOTAL).increment(1);
+        }
+        // A concurrent resolve won the create race — poll that claim.
+        Err(StoreError::Conflict) => {}
+        Err(e) => return Err(map_store_err(e)),
+    }
+
+    // Poll the claim until the controller binds (status.sandbox.name). A
+    // warm bind is instant; a fresh pool slot or a cold create from the pool
+    // template takes a pod boot.
+    let deadline = Instant::now() + Duration::from_secs(state.config.claim_timeout_seconds);
+    let bound = loop {
+        let claim = state
+            .store
+            .get_claim(&claim_name)
+            .await
+            .map_err(map_store_err)?
+            .ok_or_else(|| ApiError::Internal("claim vanished while polling".to_string()))?;
+        if let Some(name) = claim
+            .status
+            .as_ref()
+            .and_then(|s| s.sandbox.as_ref())
+            .and_then(|s| s.name.clone())
+        {
+            break name;
+        }
+        if Instant::now() >= deadline {
+            return Err(ApiError::ServiceUnavailable(format!(
+                "claim {claim_name} did not bind from pool {} in {}s",
+                state.config.warm_pool, state.config.claim_timeout_seconds
+            )));
+        }
+        tokio::time::sleep(READY_POLL_INTERVAL).await;
+    };
+    tracing::Span::current().record("sandbox", bound.as_str());
+
+    // Stamp the bound Sandbox with broker identity (the controller built it,
+    // so our labels/annotations are not on it yet): managed-by + profile +
+    // pool-key auth label (drives the `read_runtime_key` fallback), and the
+    // claim back-reference the reaper deletes on idle reap. The Sandbox
+    // object exists before its status mirrors, but the patch can still 404
+    // racing the controller's create — retry within the deadline.
+    let identity: Vec<(String, String)> = [
+        (
+            crate::sandbox::MANAGED_BY_KEY,
+            crate::sandbox::MANAGED_BY_VALUE,
+        ),
+        (crate::sandbox::PROFILE_LABEL_KEY, "ephemeral"),
+        (
+            crate::sandbox::AUTH_LABEL_KEY,
+            crate::sandbox::AUTH_POOL_KEY,
+        ),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    loop {
+        let stamped = async {
+            state.store.label_sandbox(&bound, &identity).await?;
+            state
+                .store
+                .set_annotation(&bound, crate::sandbox::CLAIM_ANNOTATION_KEY, &claim_name)
+                .await
+        }
+        .await;
+        match stamped {
+            Ok(()) => break,
+            Err(StoreError::NotFound) if Instant::now() < deadline => {
+                tokio::time::sleep(READY_POLL_INTERVAL).await;
+            }
+            Err(e) => return Err(map_store_err(e)),
+        }
+    }
+
+    // Pod-direct readiness — same fast path as persistent, on the bound name.
+    let resolved = wait_for_ready(state, &bound).await?;
+    if let Err(e) = state
+        .store
+        .touch_last_used(&resolved.name, now_unix())
+        .await
+    {
+        tracing::debug!(sandbox = %resolved.name, error = %e, "non-fatal last-used touch");
+    }
+    Ok(resolved)
+}
+
 /// Plan the #157 draft→chat workspace move for a freshly created chat
 /// sandbox, or `None` when adoption doesn't apply: persistent profile on a
 /// PVC hot tier, S3 restore not in play (it owns persistence semantics),
@@ -528,19 +662,45 @@ async fn resume_draft_adoption(
         ownership,
     })
 }
-/// Poll the store until the named Sandbox is Ready with a pod IP, or the deadline.
+/// Poll until the sandbox is Ready with a pod IP, or the deadline.
 ///
-/// On timeout the 503 carries a one-line digest of the sandbox's last-seen
-/// status — the v0.5.6 controller mirrors `PodScheduled` (Unschedulable,
-/// SchedulingGated, …) into `Sandbox.status.conditions`, so the error says
+/// Each tick checks the Pod object FIRST (pod-direct readiness): the
+/// controller mirrors Ready into `Sandbox.status` seconds later (workqueue
+/// backoff), while the Pod carries `Ready=True` + `podIP` as soon as the
+/// runtime answers its probe. The Sandbox poll stays as fallback (pod
+/// absent / not yet created) and supplies the S3 last-key annotation on
+/// success. On timeout the 503 carries a one-line digest of the last-seen
+/// pod + sandbox status — the v0.5.6 controller mirrors `PodScheduled`
+/// (Unschedulable, SchedulingGated, …) into conditions, so the error says
 /// *why* the sandbox never came up instead of just "not ready in 60s".
 async fn wait_for_ready(state: &AppState, name: &str) -> Result<ResolvedSandbox, ApiError> {
     let deadline = Instant::now() + Duration::from_secs(state.config.claim_timeout_seconds);
     let mut last_digest = String::from("no status reported");
     loop {
+        // Pod-direct fast path: Ready + podIP on the Pod object ends the
+        // wait without waiting for the controller's status mirror. One
+        // best-effort sandbox GET reuses the annotation snapshot below.
+        if let Ok(Some(pod)) = state.store.get_pod(name).await {
+            if let Some(ip) = pod_ready_ip(&pod) {
+                let sbx = state.store.get_sandbox(name).await.ok().flatten();
+                let last_offloaded_key = sbx.as_ref().map(|s| {
+                    let k = crate::s3::annotation(s, crate::s3::S3_LAST_KEY_ANNOTATION);
+                    (!k.is_empty()).then_some(k)
+                });
+                tracing::info!(sandbox = %name, pod_ip = %ip, source = "pod", "sandbox resolved");
+                return Ok(ResolvedSandbox {
+                    name: name.to_string(),
+                    pod_ip: ip,
+                    last_offloaded_key: last_offloaded_key.flatten(),
+                });
+            }
+            last_digest = pod_condition_summary(&pod);
+        }
+        // Pod absent (controller may not have created it yet) or the read
+        // failed: fall through to the Sandbox-status path.
         if let Some(sbx) = state.store.get_sandbox(name).await.map_err(map_store_err)? {
             if let Some(ip) = ready_pod_ip(&sbx) {
-                tracing::info!(sandbox = %name, pod_ip = %ip, "sandbox resolved");
+                tracing::info!(sandbox = %name, pod_ip = %ip, source = "sandbox", "sandbox resolved");
                 // Snapshot the last-offloaded-key stamp while the object is
                 // in hand — an extra GET just for it would double the reads.
                 let last_offloaded_key = {
@@ -563,6 +723,47 @@ async fn wait_for_ready(state: &AppState, name: &str) -> Result<ResolvedSandbox,
         }
         tokio::time::sleep(READY_POLL_INTERVAL).await;
     }
+}
+
+/// `podIP` of a Pod whose Ready condition is True, else `None`.
+fn pod_ready_ip(pod: &Pod) -> Option<String> {
+    let status = pod.status.as_ref()?;
+    let ready = status
+        .conditions
+        .as_ref()?
+        .iter()
+        .any(|c| c.type_ == "Ready" && c.status == "True");
+    if ready {
+        status.pod_ip.clone().filter(|ip| !ip.is_empty())
+    } else {
+        None
+    }
+}
+
+/// One-line pod digest for the timeout 503: phase + non-True condition
+/// reasons (e.g. `pod: Pending; PodScheduled=False reason=Unschedulable: …`).
+fn pod_condition_summary(pod: &Pod) -> String {
+    let Some(status) = pod.status.as_ref() else {
+        return "pod: no status".to_string();
+    };
+    let mut parts: Vec<String> = vec![format!(
+        "pod: phase={}",
+        status.phase.as_deref().unwrap_or("Unknown")
+    )];
+    for c in status
+        .conditions
+        .iter()
+        .flatten()
+        .filter(|c| c.status != "True")
+    {
+        let reason = c
+            .reason
+            .as_deref()
+            .map(|r| format!(" reason={r}"))
+            .unwrap_or_default();
+        parts.push(format!("{}={}{}", c.type_, c.status, reason));
+    }
+    parts.join("; ")
 }
 
 /// One-line digest of a sandbox status for error surfaces, e.g.
@@ -868,6 +1069,69 @@ mod tests {
             }
             other => panic!("expected ServiceUnavailable, got {other:?}"),
         }
+    }
+
+    // --- pod-direct readiness (terminal-open latency) -----------------------
+
+    #[tokio::test]
+    async fn pod_ready_short_circuits_before_sandbox_status() {
+        // Pod Ready + podIP while the Sandbox carries NO status yet — the
+        // controller mirrors Ready seconds late; the pod path must win.
+        let config = shared::BrokerConfig::default();
+        let stub = crate::store::test_fakes::StubSandboxStore::new();
+        stub.mark_pod_ready("n", "10.0.0.7");
+        let state = AppState {
+            store: std::sync::Arc::new(stub),
+            ..AppState::for_test(config)
+        };
+        let resolved = wait_for_ready(&state, "n").await.expect("resolves via pod");
+        assert_eq!(resolved.pod_ip, "10.0.0.7");
+    }
+
+    #[tokio::test]
+    async fn sandbox_status_still_resolves_when_pod_absent() {
+        // Fallback: no pod object at all — the pre-existing Sandbox-status
+        // path must still resolve (backward compat).
+        let config = shared::BrokerConfig::default();
+        let stub = crate::store::test_fakes::StubSandboxStore::new();
+        stub.insert_sandbox(ready_fixture("10.0.0.9"));
+        let state = AppState {
+            store: std::sync::Arc::new(stub),
+            ..AppState::for_test(config)
+        };
+        let resolved = wait_for_ready(&state, "n")
+            .await
+            .expect("resolves via sandbox");
+        assert_eq!(resolved.pod_ip, "10.0.0.9");
+    }
+
+    #[tokio::test]
+    async fn not_ready_timeout_503_carries_pod_digest() {
+        let config = shared::BrokerConfig {
+            claim_timeout_seconds: 0,
+            ..Default::default()
+        };
+        let stub = crate::store::test_fakes::StubSandboxStore::new();
+        stub.put_pod(crate::store::test_fakes::make_pod("n", "10.0.0.1", false));
+        let state = AppState {
+            store: std::sync::Arc::new(stub),
+            ..AppState::for_test(config)
+        };
+        match wait_for_ready(&state, "n").await {
+            Err(ApiError::ServiceUnavailable(detail)) => {
+                assert!(detail.contains("pod: phase=Pending"), "{detail}");
+            }
+            other => panic!("expected ServiceUnavailable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pod_ready_ip_requires_true_condition_and_ip() {
+        let ready = crate::store::test_fakes::make_pod("p", "10.0.0.1", true);
+        assert_eq!(pod_ready_ip(&ready).as_deref(), Some("10.0.0.1"));
+
+        let pending = crate::store::test_fakes::make_pod("p", "", false);
+        assert_eq!(pod_ready_ip(&pending), None);
     }
 
     // --- #157 draft adoption -------------------------------------------------

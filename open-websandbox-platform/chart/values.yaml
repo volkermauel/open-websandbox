@@ -53,11 +53,20 @@ broker:
   # replica reaps, so two brokers never double-reap a sandbox.
   replicas: 1
   sharedSecret: ""
+  # POOL-scoped runtime key for ephemeral warm-pool claiming (owui-pool-key
+  # Secret, mounted by the warmPool.templateName template). Set
+  # `openssl rand -hex 32` in production — the runtime refuses to boot on a
+  # placeholder, and the broker fails closed without it. Ignored when
+  # warmPool.replicas is 0.
+  poolRuntimeKey: ""
   warmPool: code-standard-warmpool
   runtimeNs: agent-sandbox-runtime
   routerUrl: http://sandbox-router-svc.agent-sandbox-system:8080
   idleTtlSeconds: 120
-  parkIdleSeconds: 120
+  # 900 (was 120): chats revisited within 15 min resolve warm (<0.5s) instead
+  # of paying a cold pod resume (~2s). Cost: idle pods hold their requests
+  # (250m/512Mi) longer; reapSeconds still deletes them after 7d.
+  parkIdleSeconds: 900
   # #142 hybrid tiering: persistent reap age. idle > reapSeconds → the reaper
   # (briefly resumes a parked sandbox, with s3 enabled) offloads /workspace to
   # the cold tier, purges the PVC chat dir, then deletes the sandbox.
@@ -146,7 +155,7 @@ broker:
   # WS terminal touch (#158): relayed WS frames refresh broker-last-used at
   # most once per this interval (seconds), so an actively-used terminal is
   # never parked mid-session. Keep well below parkIdleSeconds (default 45
-  # vs 120) or the touches lose the race against the idle reaper. 0 disables.
+  # vs 900) or the touches lose the race against the idle reaper. 0 disables.
   wsTouchIntervalSeconds: 45
 
 
@@ -198,13 +207,17 @@ sandboxTemplate:
     packages: 4Gi
 
 warmPool:
-  # 0 under per-session key enforcement (issue #4): the upstream controller's warm-pool
-  # REUSE model cannot project a per-session Secret into a pod created before its
-  # session exists (a SandboxClaim's env is static-only; no per-pod volume), so ephemeral
-  # now cold-starts a direct per-session Sandbox like persistent. Re-enable only if
-  # upstream gains per-CR secret projection.
-  replicas: 0
-  templateName: code-standard-v1
+  # 1 (default): the pool pre-warms N sandboxes so a fresh ephemeral claim
+  # binds INSTANTLY (upstream adopts the running pod in place). Pods boot from
+  # the dedicated pool template (templateName) carrying the POOL-scoped key
+  # Secret (broker.poolRuntimeKey) — per-session Secrets cannot be projected
+  # into a pod created before its session exists (#4), so claimed ephemeral
+  # hop auth uses the pool key (the broker's `owui.io/auth=pool-key` label
+  # fallback). 0 disables the pool AND its template rendering (ephemeral then
+  # cold-starts a direct per-session Sandbox). Persistent sandboxes are
+  # untouched: per-session keys + park/resume as before.
+  replicas: 1
+  templateName: code-standard-ephemeral-v1
 
 sharedPvc:
   name: workspace-shared

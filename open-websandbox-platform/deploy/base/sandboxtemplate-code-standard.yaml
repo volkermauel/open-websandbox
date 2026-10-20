@@ -86,8 +86,8 @@ spec:
               - SETUID
               - SYS_CHROOT
         readinessProbe:
-          httpGet: { path: "/", port: 8888 }
-          periodSeconds: 2
+          # 1s: pod-direct resolve reads Ready sooner (cold-open latency)
+          periodSeconds: 1
         livenessProbe:
           httpGet: { path: "/", port: 8888 }
           initialDelaySeconds: 3
