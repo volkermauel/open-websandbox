@@ -33,7 +33,10 @@ jobs:
       # Fork PRs are downgraded to read-only by GitHub; cache-to is gated off there.
       contents: read
       packages: write
-    timeout-minutes: 30
+    # 45m: the full-suite lanes (runc/gvisor run every test) were cancelled
+    # at the old 30m budget on main since the v0.2.1 push (split s3/pvc lanes
+    # pass well within it).
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
