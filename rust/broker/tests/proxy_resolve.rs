@@ -575,3 +575,52 @@ async fn pool_key_fallback_requires_the_auth_label() {
         None
     );
 }
+
+#[tokio::test]
+async fn s3_record_persistent_claims_and_restores() {
+    let store = store_with_template();
+    store.set_pool_key("pool-key-123");
+    let mut cfg = claim_config(5);
+    cfg.persistent_mode = shared::PersistentMode::S3Record;
+    cfg.warm_pool_record = "record-pool".into();
+    let state = state(store.clone(), cfg);
+
+    // Controller binds the record claim to a warm member; the sandbox is
+    // Running (no restore tier configured in this lane — restore-before-
+    // ready is a no-op without state.s3_restore).
+    let s2 = store.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let claims = s2.snapshot_claims();
+        let (claim_name, _) = claims.into_iter().next().expect("claim created");
+        let bound = "owui-rec0000001";
+        s2.mark_claim_bound(&claim_name, bound);
+        let sbx = Sandbox::new(
+            bound,
+            SandboxSpec {
+                template_name: None,
+                operating_mode: None,
+                shutdown_policy: None,
+                pod_template: None,
+            },
+        );
+        s2.insert_sandbox(sbx);
+        s2.mark_pod_ready(bound, "10.1.1.1");
+    });
+
+    let resolved = resolve_sandbox(&state, "user-1", "chat-1", Profile::Persistent)
+        .await
+        .expect("s3-record persistent resolves via record pool");
+
+    assert_eq!(resolved.name, "owui-rec0000001");
+    let snap = store.snapshot();
+    let sbx = snap.get("owui-rec0000001").expect("bound sandbox");
+    let labels = sbx.metadata.labels.as_ref().expect("labels");
+    assert_eq!(labels.get("broker-profile").unwrap(), "persistent");
+    assert_eq!(labels.get("owui.io/auth").unwrap(), "pool-key");
+    let annots = sbx.metadata.annotations.as_ref().expect("annotations");
+    assert!(annots.contains_key("broker-claim"));
+    // user/session annotations stamped for the offload/restore seam.
+    assert_eq!(annots.get("broker-user").unwrap(), "user-1");
+    assert_eq!(annots.get("broker-session").unwrap(), "chat-1");
+}

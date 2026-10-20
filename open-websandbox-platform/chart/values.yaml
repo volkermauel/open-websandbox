@@ -58,6 +58,7 @@ broker:
   # `openssl rand -hex 32` in production — the runtime refuses to boot on a
   # placeholder, and the broker fails closed without it. Ignored when
   # warmPool.replicas is 0.
+  warmPoolRecord: code-standard-s3-warmpool
   poolRuntimeKey: ""
   warmPool: code-standard-warmpool
   runtimeNs: agent-sandbox-runtime
@@ -218,6 +219,17 @@ warmPool:
   # untouched: per-session keys + park/resume as before.
   replicas: 1
   templateName: code-standard-ephemeral-v1
+  record:
+    # s3-record pool (persistent chats claim scratch-PVC members here and
+    # restore-before-ready from S3). Requires broker.s3.enabled AND
+    # persistentMode=s3-record on the broker. Disabled by default — legacy
+    # per-user-pvc deployments are unaffected.
+    enabled: false
+    replicas: 1
+    templateName: code-standard-s3-v1
+    scratch:
+      storageClass: ""               # cluster default when empty
+      size: 5Gi
 
 sharedPvc:
   name: workspace-shared

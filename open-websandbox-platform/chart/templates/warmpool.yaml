@@ -12,3 +12,21 @@ spec:
   sandboxTemplateRef:
     name: {{ .Values.warmPool.templateName }}
 {{- end }}
+
+{{- if and $.Values.warmPool.record.enabled (gt ($.Values.warmPool.record.replicas | int) 0) }}
+---
+# s3-record pool: members carry the scratch VCT (per-sandbox PVC) from
+# code-standard-s3-v1; persistent chats claim here and restore-before-ready
+# from S3. See openspec/changes/workspace-s3-store-of-record/.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: {{ $.Values.broker.warmPoolRecord }}
+  namespace: {{ include "open-websandbox.runtimeNamespace" $ }}
+  labels:
+    {{- include "open-websandbox.labels" $ | nindent 4 }}
+spec:
+  replicas: {{ $.Values.warmPool.record.replicas }}
+  sandboxTemplateRef:
+    name: {{ $.Values.warmPool.record.templateName }}
+{{- end }}

@@ -740,6 +740,22 @@ impl S3Offload {
     /// offloading. The sandbox is deleted right after, so the pod's lifetime
     /// is seconds. A `Running` sandbox without an IP yet keeps the old
     /// behaviour (error, leave for the next tick).
+    /// Adopt a DRAFT workspace into a chat's S3 namespace (s3-record draft
+    /// adoption): snapshots the still-running draft sandbox via its runtime
+    /// API and uploads under the CHAT's `user/session` keys — the S3 analogue
+    /// of the per-user-pvc move Job. One attempt; the caller counts failure
+    /// (resolve-side draft adoption is best-effort, mirroring #157).
+    pub(crate) async fn offload_draft_to_chat(
+        &self,
+        draft: &Sandbox,
+        user: &str,
+        chat_session: &str,
+    ) -> Result<String, OffloadError> {
+        let name = draft.name_any();
+        let pod_ip = self.ensure_running_pod(draft).await?;
+        self.offload_once(&name, &pod_ip, user, chat_session).await
+    }
+
     async fn ensure_running_pod(&self, sandbox: &Sandbox) -> Result<String, OffloadError> {
         let name = sandbox.name_any();
         if let Some(ip) = sandbox.status.as_ref().and_then(|s| s.pod_ip()) {

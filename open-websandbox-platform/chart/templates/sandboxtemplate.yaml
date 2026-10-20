@@ -16,9 +16,13 @@
 {{- $otlp = printf "http://%s-otelCollector.%s.svc.cluster.local:4318" $.Release.Name $.Release.Namespace -}}
 {{- end -}}
 {{- $poolOn := gt ($.Values.warmPool.replicas | int) 0 }}
-{{- $templates := list (dict "name" $.Values.sandboxTemplate.name "poolKey" "") }}
+{{- $recordOn := and ($.Values.warmPool.record.enabled) (gt ($.Values.warmPool.record.replicas | int) 0) }}
+{{- $templates := list (dict "name" $.Values.sandboxTemplate.name "poolKey" "" "vct" false) }}
 {{- if $poolOn -}}
-{{- $templates = append $templates (dict "name" $.Values.warmPool.templateName "poolKey" $.Values.broker.poolRuntimeKey) -}}
+{{- $templates = append $templates (dict "name" $.Values.warmPool.templateName "poolKey" $.Values.broker.poolRuntimeKey "vct" false) -}}
+{{- end }}
+{{- if $recordOn -}}
+{{- $templates = append $templates (dict "name" $.Values.warmPool.record.templateName "poolKey" $.Values.broker.poolRuntimeKey "vct" true) -}}
 {{- end }}
 {{- range $t := $templates }}
 ---
@@ -29,7 +33,7 @@ metadata:
   namespace: {{ include "open-websandbox.runtimeNamespace" $ }}
   labels:
     {{- include "open-websandbox.labels" $ | nindent 4 }}
-    {{- if eq $t.name $.Values.warmPool.templateName }}
+    {{- if or (eq $t.name $.Values.warmPool.templateName) (eq $t.name $.Values.warmPool.record.templateName) }}
     owui.io/role: warm-pool
     {{- end }}
 spec:
@@ -200,7 +204,7 @@ spec:
           mountPath: /tmp
         - name: packages
           mountPath: /packages
-        {{- if eq $t.name $.Values.warmPool.templateName }}
+        {{- if or (eq $t.name $.Values.warmPool.templateName) (eq $t.name $.Values.warmPool.record.templateName) }}
         # POOL-scoped runtime key (ephemeral warm-pool claiming): a warm pod
         # exists before its session and cannot carry a per-session Secret (#4).
         # The broker authenticates pod-hops for claimed sandboxes with this
@@ -209,6 +213,29 @@ spec:
           mountPath: /etc/runtime-key
           readOnly: true
         {{- end }}
+      {{- if and $t.vct $.Values.warmPool.record.scratch.storageClass }}
+      # Scratch VCT (s3-record): per-sandbox RWO PVC; overrides the
+      # same-named emptyDir volume above (upstream MergeVolumeClaimVolumes).
+      # Garbage-collected with the Sandbox — the store of record is S3.
+      volumeClaimTemplates:
+      - metadata:
+          name: workspace
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          storageClassName: {{ $.Values.warmPool.record.scratch.storageClass | quote }}
+          resources:
+            requests:
+              storage: {{ $.Values.warmPool.record.scratch.size | quote }}
+      {{- else if and $t.vct (not $.Values.warmPool.record.scratch.storageClass) }}
+      volumeClaimTemplates:
+      - metadata:
+          name: workspace
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: {{ $.Values.warmPool.record.scratch.size | quote }}
+      {{- end }}
       volumes:
       - name: workspace
         emptyDir:

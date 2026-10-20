@@ -104,9 +104,10 @@ fn workspace_layout(
             config.shared_pvc_name.clone(),
             format!("users/{user}/chats/{chat}"),
         ),
-        // `EmptyDir` never reaches the PVC block (is_pvc() gate at the call
-        // site); the match stays exhaustive, its layout is unused.
-        PersistentMode::PerUserPvc | PersistentMode::EmptyDir => (
+        // `EmptyDir`/`S3Record` never reach the PVC block (is_pvc()/mode
+        // gates at the call sites); the match stays exhaustive, their
+        // layouts are unused.
+        PersistentMode::PerUserPvc | PersistentMode::EmptyDir | PersistentMode::S3Record => (
             format!("{}{user}", config.per_user_pvc_prefix),
             format!("chats/{chat}"),
         ),
@@ -157,12 +158,33 @@ pub async fn resolve_sandbox(
     session_id: &str,
     profile: Profile,
 ) -> Result<ResolvedSandbox, ApiError> {
-    // Ephemeral + warm pool configured: resolve through a SandboxClaim so the
-    // controller binds a pre-warmed Sandbox in place (instant, no pod boot).
-    // Empty `warm_pool` (claiming disabled) and Persistent fall through to the
-    // direct-Sandbox path below — unchanged behavior.
+    // Claim-capable modes: resolve through a SandboxClaim so the controller
+    // binds a pre-warmed Sandbox in place (instant, no pod boot).
+    // * ephemeral → `warm_pool` (claiming disabled ⇒ direct-Sandbox path)
+    // * persistent s3-record → `warm_pool_record` (fallback `warm_pool`):
+    //   claim a scratch-PVC member, then restore-before-ready — content
+    //   lives in S3, never in member identity.
     if profile == Profile::Ephemeral && !state.config.warm_pool.is_empty() {
-        return resolve_ephemeral_claim(state, user_id, session_id).await;
+        return resolve_by_claim(
+            state,
+            user_id,
+            session_id,
+            profile,
+            state.config.warm_pool.clone(),
+        )
+        .await;
+    }
+    if profile == Profile::Persistent && state.config.persistent_mode.is_s3_record() {
+        let pool = if state.config.warm_pool_record.is_empty() {
+            state.config.warm_pool.clone()
+        } else {
+            state.config.warm_pool_record.clone()
+        };
+        if !pool.is_empty() {
+            return resolve_by_claim(state, user_id, session_id, profile, pool).await;
+        }
+        // No pool configured: fall through to the direct path (cold create
+        // from the base template + scratch VCT via the pool template's spec).
     }
     let name = sandbox_name(user_id, session_id, profile);
     tracing::Span::current().record("sandbox", name.as_str());
@@ -411,14 +433,26 @@ pub async fn resolve_sandbox(
 /// via `label_sandbox`, and hop auth falls back to the pool key via the
 /// `owui.io/auth=pool-key` label (warm pods cannot carry a per-session
 /// Secret).
-async fn resolve_ephemeral_claim(
+/// Claim-based resolve shared by both claim-capable modes: create-or-attach
+/// a `SandboxClaim` on `pool`, wait for the controller to bind
+/// (`status.sandbox.name`), stamp broker identity onto the bound Sandbox,
+/// then pod-direct readiness.
+///
+/// * `Profile::Ephemeral` — pool-key auth label + claim back-reference for
+///   the reaper.
+/// * `Profile::Persistent` (s3-record) — additionally stamps user/session
+///   annotations (the offload/restore seam keys on them) and runs the S3
+///   restore-before-ready from the store of record.
+async fn resolve_by_claim(
     state: &AppState,
     user_id: &str,
     session_id: &str,
+    profile: Profile,
+    pool: String,
 ) -> Result<ResolvedSandbox, ApiError> {
     use shared::{SandboxClaimSpec, SandboxPoolRef};
 
-    let claim_name = sandbox_name(user_id, session_id, Profile::Ephemeral);
+    let claim_name = sandbox_name(user_id, session_id, profile);
     tracing::Span::current().record("sandbox", claim_name.as_str());
 
     let mut labels = std::collections::BTreeMap::new();
@@ -433,9 +467,7 @@ async fn resolve_ephemeral_claim(
             ..Default::default()
         },
         spec: SandboxClaimSpec {
-            warm_pool_ref: SandboxPoolRef {
-                name: state.config.warm_pool.clone(),
-            },
+            warm_pool_ref: SandboxPoolRef { name: pool.clone() },
             additional_pod_metadata: None,
         },
         status: None,
@@ -470,8 +502,8 @@ async fn resolve_ephemeral_claim(
         }
         if Instant::now() >= deadline {
             return Err(ApiError::ServiceUnavailable(format!(
-                "claim {claim_name} did not bind from pool {} in {}s",
-                state.config.warm_pool, state.config.claim_timeout_seconds
+                "claim {claim_name} did not bind from pool {pool} in {}s",
+                state.config.claim_timeout_seconds
             )));
         }
         tokio::time::sleep(READY_POLL_INTERVAL).await;
@@ -484,27 +516,40 @@ async fn resolve_ephemeral_claim(
     // claim back-reference the reaper deletes on idle reap. The Sandbox
     // object exists before its status mirrors, but the patch can still 404
     // racing the controller's create — retry within the deadline.
-    let identity: Vec<(String, String)> = [
+    let identity: Vec<(String, String)> = vec![
         (
-            crate::sandbox::MANAGED_BY_KEY,
-            crate::sandbox::MANAGED_BY_VALUE,
+            crate::sandbox::MANAGED_BY_KEY.to_string(),
+            crate::sandbox::MANAGED_BY_VALUE.to_string(),
         ),
-        (crate::sandbox::PROFILE_LABEL_KEY, "ephemeral"),
         (
-            crate::sandbox::AUTH_LABEL_KEY,
-            crate::sandbox::AUTH_POOL_KEY,
+            crate::sandbox::PROFILE_LABEL_KEY.to_string(),
+            profile.as_str().to_string(),
         ),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_string(), v.to_string()))
-    .collect();
+        (
+            crate::sandbox::AUTH_LABEL_KEY.to_string(),
+            crate::sandbox::AUTH_POOL_KEY.to_string(),
+        ),
+    ];
     loop {
         let stamped = async {
             state.store.label_sandbox(&bound, &identity).await?;
             state
                 .store
                 .set_annotation(&bound, crate::sandbox::CLAIM_ANNOTATION_KEY, &claim_name)
-                .await
+                .await?;
+            // s3-record: the offload/restore seam keys on user/session
+            // annotations (same as the direct-Sandbox path).
+            if profile == Profile::Persistent {
+                state
+                    .store
+                    .set_annotation(&bound, crate::sandbox::USER_KEY, user_id)
+                    .await?;
+                state
+                    .store
+                    .set_annotation(&bound, crate::sandbox::SESSION_KEY, session_id)
+                    .await?;
+            }
+            Ok::<(), StoreError>(())
         }
         .await;
         match stamped {
@@ -525,7 +570,134 @@ async fn resolve_ephemeral_claim(
     {
         tracing::debug!(sandbox = %resolved.name, error = %e, "non-fatal last-used touch");
     }
+
+    // s3-record: restore-before-ready — the resolve response blocks until
+    // the S3 snapshot is back in the fresh scratch PVC (same contract as the
+    // per-user-pvc restore-on-resume: on failure we 502 so the user never
+    // sees an empty workspace, D7).
+    if profile == Profile::Persistent {
+        if let Some(tier) = state.s3_restore.clone() {
+            let recorded = resolved.last_offloaded_key.as_deref();
+            match tier
+                .restore_on_resume(
+                    &resolved.name,
+                    &resolved.pod_ip,
+                    user_id,
+                    session_id,
+                    recorded,
+                )
+                .await
+            {
+                Ok(crate::s3::RestoreOutcome::Restored(key)) => {
+                    tracing::info!(sandbox = %resolved.name, key = %key, "s3 restore-before-ready complete");
+                }
+                Ok(crate::s3::RestoreOutcome::NoObject) => {
+                    tracing::debug!(sandbox = %resolved.name, "s3 restore skipped (no snapshot — first creation)");
+                }
+                Ok(crate::s3::RestoreOutcome::HotTierHit) => {
+                    tracing::debug!(sandbox = %resolved.name, "s3 restore skipped (workspace non-empty — hot-tier hit)");
+                }
+                Err(e) => {
+                    return Err(ApiError::BadGateway(format!("s3 restore failed: {e}")));
+                }
+            }
+        }
+    }
+
+    // s3-record: adopt the user's draft workspace (pre-first-message
+    // uploads, #157) by snapshotting the draft sandbox into the CHAT's S3
+    // namespace. Best-effort — failure logs + counts, resolve continues
+    // with an empty scratch (same fallback contract as the PVC path).
+    if profile == Profile::Persistent {
+        adopt_draft_s3(state, user_id, session_id, &resolved).await;
+    }
     Ok(resolved)
+}
+
+/// s3-record draft adoption: when the user's draft sandbox
+/// (`sandbox_name(user, user)`) was used within the adoption window, its
+/// live workspace is snapshot into the CHAT's S3 keys (offload seam) so the
+/// fresh scratch PVC restores with the draft content. Idempotent per chat:
+/// a `DRAFT_ADOPT_PENDING_KEY` marker set before the copy prevents repeat
+/// uploads on later resolves.
+async fn adopt_draft_s3(
+    state: &AppState,
+    user_id: &str,
+    session_id: &str,
+    resolved: &ResolvedSandbox,
+) {
+    if state.config.draft_adoption_window_seconds == 0 {
+        return;
+    }
+    let Some(tier) = state.s3_restore.clone() else {
+        return;
+    };
+    // One-shot marker: skip when a previous resolve already adopted.
+    if let Ok(Some(sbx)) = state.store.get_sandbox(&resolved.name).await {
+        if sbx
+            .metadata
+            .annotations
+            .as_ref()
+            .is_some_and(|a| a.contains_key(crate::sandbox::DRAFT_ADOPT_PENDING_KEY))
+        {
+            return;
+        }
+    }
+    let draft_name = sandbox_name(user_id, user_id, Profile::Persistent);
+    let Some(draft) = state.store.get_sandbox(&draft_name).await.ok().flatten() else {
+        return; // no draft sandbox — nothing to adopt
+    };
+    let last_used = draft
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|a| a.get(crate::sandbox::LAST_USED_KEY))
+        .and_then(|v| v.parse::<i64>().ok());
+    let window = i64::try_from(state.config.draft_adoption_window_seconds).unwrap_or(i64::MAX);
+    match last_used {
+        Some(lu) if now_unix() - lu <= window => {}
+        Some(_) => {
+            metrics::counter!(crate::metrics::DRAFT_ADOPTIONS_TOTAL, "result" => "skipped_stale")
+                .increment(1);
+            return;
+        }
+        None => return, // never used — no draft content
+    }
+    // Mark BEFORE the copy so a crash can't loop uploads; a failed copy
+    // falls back to the empty-scratch contract (same as the PVC path).
+    if let Err(e) = state
+        .store
+        .set_annotation(
+            &resolved.name,
+            crate::sandbox::DRAFT_ADOPT_PENDING_KEY,
+            &draft_name,
+        )
+        .await
+    {
+        tracing::debug!(sandbox = %resolved.name, error = %e, "draft marker set failed");
+        return;
+    }
+    match tier
+        .offload_draft_to_chat(&draft, user_id, session_id)
+        .await
+    {
+        Ok(key) => {
+            metrics::counter!(crate::metrics::DRAFT_ADOPTIONS_TOTAL, "result" => "adopted")
+                .increment(1);
+            tracing::info!(
+                sandbox = %resolved.name, from = %draft_name, key = %key,
+                "draft workspace adopted into chat (s3)"
+            );
+        }
+        Err(e) => {
+            metrics::counter!(crate::metrics::DRAFT_ADOPTIONS_TOTAL, "result" => "failed")
+                .increment(1);
+            tracing::warn!(
+                sandbox = %resolved.name, from = %draft_name, error = %e,
+                "draft adoption failed (continuing with empty scratch)"
+            );
+        }
+    }
 }
 
 /// Plan the #157 draft→chat workspace move for a freshly created chat

@@ -125,6 +125,12 @@ pub enum PersistentMode {
     /// durability — requires `BROKER_S3_ENABLED` (boot fails closed
     /// otherwise: pod delete would destroy the workspace).
     EmptyDir,
+    /// S3 store-of-record: every chat claims a warm member carrying a
+    /// per-sandbox scratch PVC (pool-template VCT); S3 holds the durable
+    /// content (suspend = snapshot + release, resume = restore-before-
+    /// ready). Requires `BROKER_S3_ENABLED` and a claim-capable pool
+    /// (`BROKER_WARMPOOL_RECORD`).
+    S3Record,
 }
 
 impl PersistentMode {
@@ -138,14 +144,22 @@ impl PersistentMode {
         )
     }
 
-    /// Lowercase wire value (`per-user-pvc` / `shared-subpath` / `empty-dir`),
-    /// used for the `broker-persistent-mode` Sandbox label.
+    /// Whether this mode stores durable content in S3 (suspend = archive +
+    /// release; resolve = restore-before-ready).
+    #[must_use]
+    pub fn is_s3_record(self) -> bool {
+        matches!(self, PersistentMode::S3Record)
+    }
+
+    /// Lowercase wire value (`per-user-pvc` / `shared-subpath` / `empty-dir` /
+    /// `s3-record`), used for the `broker-persistent-mode` Sandbox label.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             PersistentMode::PerUserPvc => "per-user-pvc",
             PersistentMode::SharedSubpath => "shared-subpath",
             PersistentMode::EmptyDir => "empty-dir",
+            PersistentMode::S3Record => "s3-record",
         }
     }
 }
@@ -158,6 +172,7 @@ impl FromStr for PersistentMode {
             "per-user-pvc" => Ok(PersistentMode::PerUserPvc),
             "shared-subpath" => Ok(PersistentMode::SharedSubpath),
             "empty-dir" => Ok(PersistentMode::EmptyDir),
+            "s3-record" => Ok(PersistentMode::S3Record),
             _ => Err(()),
         }
     }
@@ -202,6 +217,13 @@ pub struct BrokerConfig {
     /// direct-Sandbox path.
     #[serde(default = "default_warm_pool")]
     pub warm_pool: String,
+
+    /// Pool serving `persistentMode: s3-record` claims — its template MUST
+    /// carry the scratch `volumeClaimTemplate` (per-sandbox PVC) and be
+    /// RWO-sized for user data (env `BROKER_WARMPOOL_RECORD`, default empty =
+    /// same pool as `warm_pool`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub warm_pool_record: String,
 
     /// Persistence profile used when a request omits an explicit override (env
     /// `BROKER_DEFAULT_PROFILE`, default `persistent`).
@@ -539,6 +561,7 @@ impl Default for BrokerConfig {
             runtime_ns: default_runtime_ns(),
             base_template: default_base_template(),
             warm_pool: default_warm_pool(),
+            warm_pool_record: String::new(),
             default_profile: Profile::Persistent,
             persistent_mode: PersistentMode::PerUserPvc,
             persistent_storage: default_persistent_storage(),
@@ -627,6 +650,11 @@ impl BrokerConfig {
                 Some(v) => v,
                 None => default_warm_pool(),
             },
+            warm_pool_record: match get("BROKER_WARMPOOL_RECORD") {
+                Some(v) if matches!(v.as_str(), "" | "disabled") => String::new(),
+                Some(v) => v,
+                None => String::new(),
+            },
             default_profile: get("BROKER_DEFAULT_PROFILE")
                 .and_then(|raw| raw.parse().ok())
                 .unwrap_or_default(),
@@ -636,7 +664,7 @@ impl BrokerConfig {
                         .map_err(|()| ConfigError::Invalid {
                             var: "BROKER_PERSISTENT_MODE",
                             message: format!(
-                                "{raw:?} is not one of per-user-pvc | shared-subpath | empty-dir",
+                                "{raw:?} is not one of per-user-pvc | shared-subpath | empty-dir | s3-record",
                             ),
                         })
                 })
@@ -709,6 +737,14 @@ impl BrokerConfig {
             return Err(ConfigError::Invalid {
                 var: "BROKER_PERSISTENT_MODE",
                 message: "empty-dir hot tier requires broker.s3.enabled=true ".to_string(),
+            });
+        }
+        if cfg.persistent_mode.is_s3_record() && !cfg.s3_enabled {
+            return Err(ConfigError::Invalid {
+                var: "BROKER_PERSISTENT_MODE",
+                message:
+                    "s3-record mode requires broker.s3.enabled=true (S3 is the store of record)"
+                        .to_string(),
             });
         }
         Ok(cfg)
@@ -885,6 +921,7 @@ mod tests {
     fn serde_round_trips_explicit_values() {
         let cfg = BrokerConfig {
             max_terminal_sessions: 2,
+            warm_pool_record: String::new(),
             max_output_bytes: 512,
             shared_secret: "s3cret".into(),
             runtime_ns: "ns".into(),

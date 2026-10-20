@@ -95,13 +95,14 @@
         "metrics",
         "networkPolicy",
         "rateLimit",
-        "s3"
+        "s3",
+        "warmPoolRecord"
       ],
       "properties": {
         "replicas": {
           "type": "integer",
           "minimum": 1,
-          "description": "Broker Deployment replicas. 1 = single broker (default; leader election is a no-op, the sole broker always reaps). Set >1 for HA — a coordination.k8s.io Lease ensures only the elected replica runs the reaper."
+          "description": "Broker Deployment replicas. 1 = single broker (default; leader election is a no-op, the sole broker always reaps). Set >1 for HA \u2014 a coordination.k8s.io Lease ensures only the elected replica runs the reaper."
         },
         "sharedSecret": {
           "type": "string",
@@ -151,7 +152,8 @@
           "enum": [
             "per-user-pvc",
             "shared-subpath",
-            "empty-dir"
+            "empty-dir",
+            "s3-record"
           ]
         },
         "persistentStorage": {
@@ -381,6 +383,10 @@
           "minimum": 0,
           "default": 45,
           "description": "Throttle (seconds) for refreshing broker-last-used from relayed terminal WS frames (#158). An actively-used terminal is never parked mid-session. Keep well below parkIdleSeconds. 0 disables."
+        },
+        "warmPoolRecord": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },
@@ -561,7 +567,8 @@
       "additionalProperties": false,
       "required": [
         "replicas",
-        "templateName"
+        "templateName",
+        "record"
       ],
       "properties": {
         "replicas": {
@@ -571,6 +578,47 @@
         "templateName": {
           "type": "string",
           "minLength": 1
+        },
+        "record": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "replicas",
+            "templateName",
+            "scratch"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Render the s3-record pool (scratch-VCT template) + SandboxWarmPool for persistent chats."
+            },
+            "replicas": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "templateName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "scratch": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "storageClass",
+                "size"
+              ],
+              "properties": {
+                "storageClass": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "string",
+                  "pattern": "^[0-9]+([KMGT]i?)?$"
+                }
+              }
+            }
+          }
         }
       }
     },

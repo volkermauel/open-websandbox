@@ -206,6 +206,16 @@ spec:
         - name: BROKER_WARMPOOL
           value: "disabled"
         {{- end }}
+        # s3-record pool (scratch-VCT members); only meaningful when
+        # persistentMode=s3-record. Disabled sentinel when the record pool
+        # is not rendered (broker falls back to BROKER_WARMPOOL).
+        {{- if and $.Values.warmPool.record.enabled (gt ($.Values.warmPool.record.replicas | int) 0) }}
+        - name: BROKER_WARMPOOL_RECORD
+          value: {{ $.Values.broker.warmPoolRecord | quote }}
+        {{- else }}
+        - name: BROKER_WARMPOOL_RECORD
+          value: "disabled"
+        {{- end }}
         - name: BROKER_PARK_IDLE_SECONDS
           value: {{ .Values.broker.parkIdleSeconds | quote }}
         # #158: WS terminal traffic refreshes broker-last-used (throttled);

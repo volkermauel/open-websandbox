@@ -208,7 +208,15 @@ pub async fn reap_once(
         let idle = (now - lu).max(0) as u64;
         let profile = profile_of(sbx.metadata.labels.as_ref());
         let mode = sbx.spec.operating_mode.unwrap_or(OperatingMode::Running);
-        match decide(profile, idle, mode, cfg) {
+        let mut action = decide(profile, idle, mode, cfg);
+        // s3-record: park and reap collapse into "archive + release" — the
+        // snapshot lands in the store of record at the park threshold and the
+        // claim delete cascades pod + scratch PVC; S3 retention is the real
+        // expiry (no Suspended state to keep alive).
+        if cfg.persistent_mode.is_s3_record() && matches!(action, ReaperAction::Park) {
+            action = ReaperAction::Reap;
+        }
+        match action {
             ReaperAction::Skip => stats.skipped += 1,
             ReaperAction::Park => match store
                 .patch_operating_mode(&name, OperatingMode::Suspended)
