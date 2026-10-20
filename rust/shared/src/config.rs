@@ -196,8 +196,10 @@ pub struct BrokerConfig {
     pub base_template: String,
 
     /// `SandboxWarmPool` name ephemeral claims bind from (env
-    /// `BROKER_WARMPOOL`, default `code-standard-warmpool`). Empty disables
-    /// claiming — ephemeral resolves fall back to the direct-Sandbox path.
+    /// `BROKER_WARMPOOL`, default `code-standard-warmpool`). Empty or
+    /// `disabled` (the chart's pool-off render — k8s strips `value: ""`)
+    /// disables claiming — ephemeral resolves fall back to the
+    /// direct-Sandbox path.
     #[serde(default = "default_warm_pool")]
     pub warm_pool: String,
 
@@ -617,7 +619,14 @@ impl BrokerConfig {
             shared_secret: get("BROKER_SHARED_SECRET").unwrap_or_default(),
             runtime_ns,
             base_template: get("BROKER_BASE_TEMPLATE").unwrap_or_else(default_base_template),
-            warm_pool: get("BROKER_WARMPOOL").unwrap_or_else(default_warm_pool),
+            // "disabled" (the chart's pool-off render — k8s strips `value: ""`
+            // from env, so an empty-string disable is NOT expressible) or an
+            // empty value both disable claiming; anything else names the pool.
+            warm_pool: match get("BROKER_WARMPOOL") {
+                Some(v) if matches!(v.as_str(), "" | "disabled") => String::new(),
+                Some(v) => v,
+                None => default_warm_pool(),
+            },
             default_profile: get("BROKER_DEFAULT_PROFILE")
                 .and_then(|raw| raw.parse().ok())
                 .unwrap_or_default(),
@@ -939,7 +948,7 @@ mod tests {
             ("BROKER_SHARED_SECRET", "hunter2"),
             ("BROKER_RUNTIME_NS", "sandbox-ns"),
             ("BROKER_BASE_TEMPLATE", "code-standard-v2"),
-            ("BROKER_WARMPOOL", ""),
+            ("BROKER_WARMPOOL", "disabled"),
             ("BROKER_DEFAULT_PROFILE", "ephemeral"),
             ("BROKER_RUNTIME_API_KEY", "rt-key"),
             ("BROKER_CLAIM_TIMEOUT_SECONDS", "42"),
@@ -967,7 +976,7 @@ mod tests {
         assert_eq!(cfg.shared_secret, "hunter2");
         assert_eq!(cfg.runtime_ns, "sandbox-ns");
         assert_eq!(cfg.base_template, "code-standard-v2");
-        assert_eq!(cfg.warm_pool, "", "empty disables claiming");
+        assert_eq!(cfg.warm_pool, "", "disabled sentinel disables claiming");
         assert_eq!(cfg.default_profile, Profile::Ephemeral);
         assert_eq!(cfg.runtime_api_key, "rt-key");
         assert_eq!(cfg.claim_timeout_seconds, 42);

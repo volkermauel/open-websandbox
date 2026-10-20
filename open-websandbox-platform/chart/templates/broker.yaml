@@ -192,6 +192,20 @@ spec:
           value: {{ .Values.sharedPvc.name | quote }}
         - name: BROKER_PER_USER_PVC_PREFIX
           value: {{ .Values.broker.perUserPvcPrefix | quote }}
+        # Ephemeral warm-pool claiming: enabled only when the pool exists.
+        # Empty disables claiming (ephemeral cold-starts a direct Sandbox) —
+        # without this the broker would claim from a pool that was never
+        # rendered (warmPool.replicas = 0, e.g. KIND e2e) and every ephemeral
+        # resolve would time out waiting for a bind.
+        {{- if gt (.Values.warmPool.replicas | int) 0 }}
+        - name: BROKER_WARMPOOL
+          value: {{ .Values.broker.warmPool | quote }}
+        {{- else }}
+          # "disabled": k8s strips value:"" from env, so the disable sentinel
+          # must be a non-empty string the broker maps to claiming-off.
+        - name: BROKER_WARMPOOL
+          value: "disabled"
+        {{- end }}
         - name: BROKER_PARK_IDLE_SECONDS
           value: {{ .Values.broker.parkIdleSeconds | quote }}
         # #158: WS terminal traffic refreshes broker-last-used (throttled);
