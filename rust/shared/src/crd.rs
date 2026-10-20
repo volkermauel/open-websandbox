@@ -180,7 +180,7 @@ pub struct SandboxStatus {
 }
 
 /// Spec of a [`SandboxClaim`] — the broker's request for a sandbox bound from
-/// a [`SandboxWarmPool`](unknown) (upstream `extensions.agents.x-k8s.io/v1beta1`).
+/// a `SandboxWarmPool` (upstream `extensions.agents.x-k8s.io/v1beta1`).
 ///
 /// Upstream v0.5.6 semantics (api.md): the controller binds a claim to a
 /// ready pool Sandbox IN PLACE (ownership transfers, "claimed Sandboxes are
