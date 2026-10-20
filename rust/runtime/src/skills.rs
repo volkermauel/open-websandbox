@@ -10,7 +10,8 @@
 //! entries without a frontmatter description are skipped.
 
 #![forbid(unsafe_code)]
-
+// rust-stable 1.99 asserts these should be assert_eq; intentional here.
+#![allow(clippy::assert_is_empty)]
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

@@ -2,7 +2,8 @@
 //! catch-all reverse-proxy auth gate (forwarding is covered in `proxy_resolve.rs`).
 
 #![forbid(unsafe_code)]
-
+// rust-stable 1.99 asserts these should be assert_eq; intentional here.
+#![allow(clippy::assert_is_empty)]
 mod common;
 
 use axum::http::{Method, StatusCode};

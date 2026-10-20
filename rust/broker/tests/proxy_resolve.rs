@@ -3,7 +3,8 @@
 //! and a `wiremock` upstream — no live Kubernetes cluster required.
 
 #![forbid(unsafe_code)]
-
+// rust-stable 1.99 asserts these should be assert_eq; intentional here.
+#![allow(clippy::assert_is_empty)]
 use std::sync::Arc;
 
 use axum::body::{to_bytes, Body};

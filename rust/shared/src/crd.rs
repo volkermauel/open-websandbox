@@ -22,7 +22,8 @@
 //! about (`operatingMode`, `shutdownPolicy`) are typed enums below.
 
 #![forbid(unsafe_code)]
-
+// rust-stable 1.99 asserts these should be assert_eq; intentional here.
+#![allow(clippy::assert_is_empty)]
 use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

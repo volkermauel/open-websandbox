@@ -8,7 +8,8 @@
 //! 422 just like an upstream worker failure would.
 
 #![forbid(unsafe_code)]
-
+// rust-stable 1.99 asserts these should be assert_eq; intentional here.
+#![allow(clippy::assert_is_empty)]
 use std::path::Path;
 
 use axum::extract::State;

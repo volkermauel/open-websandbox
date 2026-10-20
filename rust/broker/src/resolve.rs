@@ -12,7 +12,8 @@
 //! territory, so a present-but-not-Ready sandbox is simply polled here.
 
 #![forbid(unsafe_code)]
-
+// rust-stable 1.99 asserts these should be assert_eq; intentional here.
+#![allow(clippy::assert_is_empty)]
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use k8s_openapi::api::core::v1::Pod;
