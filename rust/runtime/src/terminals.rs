@@ -1052,7 +1052,7 @@ mod tests {
         // cap == 0 disables capture entirely — nothing may be buffered.
         let mut ring = Scrollback::new(0);
         ring.push(b"data");
-        assert!(ring.snapshot().is_empty());
+        assert_eq!(ring.snapshot(), Vec::<u8>::new());
     }
 
     #[tokio::test]
