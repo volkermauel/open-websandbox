@@ -350,7 +350,7 @@ jobs:
           # E2E_S3=1 enables the MinIO-backed scenarios; the default e2e tests skip fast
           # (require_broker still passes, ready_session claims a persistent s3-tiered pod).
           BROKER_URL=http://localhost:8889 BROKER_SECRET="$SECRET" E2E_S3=1 \
-            pytest tests/e2e/test_s3_tiered.py -v
+            pytest tests/e2e/test_s3_tiered.py tests/e2e/test_s3_finalizer.py -v
           kill "$PF"
 
       - name: Diagnostics (on failure)
