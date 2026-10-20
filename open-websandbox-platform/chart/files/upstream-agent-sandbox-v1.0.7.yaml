@@ -1,19 +1,17 @@
-# Vendored upstream agent-sandbox CONTROLLER slice (non-CRD, non-Namespace), v0.5.6 —
-# controller Deployment, RBAC (ServiceAccount/Role/ClusterRole/Bindings) and
-# Services (controller + webhook). Rendered verbatim by
+# Vendored upstream agent-sandbox CONTROLLER slice (non-CRD, non-Namespace), v1.0.7 —
+# controller Deployment, RBAC (ServiceAccount/ClusterRole/Bindings) and Service.
+# The v1.0.x line removed the conversion webhook: the webhook Service, the
+# namespaced webhook-cert Role/RoleBinding and the controller's CRD
+# get/patch/update ClusterRole rule are gone upstream. Rendered verbatim by
 # templates/upstream/upstream.yaml (gated by upstream.deploy).
 #
 # SOURCE (canonical, verbatim, SHA-pinned — DO NOT edit here; edit the source and regenerate):
-#   open-websandbox-platform/upstream/sandbox-with-extensions-v0.5.6.yaml
-#   sha256: 1696dbb6faded503149b3994badb599df5dcf24d5985466881784f442dd9c3e5   (recorded in open-websandbox-platform/upstream/SHA256SUMS)
+#   https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.7/sandbox-with-extensions.yaml
+#   sha256: 136c10c9347cb5a6740b351444cae82f404e883c3f520272257ba785f2af0da8   (recorded in open-websandbox-platform/upstream/SHA256SUMS)
 #
 # DERIVATION: every document from the verbatim upstream manifest EXCEPT the
 # CustomResourceDefinitions (which live in chart/crds/, applied CRD-first) and
 # the `Namespace: agent-sandbox-system` (the chart does not manage namespaces).
-#
-# REGENERATE on an upstream version bump:
-#   python3 -c "import yaml;src='open-websandbox-platform/upstream/sandbox-with-extensions-v0.5.6.yaml';print('\n'.join('---\n'+yaml.safe_dump(i,sort_keys=False,default_flow_style=False,allow_unicode=True,width=100000) for i in (x for x in yaml.safe_load_all(open(src)) if x and x.get('kind') not in ('CustomResourceDefinition','Namespace')))" | sed '/^$/d' > open-websandbox-platform/chart/files/upstream-agent-sandbox-v0.5.6.yaml
----
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -21,31 +19,6 @@ metadata:
     app: agent-sandbox-controller
   name: agent-sandbox-controller
   namespace: agent-sandbox-system
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: agent-sandbox-controller
-  namespace: agent-sandbox-system
-rules:
-- apiGroups:
-  - ''
-  resources:
-  - secrets
-  verbs:
-  - create
-- apiGroups:
-  - ''
-  resourceNames:
-  - agent-sandbox-webhook-certs
-  resources:
-  - secrets
-  verbs:
-  - get
-  - patch
-  - update
-
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -53,7 +26,7 @@ metadata:
   name: agent-sandbox-controller
 rules:
 - apiGroups:
-  - ''
+  - ""
   resources:
   - persistentvolumeclaims
   - pods
@@ -67,7 +40,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - ''
+  - ""
   - events.k8s.io
   resources:
   - events
@@ -96,19 +69,6 @@ rules:
   - patch
   - update
 - apiGroups:
-  - apiextensions.k8s.io
-  resourceNames:
-  - sandboxclaims.extensions.agents.x-k8s.io
-  - sandboxes.agents.x-k8s.io
-  - sandboxtemplates.extensions.agents.x-k8s.io
-  - sandboxwarmpools.extensions.agents.x-k8s.io
-  resources:
-  - customresourcedefinitions
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
   - coordination.k8s.io
   resources:
   - leases
@@ -119,7 +79,6 @@ rules:
   - patch
   - update
   - watch
-
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -127,7 +86,7 @@ metadata:
   name: agent-sandbox-controller-extensions
 rules:
 - apiGroups:
-  - ''
+  - ""
   resources:
   - pods
   verbs:
@@ -137,7 +96,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - ''
+  - ""
   - events.k8s.io
   resources:
   - events
@@ -207,22 +166,6 @@ rules:
   - patch
   - update
   - watch
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: agent-sandbox-controller
-  namespace: agent-sandbox-system
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: agent-sandbox-controller
-subjects:
-- kind: ServiceAccount
-  name: agent-sandbox-controller
-  namespace: agent-sandbox-system
-
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -236,7 +179,6 @@ subjects:
 - kind: ServiceAccount
   name: agent-sandbox-controller
   namespace: agent-sandbox-system
-
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -250,7 +192,6 @@ subjects:
 - kind: ServiceAccount
   name: agent-sandbox-controller
   namespace: agent-sandbox-system
-
 ---
 apiVersion: v1
 kind: Service
@@ -267,22 +208,6 @@ spec:
     targetPort: metrics
   selector:
     app: agent-sandbox-controller
-
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: agent-sandbox-webhook-service
-  namespace: agent-sandbox-system
-spec:
-  ports:
-  - name: webhook
-    port: 443
-    protocol: TCP
-    targetPort: 9443
-  selector:
-    app: agent-sandbox-controller
-
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -305,7 +230,7 @@ spec:
       - args:
         - --leader-elect=true
         - --extensions
-        image: registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.6
+        image: registry.k8s.io/agent-sandbox/agent-sandbox-controller:v1.0.7
         name: agent-sandbox-controller
         ports:
         - containerPort: 8080
@@ -313,9 +238,6 @@ spec:
           protocol: TCP
         - containerPort: 8081
           name: healthz
-          protocol: TCP
-        - containerPort: 9443
-          name: webhook
           protocol: TCP
         volumeMounts:
         - mountPath: /etc/sandbox-config

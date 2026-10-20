@@ -23,7 +23,7 @@ imageTag: v0.2.1
 # entirely when empty.
 imagePullSecrets: []
 # ---------------------------------------------------------------------------
-# Vendored upstream agent-sandbox controller (apiGroup agents.x-k8s.io, v0.5.6).
+# Vendored upstream agent-sandbox controller (apiGroup agents.x-k8s.io, v1.0.7).
 # deploy: true (default) => the chart installs the upstream controller Deployment and its
 # RBAC + Services (rendered from the verbatim, SHA-pinned manifest under
 # open-websandbox-platform/upstream/), so a single `helm install` brings up the whole
@@ -32,7 +32,7 @@ imagePullSecrets: []
 # SandboxTemplate / SandboxWarmPool instances are validated. Set deploy=false when the
 # controller is already installed cluster-wide; then also pass `helm install --skip-crds`
 # if the CRDs are already present.
-# See templates/upstream/upstream.yaml + crds/ + files/upstream-agent-sandbox-v0.5.6.yaml.
+# See templates/upstream/upstream.yaml + crds/ + files/upstream-agent-sandbox-v1.0.7.yaml.
 upstream:
   deploy: true
 

@@ -10,7 +10,7 @@ keeps sandboxes off the rest of the cluster.
 
 The control plane rests on the upstream
 [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox)
-controller (pinned **v0.5.6**, manifest vendored + SHA256-recorded in this repo). It is
+controller (pinned **v1.0.7**, manifest vendored + SHA256-recorded in this repo). It is
 made of three components:
 
 - **broker** (Rust/Axum) — the front door: authenticates Open WebUI, resolves or

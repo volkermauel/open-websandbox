@@ -43,7 +43,7 @@ for day-2 runbook steps see [`operations.md`](operations.md).
 
 The chart assumes the controller + CRDs already exist — it does **not** install
 the upstream `agent-sandbox` project (a prerequisite, like gVisor and the RWX
-StorageClass). Install the **pinned v0.5.6** manifest vendored in
+StorageClass). Install the **pinned v1.0.7** manifest vendored in
 [`open-websandbox-platform/upstream/`](../open-websandbox-platform/upstream/). It
 carries the four CRDs (`agents.x-k8s.io/Sandbox`,
 `extensions.agents.x-k8s.io/{SandboxTemplate,SandboxWarmPool,SandboxClaim}`) and
@@ -54,7 +54,7 @@ before applying:
 
 ```bash
 sha256sum -c open-websandbox-platform/upstream/SHA256SUMS
-kubectl apply -f open-websandbox-platform/upstream/sandbox-with-extensions-v0.5.6.yaml
+kubectl apply -f open-websandbox-platform/upstream/sandbox-with-extensions-v1.0.7.yaml
 kubectl -n agent-sandbox-system wait deploy/agent-sandbox-controller \
   --for=condition=Available --timeout=120s
 kubectl get crd | grep -E 'agents.x-k8s.io|extensions.agents.x-k8s.io'
