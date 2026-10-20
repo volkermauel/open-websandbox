@@ -186,6 +186,17 @@ spec:
             port: 8888
           initialDelaySeconds: 3
           periodSeconds: 10
+        {{- if $t.vct }}
+        # s3-record drain belt (openspec/changes/s3-termination-finalizer): a
+        # direct POD eviction (node drain — bypasses the Sandbox CR and its
+        # finalizer) holds SIGTERM 30s so the broker's watch can still archive
+        # /workspace while the runtime keeps serving. Bounded best-effort
+        # backstop, not a guarantee; pairs with terminationGracePeriodSeconds.
+        lifecycle:
+          preStop:
+            exec:
+              command: ["sleep", "30"]
+        {{- end }}
         resources:
           requests:
             cpu: 250m
@@ -213,6 +224,10 @@ spec:
           mountPath: /etc/runtime-key
           readOnly: true
         {{- end }}
+      {{- if $t.vct }}
+      # Drain belt grace window (see the runtime container's preStop hook).
+      terminationGracePeriodSeconds: 45
+      {{- end }}
       {{- if and $t.vct $.Values.warmPool.record.scratch.storageClass }}
       # Scratch VCT (s3-record): per-sandbox RWO PVC; overrides the
       # same-named emptyDir volume above (upstream MergeVolumeClaimVolumes).

@@ -301,6 +301,10 @@
               "type": "integer",
               "minimum": 5,
               "description": "Reaper loop interval when s3 is enabled (lower = faster offload-on-reap; default 60)."
+            },
+            "terminationFinalizer": {
+              "type": "boolean",
+              "description": "s3-record only: register the owui.dev/s3-snapshot finalizer so a deletion waits for the S3 snapshot (manual kubectl delete, node drain, rollout). Ignored outside s3-record mode."
             }
           }
         },

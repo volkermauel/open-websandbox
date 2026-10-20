@@ -124,6 +124,8 @@ broker:
     sizeLimit: "2Gi"            # hot-tier emptyDir sizeLimit + runtime MAX_WORKSPACE_BYTES (D2/D9)
     tmpfs: false                # true => /workspace is tmpfs (Memory) instead of disk-backed emptyDir
     reaperPollSeconds: 60       # reaper loop interval (lower = faster offload-on-reap; default 60)
+    terminationFinalizer: true  # s3-record: hold Terminating until the
+                                # snapshot is durable (s3-record only)
   # Ingress NetworkPolicy for the broker (#98 A2). Default-deny ingress so only
   # the Open Web UI namespace(s) + (optional) Prometheus can reach the front door
   # that validates BROKER_SHARED_SECRET (closes the in-cluster bearer-oracle surface).

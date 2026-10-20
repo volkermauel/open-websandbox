@@ -22,6 +22,12 @@ spec:
         profile: ephemeral
     spec:
       automountServiceAccountToken: false
+      # s3-record drain belt (openspec/changes/s3-termination-finalizer): a
+      # direct POD eviction (node drain — bypasses the Sandbox CR and its
+      # finalizer) holds SIGTERM 30s so the broker's watch can still archive
+      # /workspace while the runtime keeps serving. Bounded best-effort
+      # backstop, not a guarantee; pairs with the runtime container's preStop.
+      terminationGracePeriodSeconds: 45
       runtimeClassName: gvisor
       dnsPolicy: None                   # public resolvers — no cluster-DNS IP / namespace leak
       dnsConfig:
@@ -92,6 +98,10 @@ spec:
           httpGet: { path: "/", port: 8888 }
           initialDelaySeconds: 3
           periodSeconds: 10
+        lifecycle:
+          preStop:
+            exec:
+              command: ["sleep", "30"]
         resources:
           requests: { cpu: 250m, memory: 512Mi, ephemeral-storage: 2Gi }
           limits:   { cpu: "2",   memory: 4Gi,  ephemeral-storage: 12Gi }

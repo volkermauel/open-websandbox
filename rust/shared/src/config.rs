@@ -182,6 +182,9 @@ impl FromStr for PersistentMode {
 ///
 /// Field names mirror the env-var names the chart honours (D12 — drop-in).
 /// Later PRs add the remaining knobs (warm-pool sizing, storage tiering, ...).
+// Each bool is a distinct deploy toggle mirroring an env var; enums would
+// obscure the 1:1 env mapping.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct BrokerConfig {
     /// Maximum concurrent terminal (PTY) sessions per runtime before new ones
@@ -434,6 +437,19 @@ pub struct BrokerConfig {
     /// KMS/SSE backend (dev `MinIO`) (D12).
     #[serde(default)]
     pub s3_sse: String,
+
+    /// Hold a managed Sandbox in Terminating (finalizer `owui.dev/s3-snapshot`)
+    /// until the workspace snapshot is durably in S3, so out-of-band deletes
+    /// (manual `kubectl delete`, node drain, rollout) cannot drop the tail of a
+    /// chat between offloads (env `BROKER_S3_TERMINATION_FINALIZER`, default
+    /// `true`). Effective only when `persistentMode=s3-record` and the cold
+    /// tier is enabled — see [`Self::termination_finalizer_active`].
+    #[serde(default = "default_s3_termination_finalizer")]
+    pub s3_termination_finalizer: bool,
+}
+
+const fn default_s3_termination_finalizer() -> bool {
+    true
 }
 
 const fn default_max_terminal_sessions() -> u32 {
@@ -595,11 +611,21 @@ impl Default for BrokerConfig {
             s3_secret_access_key: String::new(),
             s3_path_style: default_s3_path_style(),
             s3_sse: String::new(),
+            s3_termination_finalizer: default_s3_termination_finalizer(),
         }
     }
 }
 
 impl BrokerConfig {
+    /// Whether the `owui.dev/s3-snapshot` termination finalizer is active: the
+    /// knob is on AND the deployment actually offloads to S3 (`s3-record`
+    /// mode). Inert in every other mode — per-user-pvc keeps today's
+    /// delete-immediately behaviour (the PVC is the store of record there).
+    #[must_use]
+    pub fn termination_finalizer_active(&self) -> bool {
+        self.s3_termination_finalizer && self.persistent_mode.is_s3_record() && self.s3_enabled
+    }
+
     /// Load configuration from process environment variables, applying the
     /// documented defaults (D12).
     ///
@@ -723,6 +749,8 @@ impl BrokerConfig {
             s3_prefix: get("BROKER_S3_PREFIX")
                 .map_or_else(default_s3_prefix, |raw| trim_prefix(&raw)),
             s3_sse: get("BROKER_S3_SSE").unwrap_or_default(),
+            s3_termination_finalizer: get("BROKER_S3_TERMINATION_FINALIZER")
+                .is_none_or(|raw| parse_bool(&raw)),
             s3_access_key_id,
             s3_secret_access_key,
             s3_path_style: get("BROKER_S3_PATH_STYLE").is_none_or(|raw| parse_bool(&raw)),
@@ -915,6 +943,10 @@ mod tests {
         assert_eq!(cfg.s3_access_key_id, "");
         assert_eq!(cfg.s3_secret_access_key, "");
         assert!(cfg.s3_path_style);
+        assert!(
+            cfg.s3_termination_finalizer,
+            "termination finalizer defaults on"
+        );
     }
 
     #[test]
@@ -950,6 +982,7 @@ mod tests {
             s3_secret_access_key: "secret".into(),
             s3_path_style: true,
             s3_sse: "AES256".into(),
+            s3_termination_finalizer: false,
             rate_limit_enabled: true,
             rate_limit_per_second: 7,
             rate_limit_burst: 14,
@@ -975,6 +1008,10 @@ mod tests {
         assert!(json.contains("\"ws_touch_interval_seconds\":47"), "{json}");
         assert!(json.contains("\"s3_bucket\":\"owui-cold\""), "{json}");
         assert!(json.contains("\"rate_limit_user_multiplier\":9"), "{json}");
+        assert!(
+            json.contains("\"s3_termination_finalizer\":false"),
+            "{json}"
+        );
         let back: BrokerConfig = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, cfg);
     }
@@ -1008,6 +1045,7 @@ mod tests {
             ("BROKER_S3_ACCESS_KEY_ID", "AKIAEXAMPLE"),
             ("BROKER_S3_SECRET_ACCESS_KEY", "shh"),
             ("BROKER_S3_PATH_STYLE", "off"),
+            ("BROKER_S3_TERMINATION_FINALIZER", "off"),
         ]))
         .expect("ok");
         assert_eq!(cfg.shared_secret, "hunter2");
@@ -1035,6 +1073,31 @@ mod tests {
         assert_eq!(cfg.s3_access_key_id, "AKIAEXAMPLE");
         assert_eq!(cfg.s3_secret_access_key, "shh");
         assert!(!cfg.s3_path_style, "BROKER_S3_PATH_STYLE=off => false");
+        assert!(
+            !cfg.s3_termination_finalizer,
+            "BROKER_S3_TERMINATION_FINALIZER=off => false"
+        );
+    }
+
+    #[test]
+    fn termination_finalizer_only_active_in_s3_record() {
+        // The knob alone is inert: it needs the s3-record store-of-record mode
+        // with the cold tier enabled. Per-user-pvc never blocks deletion.
+        let knob_on = |mode: PersistentMode, s3: bool| BrokerConfig {
+            persistent_mode: mode,
+            s3_enabled: s3,
+            ..Default::default()
+        };
+        assert!(knob_on(PersistentMode::S3Record, true).termination_finalizer_active());
+        assert!(!knob_on(PersistentMode::S3Record, false).termination_finalizer_active());
+        assert!(!knob_on(PersistentMode::PerUserPvc, true).termination_finalizer_active());
+        let knob_off = BrokerConfig {
+            persistent_mode: PersistentMode::S3Record,
+            s3_enabled: true,
+            s3_termination_finalizer: false,
+            ..Default::default()
+        };
+        assert!(!knob_off.termination_finalizer_active());
     }
 
     #[test]

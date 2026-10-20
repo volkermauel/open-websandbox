@@ -273,6 +273,19 @@ pub async fn resolve_sandbox(
                 );
             }
         }
+        // s3-record: hold deletion until the termination snapshot is durable
+        // (spec: deletion waits for the S3 snapshot). Set atomically with the
+        // create — a concurrent-resolve loser skips this; the winner's object
+        // carries the finalizer for both.
+        if profile == Profile::Persistent && state.config.termination_finalizer_active() {
+            let finalizers = sandbox.metadata.finalizers.get_or_insert_with(Vec::new);
+            if !finalizers
+                .iter()
+                .any(|v| v == shared::FINALIZER_S3_SNAPSHOT)
+            {
+                finalizers.push(shared::FINALIZER_S3_SNAPSHOT.to_string());
+            }
+        }
 
         // #157: persist the adoption intent on the Sandbox itself — a claim
         // attempt can time out before readiness (slow first boot) and the
@@ -548,6 +561,15 @@ async fn resolve_by_claim(
                 state
                     .store
                     .set_annotation(&bound, crate::sandbox::SESSION_KEY, session_id)
+                    .await?;
+            }
+            // s3-record: hold deletion until the termination snapshot is
+            // durable (the controller built this object, so the finalizer
+            // must land as a patch, retried with the stamping loop).
+            if profile == Profile::Persistent && state.config.termination_finalizer_active() {
+                state
+                    .store
+                    .add_finalizer(&bound, shared::FINALIZER_S3_SNAPSHOT)
                     .await?;
             }
             Ok::<(), StoreError>(())

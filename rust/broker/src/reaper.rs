@@ -36,6 +36,7 @@ use shared::{OperatingMode, Profile, Sandbox};
 
 use crate::leaser::LeaderGate;
 use crate::metrics::{ACTIVE_SANDBOXES, IDLE_REAPS_TOTAL, SANDBOXES_DELETED_TOTAL};
+use crate::s3::S3_LAST_KEY_ANNOTATION;
 use crate::sandbox::{LAST_USED_KEY, PROFILE_LABEL_KEY};
 use crate::store::SandboxStore;
 
@@ -67,6 +68,9 @@ pub struct ReaperStats {
     pub reaped: u64,
     /// Reaps deferred because the offload hook failed (D7 keep-alive).
     pub offload_failed: u64,
+    /// Terminating sandboxes whose deletion stayed blocked this tick: the
+    /// termination offload failed, or the finalizer release failed.
+    pub termination_blocked: u64,
 }
 
 /// Decide the action for one sandbox from its profile, idle time, current mode,
@@ -128,6 +132,93 @@ fn last_used_of(annotations: &BTreeMap<String, String>) -> Option<i64> {
     annotations
         .get(LAST_USED_KEY)
         .and_then(|v| v.parse::<i64>().ok())
+}
+
+/// Whether the s3-snapshot finalizer is present on the sandbox.
+fn has_finalizer(sbx: &Sandbox, finalizer: &str) -> bool {
+    sbx.metadata
+        .finalizers
+        .as_ref()
+        .is_some_and(|f| f.iter().any(|v| v == finalizer))
+}
+
+/// Snapshot ts embedded in a last-offloaded-key stamp
+/// (`<ns>/workspace-<10-digit ts>.tar.zst`, zero-padded so the ts is fixed
+/// width). `None` when the key shape is unrecognised — never dedupe on it.
+fn stamp_ts(key: &str) -> Option<i64> {
+    let file = key.rsplit('/').next().unwrap_or(key);
+    let ts = file.strip_prefix("workspace-")?.strip_suffix(".tar.zst")?;
+    ts.parse().ok()
+}
+
+/// Fresh-snapshot dedupe: the `S3_LAST_KEY_ANNOTATION` stamp names a snapshot
+/// taken at/after the sandbox's last recorded activity — no workspace change
+/// since the archive, so a second offload would rewrite identical content.
+/// Any missing/unparseable input ⇒ not fresh (the safe side: offload again).
+fn fresh_snapshot(sbx: &Sandbox) -> bool {
+    let Some(annots) = sbx.metadata.annotations.as_ref() else {
+        return false;
+    };
+    let Some(key) = annots.get(S3_LAST_KEY_ANNOTATION) else {
+        return false;
+    };
+    let Some(ts) = stamp_ts(key) else {
+        return false;
+    };
+    last_used_of(annots).is_some_and(|lu| ts >= lu)
+}
+
+/// Remove the s3-snapshot finalizer; a failed removal keeps the deletion
+/// blocked (counted so ops can alert on it).
+async fn release_finalizer(store: &dyn SandboxStore, name: &str, stats: &mut ReaperStats) {
+    if let Err(e) = store
+        .remove_finalizer(name, shared::FINALIZER_S3_SNAPSHOT)
+        .await
+    {
+        stats.termination_blocked += 1;
+        tracing::warn!(%name, error = %e, "finalizer removal failed; deletion stays blocked");
+        return;
+    }
+    tracing::info!(%name, "s3-snapshot finalizer released; deletion unblocked");
+}
+
+/// One Terminating (`deletionTimestamp` set) sandbox: run the s3-record
+/// snapshot contract — offload unless a fresh snapshot already covers the
+/// workspace, then release the finalizer so the apiserver finishes the
+/// delete. A failing offload HOLDS the finalizer (deletion stays blocked
+/// until a later tick succeeds).
+async fn handle_terminating(
+    store: &dyn SandboxStore,
+    offload: &dyn ReapOffload,
+    cfg: &shared::BrokerConfig,
+    sbx: &Sandbox,
+    stats: &mut ReaperStats,
+) {
+    let name = sbx.name_any();
+    if !has_finalizer(sbx, shared::FINALIZER_S3_SNAPSHOT) {
+        return; // not ours (or already released) — nothing blocks the delete
+    }
+    if !cfg.termination_finalizer_active() {
+        // Knob off / non-s3 mode: never block a deletion for a snapshot that
+        // will never be taken.
+        release_finalizer(store, &name, stats).await;
+        return;
+    }
+    if fresh_snapshot(sbx) {
+        tracing::debug!(%name, "fresh snapshot stamp; termination offload skipped");
+        release_finalizer(store, &name, stats).await;
+        return;
+    }
+    match offload.offload_on_reap(sbx).await {
+        Ok(()) => release_finalizer(store, &name, stats).await,
+        Err(e) => {
+            stats.termination_blocked += 1;
+            tracing::warn!(
+                %name, error = %e,
+                "termination offload failed; finalizer held, deletion blocked"
+            );
+        }
+    }
 }
 
 /// Current epoch seconds (never panics on a pre-epoch clock).
@@ -195,6 +286,13 @@ pub async fn reap_once(
 
     for sbx in &sandboxes {
         let name = sbx.name_any();
+        // Terminating (deletionTimestamp set): the finalizer contract owns
+        // the exit — snapshot (or dedupe) first, release last. Runs before
+        // the idle logic so a terminating sandbox is never parked/re-reaped.
+        if sbx.metadata.deletion_timestamp.is_some() {
+            handle_terminating(store, offload, cfg, sbx, &mut stats).await;
+            continue;
+        }
         // No usable last-used → skip (treat absent as "not yet tracked").
         let lu = sbx.metadata.annotations.as_ref().and_then(last_used_of);
         let Some(lu) = lu else {
@@ -235,6 +333,24 @@ pub async fn reap_once(
                 // C-4 seam: offload first; on failure keep-alive for the next tick (D7).
                 match offload.offload_on_reap(sbx).await {
                     Ok(()) => {
+                        // s3-record + finalizer: release BEFORE the delete so
+                        // the apiserver completes it immediately (the stamp is
+                        // fresh — a later dedupe tick would hit anyway). A
+                        // failed release only lingers the object Terminating;
+                        // the next tick's dedupe clears it.
+                        if has_finalizer(sbx, shared::FINALIZER_S3_SNAPSHOT)
+                            && cfg.termination_finalizer_active()
+                        {
+                            if let Err(e) = store
+                                .remove_finalizer(&name, shared::FINALIZER_S3_SNAPSHOT)
+                                .await
+                            {
+                                tracing::warn!(
+                                    %name, error = %e,
+                                    "finalizer release before reap failed; object lingers Terminating"
+                                );
+                            }
+                        }
                         // Claimed ephemeral (warm-pool): delete the CLAIM —
                         // cascade removes the bound Sandbox + pod and the pool
                         // replenishes. Fall back to deleting the Sandbox when
@@ -361,6 +477,7 @@ pub async fn run_reaper_loop(
                 parked = stats.parked,
                 reaped = stats.reaped,
                 offload_failed = stats.offload_failed,
+                termination_blocked = stats.termination_blocked,
                 "reaper tick"
             );
         }

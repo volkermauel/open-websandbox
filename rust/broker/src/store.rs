@@ -104,6 +104,19 @@ pub trait SandboxStore: Send + Sync {
     /// — #195 hardening). Best-effort at the call site.
     async fn set_annotation(&self, name: &str, key: &str, value: &str) -> Result<(), StoreError>;
 
+    /// Add `finalizer` to a Sandbox's `metadata.finalizers` (idempotent — a
+    /// no-op when already present). Backs the s3-record termination-snapshot
+    /// contract: the finalizer holds the object (and its pod) in Terminating
+    /// until the broker snapshots the workspace.
+    /// [`StoreError::NotFound`] when the object is absent.
+    async fn add_finalizer(&self, name: &str, finalizer: &str) -> Result<(), StoreError>;
+
+    /// Remove `finalizer` from a Sandbox's `metadata.finalizers` (idempotent).
+    /// Tolerates a vanished object as success — the apiserver completing the
+    /// delete under a held finalizer races every removal.
+    /// [`StoreError::NotFound`] when the object is absent.
+    async fn remove_finalizer(&self, name: &str, finalizer: &str) -> Result<(), StoreError>;
+
     /// Is the apiserver reachable? Backs `GET /readyz` (503 when not).
     async fn apiserver_reachable(&self) -> bool;
 
@@ -260,6 +273,41 @@ impl KubeSandboxStore {
 
     fn template_api(&self) -> Api<SandboxTemplate> {
         Api::namespaced(self.client.clone(), &self.namespace)
+    }
+
+    /// Read-modify-write `metadata.finalizers` via a merge-patch of the full
+    /// list (the list is atomic in JSON merge-patch — there is no per-entry
+    /// op). Idempotent: an edit that changes nothing skips the patch.
+    async fn patch_finalizers(
+        &self,
+        name: &str,
+        tolerate_missing: bool,
+        edit: impl FnOnce(&mut Vec<String>),
+    ) -> Result<(), StoreError> {
+        let Some(sbx) = self.get_sandbox(name).await? else {
+            return if tolerate_missing {
+                Ok(())
+            } else {
+                Err(StoreError::NotFound)
+            };
+        };
+        let mut list = sbx.metadata.finalizers.unwrap_or_default();
+        let before = list.clone();
+        edit(&mut list);
+        if list == before {
+            return Ok(());
+        }
+        let patch = kube::api::Patch::Merge(serde_json::json!({
+            "metadata": { "finalizers": list }
+        }));
+        let params = kube::api::PatchParams::default();
+        match self.sandbox_api().patch(name, &params, &patch).await {
+            Ok(_) => Ok(()),
+            Err(err) => match StoreError::classify(err) {
+                StoreError::NotFound if tolerate_missing => Ok(()),
+                other => Err(other),
+            },
+        }
     }
 }
 
@@ -587,6 +635,22 @@ impl SandboxStore for KubeSandboxStore {
             Ok(_) => Ok(()),
             Err(err) => Err(StoreError::classify(err)),
         }
+    }
+
+    async fn add_finalizer(&self, name: &str, finalizer: &str) -> Result<(), StoreError> {
+        self.patch_finalizers(name, false, |list| {
+            if !list.iter().any(|v| v == finalizer) {
+                list.push(finalizer.to_string());
+            }
+        })
+        .await
+    }
+
+    async fn remove_finalizer(&self, name: &str, finalizer: &str) -> Result<(), StoreError> {
+        // Lenient on a vanished object: the apiserver completing a delete that
+        // was blocked on this finalizer races every removal.
+        self.patch_finalizers(name, true, |list| list.retain(|v| v != finalizer))
+            .await
     }
 
     async fn apiserver_reachable(&self) -> bool {
@@ -965,6 +1029,32 @@ pub mod test_fakes {
                 }
                 None => Err(StoreError::NotFound),
             }
+        }
+
+        async fn add_finalizer(&self, name: &str, finalizer: &str) -> Result<(), StoreError> {
+            let mut map = self.sandboxes.lock().expect("stub sandboxes");
+            match map.get_mut(name) {
+                Some(sbx) => {
+                    let finalizers = sbx.metadata.finalizers.get_or_insert_with(Vec::new);
+                    if !finalizers.iter().any(|v| v == finalizer) {
+                        finalizers.push(finalizer.to_string());
+                    }
+                    Ok(())
+                }
+                None => Err(StoreError::NotFound),
+            }
+        }
+
+        async fn remove_finalizer(&self, name: &str, finalizer: &str) -> Result<(), StoreError> {
+            // Lenient like the kube impl: a vanished object means the delete
+            // already completed.
+            let mut map = self.sandboxes.lock().expect("stub sandboxes");
+            if let Some(sbx) = map.get_mut(name) {
+                if let Some(finalizers) = sbx.metadata.finalizers.as_mut() {
+                    finalizers.retain(|v| v != finalizer);
+                }
+            }
+            Ok(())
         }
 
         async fn move_workspace_dir(&self, mv: &WorkspaceMove) -> Result<bool, StoreError> {

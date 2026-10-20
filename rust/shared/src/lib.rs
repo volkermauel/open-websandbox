@@ -25,7 +25,7 @@ pub use config::{
 pub use crd::{
     AdditionalPodMetadata, OperatingMode, PodIpEntry, Sandbox, SandboxClaim, SandboxClaimSpec,
     SandboxClaimStatus, SandboxCondition, SandboxPoolRef, SandboxRef, SandboxSpec, SandboxStatus,
-    SandboxTemplate, SandboxTemplateSpec, ShutdownPolicy,
+    SandboxTemplate, SandboxTemplateSpec, ShutdownPolicy, FINALIZER_S3_SNAPSHOT,
 };
 pub use metrics::{gather, install, HttpMetrics};
 pub use openapi::{BearerAddon, ErrorResponse, BEARER_SCHEME};

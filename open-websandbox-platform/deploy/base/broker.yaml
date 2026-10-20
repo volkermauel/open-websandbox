@@ -113,6 +113,9 @@ spec:
         - {name: BROKER_WS_TOUCH_INTERVAL_SECONDS, value: "45"}   # #158: WS terminal frames refresh broker-last-used (0=off)
         - {name: BROKER_DRAFT_ADOPTION_WINDOW_SECONDS, value: "21600"}  # #157: new chats adopt the draft workspace (6h; 0=off)
         - {name: BROKER_REAP_SECONDS, value: "604800"}             # persistent reap age (offload+purge with s3, #142)
+        # s3-record: hold Terminating until the snapshot is durable (inert
+        # without s3; chart value broker.s3.terminationFinalizer).
+        - {name: BROKER_S3_TERMINATION_FINALIZER, value: "true"}
         startupProbe:   {httpGet: {path: /healthz, port: http}, periodSeconds: 5, failureThreshold: 30}
         livenessProbe:  {httpGet: {path: /healthz, port: http}, periodSeconds: 10, failureThreshold: 3}
         readinessProbe: {httpGet: {path: /readyz,  port: http}, periodSeconds: 5, failureThreshold: 3}

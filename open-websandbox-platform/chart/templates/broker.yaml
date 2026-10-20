@@ -242,6 +242,11 @@ spec:
           value: {{ .Values.broker.s3.retentionDays | quote }}
         - name: BROKER_S3_SSE
           value: {{ .Values.broker.s3.sse | quote }}
+        # s3-record termination finalizer (openspec/changes/s3-termination-finalizer):
+        # hold a deleted Sandbox Terminating until its workspace snapshot is
+        # durably in S3. Effective only when persistentMode=s3-record.
+        - name: BROKER_S3_TERMINATION_FINALIZER
+          value: {{ .Values.broker.s3.terminationFinalizer | quote }}
         - name: BROKER_S3_PERIODIC_SYNC_SECONDS
           value: {{ .Values.broker.s3.periodicSyncInterval | quote }}
         - name: BROKER_S3_SIZE_LIMIT

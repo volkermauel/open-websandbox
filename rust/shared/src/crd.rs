@@ -24,6 +24,12 @@
 #![forbid(unsafe_code)]
 // rust-stable 1.99 asserts these should be assert_eq; intentional here.
 #![allow(clippy::assert_is_empty)]
+/// Finalizer the broker registers on Sandboxes it manages in `s3-record`
+/// mode: holds the object (and its pod) in Terminating until the chat
+/// workspace snapshot is durably in S3, ordering deletion
+/// snapshot-before-pod-death by the API server rather than by timing.
+pub const FINALIZER_S3_SNAPSHOT: &str = "owui.dev/s3-snapshot";
+
 use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
