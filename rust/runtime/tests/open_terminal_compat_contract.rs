@@ -403,8 +403,8 @@ async fn matches_unifies_name_and_content_with_pagination() {
     assert_eq!(results[0]["name"], serde_json::json!("zebra.png"));
     assert!(results[0]["name_match"].as_bool().unwrap());
     assert_eq!(
-        results[0]["content_matches"].as_array().map(|a| a.len()),
-        Some(0)
+        results[0]["content_matches"],
+        serde_json::Value::Array(vec![])
     );
     assert_eq!(results[1]["name"], serde_json::json!("zebra.txt"));
     assert!(results[1]["name_match"].as_bool().unwrap());
