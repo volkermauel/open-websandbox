@@ -79,7 +79,7 @@ def test_s3_sha256_roundtrip(require_s3):
             f"head -c {BLOB_BYTES} /dev/urandom > /workspace/blob.bin"
             f" && sha256sum /workspace/blob.bin",
         )
-        assert ec == 0 and len(pre.strip()) == 64, pre
+        assert ec == 0 and len(pre.split()[0]) == 64, pre
 
         # idle-reap: the sandbox must vanish from the runtime namespace
         _wait_sandbox_gone(name, timeout=OFFLOAD_TIMEOUT)
@@ -87,7 +87,7 @@ def test_s3_sha256_roundtrip(require_s3):
         # resume: fresh pod, synchronous restore from S3 before readiness
         _claim_ready_session(c, user, session)
         ec, post = _exec(c, user, session, "sha256sum /workspace/blob.bin")
-        assert ec == 0 and len(post.strip()) == 64, post
+        assert ec == 0 and len(post.split()[0]) == 64, post
         assert pre.split()[0] == post.split()[0], f"sha256 mismatch: {pre!r} vs {post!r}"
 
 

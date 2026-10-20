@@ -333,7 +333,7 @@ jobs:
       - name: Helm install (s3-tiered profile)
         run: |
           helm install open-websandbox open-websandbox-platform/chart/ \
-            -f open-websandbox-platform/chart/values-kind-s3.yaml -n "$SYS_NS"
+            -f open-websandbox-platform/chart/values-kind-s3-record.yaml -n "$SYS_NS"
           kubectl -n "$SYS_NS" rollout status deploy/owui-broker --timeout=180s
 
       - name: Install test deps
