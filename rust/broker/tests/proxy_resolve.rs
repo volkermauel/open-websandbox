@@ -625,3 +625,53 @@ async fn s3_record_persistent_claims_and_restores() {
     assert_eq!(annots.get("broker-user").unwrap(), "user-1");
     assert_eq!(annots.get("broker-session").unwrap(), "chat-1");
 }
+
+#[tokio::test]
+async fn s3_record_claim_binds_suspended_member_and_resumes_it() {
+    // #207: a member parked while bound (e.g. under an earlier persistent
+    // mode before a mode switch) can never become Ready on its own — the
+    // claim path must resume it (operatingMode → Running) instead of
+    // returning not-ready forever.
+    let store = store_with_template();
+    store.set_pool_key("pool-key-123");
+    let mut cfg = claim_config(5);
+    cfg.persistent_mode = shared::PersistentMode::S3Record;
+    cfg.warm_pool_record = "record-pool".into();
+    let state = state(store.clone(), cfg);
+
+    // The controller binds the claim to a member that sits in Suspended
+    // with no pod; the resume patch flips it back to Running, then the pod
+    // becomes Ready and the resolve completes.
+    let s2 = store.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let claims = s2.snapshot_claims();
+        let (claim_name, _) = claims.into_iter().next().expect("claim created");
+        let bound = "owui-rec0000002";
+        s2.mark_claim_bound(&claim_name, bound);
+        let sbx = Sandbox::new(
+            bound,
+            SandboxSpec {
+                template_name: None,
+                operating_mode: Some(shared::OperatingMode::Suspended),
+                shutdown_policy: None,
+                pod_template: None,
+            },
+        );
+        s2.insert_sandbox(sbx);
+        s2.mark_pod_ready(bound, "10.1.1.2");
+    });
+
+    let resolved = resolve_sandbox(&state, "user-1", "chat-2", Profile::Persistent)
+        .await
+        .expect("suspended bound member resumes and resolves");
+
+    assert_eq!(resolved.name, "owui-rec0000002");
+    let snap = store.snapshot();
+    let sbx = snap.get("owui-rec0000002").expect("bound sandbox");
+    assert_eq!(
+        sbx.spec.operating_mode,
+        Some(shared::OperatingMode::Running),
+        "the claim path resumed the suspended member"
+    );
+}

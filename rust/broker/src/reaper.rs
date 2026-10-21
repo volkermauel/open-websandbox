@@ -68,6 +68,10 @@ pub struct ReaperStats {
     pub reaped: u64,
     /// Reaps deferred because the offload hook failed (D7 keep-alive).
     pub offload_failed: u64,
+    /// s3-record (#207): suspended reaps whose offload could not run (the
+    /// sandbox's pod cannot serve one) — surfaced with this counter, then
+    /// released anyway; holding a suspended sandbox achieves nothing.
+    pub suspended_no_pod: u64,
     /// Terminating sandboxes whose deletion stayed blocked this tick: the
     /// termination offload failed, or the finalizer release failed.
     pub termination_blocked: u64,
@@ -101,6 +105,18 @@ fn decide(
         // persistent (non-s3-tiered) — park at PARK_TTL, reap at REAP_TTL.
         // Reap takes precedence; an already-Suspended sandbox is never re-parked.
         Profile::Persistent if idle_secs > cfg.reap_seconds => ReaperAction::Reap,
+        // s3-record (#207): a Suspended sandbox past the park window is a reap
+        // candidate like any other — there Suspended pins its scratch storage
+        // (or a warm-pool member) instead of parking data, and the `reap_once`
+        // Park→Reap collapse below only covers the Running case. PVC hot tiers
+        // keep Suspended as a valid parked state (the PVC holds the data).
+        Profile::Persistent
+            if cfg.persistent_mode.is_s3_record()
+                && idle_secs > cfg.park_idle_seconds
+                && current_mode == OperatingMode::Suspended =>
+        {
+            ReaperAction::Reap
+        }
         Profile::Persistent
             if idle_secs > cfg.park_idle_seconds && current_mode != OperatingMode::Suspended =>
         {
@@ -265,6 +281,106 @@ impl ReapOffload for NoopOffload {
     }
 }
 
+/// Post-offload release for a Reap decision: s3-record finalizer handoff,
+/// claim-first delete (cascade), metrics + runtime-key cleanup. Shared by the
+/// clean-offload path and the s3-record suspended release (offload
+/// unavailable, #207).
+async fn release_reaped(
+    store: &dyn SandboxStore,
+    cfg: &shared::BrokerConfig,
+    sbx: &Sandbox,
+    profile: Profile,
+    idle: u64,
+    name: &str,
+    stats: &mut ReaperStats,
+) {
+    // s3-record + finalizer: release BEFORE the delete so the apiserver
+    // completes it immediately (the stamp is fresh — a later dedupe tick
+    // would hit anyway). A failed release only lingers the object
+    // Terminating; the next tick's dedupe clears it.
+    if has_finalizer(sbx, shared::FINALIZER_S3_SNAPSHOT) && cfg.termination_finalizer_active() {
+        if let Err(e) = store
+            .remove_finalizer(name, shared::FINALIZER_S3_SNAPSHOT)
+            .await
+        {
+            tracing::warn!(
+                %name, error = %e,
+                "finalizer release before reap failed; object lingers Terminating"
+            );
+        }
+    }
+    // Claimed ephemeral (warm-pool): delete the CLAIM — cascade removes the
+    // bound Sandbox + pod and the pool replenishes. Fall back to deleting the
+    // Sandbox when the claim is already gone (orphan cleanup).
+    let claim = sbx
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|a| a.get(crate::sandbox::CLAIM_ANNOTATION_KEY))
+        .map(String::as_str);
+    let deleted = match claim {
+        // Claim present — delete it; cascade removes the Sandbox + pod and
+        // the pool replenishes. A claim already gone means an orphaned
+        // sandbox: delete it.
+        Some(c) => match store.delete_claim(c).await {
+            Ok(true) => {
+                tracing::info!(
+                    %name, claim = %c, idle,
+                    "reaped idle claim (sandbox released, pool replenishes)"
+                );
+                true
+            }
+            Ok(false) => match store.delete_sandbox(name).await {
+                Ok(v) => v,
+                Err(e) => {
+                    stats.skipped += 1;
+                    tracing::warn!(%name, error = %e, "reap delete failed");
+                    return;
+                }
+            },
+            Err(e) => {
+                stats.skipped += 1;
+                tracing::warn!(%name, claim = %c, error = %e, "reap claim delete failed");
+                return;
+            }
+        },
+        None => match store.delete_sandbox(name).await {
+            Ok(v) => v,
+            Err(e) => {
+                stats.skipped += 1;
+                tracing::warn!(%name, error = %e, "reap delete failed");
+                return;
+            }
+        },
+    };
+    if deleted {
+        stats.reaped += 1;
+        tracing::info!(%name, idle, "reaped idle sandbox (deleted)");
+        // #99 A6: why this sandbox was reaped (mirrors decide()'s reap
+        // conditions) — drives idle_reaps_total{reason}.
+        let reason = match profile {
+            Profile::Ephemeral => "ephemeral_idle",
+            // Mirrors decide(): only the empty-dir hot tier reaps at IDLE_TTL
+            // (the cold tier is its only durability). PVC hybrids reap at
+            // REAP_TTL.
+            Profile::Persistent
+                if matches!(cfg.persistent_mode, shared::PersistentMode::EmptyDir) =>
+            {
+                "cold_tier_idle"
+            }
+            Profile::Persistent => "persistent_reap_ttl",
+        };
+        metrics::counter!(IDLE_REAPS_TOTAL, "reason" => reason).increment(1);
+        // PR-C-5 / #4: best-effort reap the per-session key Secret (absent
+        // for claimed ephemeral — 404-tolerant).
+        if let Err(e) = store.delete_runtime_key(name).await {
+            tracing::warn!(%name, error = %e, "reap runtime key failed");
+        }
+    } else {
+        stats.skipped += 1; // already gone (404)
+    }
+}
+
 /// One leader-agnostic reaper tick: list broker-owned sandboxes, decide each
 /// one's action, apply it. The injectable `now` makes idle time deterministic
 /// in tests. Does NOT check the leader gate — see [`maybe_reap_once`].
@@ -330,101 +446,24 @@ pub async fn reap_once(
                 }
             },
             ReaperAction::Reap => {
-                // C-4 seam: offload first; on failure keep-alive for the next tick (D7).
+                // C-4 seam: offload first; on failure keep-alive for the next
+                // tick (D7). s3-record exception (#207): a Suspended candidate
+                // has no pod that can serve an offload (the offloader's resume
+                // already failed) — holding it achieves nothing, so surface
+                // the no-pod case with its own stat and release anyway.
+                let suspended_release =
+                    cfg.persistent_mode.is_s3_record() && mode == OperatingMode::Suspended;
                 match offload.offload_on_reap(sbx).await {
                     Ok(()) => {
-                        // s3-record + finalizer: release BEFORE the delete so
-                        // the apiserver completes it immediately (the stamp is
-                        // fresh — a later dedupe tick would hit anyway). A
-                        // failed release only lingers the object Terminating;
-                        // the next tick's dedupe clears it.
-                        if has_finalizer(sbx, shared::FINALIZER_S3_SNAPSHOT)
-                            && cfg.termination_finalizer_active()
-                        {
-                            if let Err(e) = store
-                                .remove_finalizer(&name, shared::FINALIZER_S3_SNAPSHOT)
-                                .await
-                            {
-                                tracing::warn!(
-                                    %name, error = %e,
-                                    "finalizer release before reap failed; object lingers Terminating"
-                                );
-                            }
-                        }
-                        // Claimed ephemeral (warm-pool): delete the CLAIM —
-                        // cascade removes the bound Sandbox + pod and the pool
-                        // replenishes. Fall back to deleting the Sandbox when
-                        // the claim is already gone (orphan cleanup).
-                        let claim = sbx
-                            .metadata
-                            .annotations
-                            .as_ref()
-                            .and_then(|a| a.get(crate::sandbox::CLAIM_ANNOTATION_KEY))
-                            .map(String::as_str);
-                        let deleted = match claim {
-                            // Claim present — delete it; cascade removes the
-                            // Sandbox + pod and the pool replenishes. A claim
-                            // already gone means an orphaned sandbox: delete it.
-                            Some(c) => match store.delete_claim(c).await {
-                                Ok(true) => {
-                                    tracing::info!(
-                                        %name, claim = %c, idle,
-                                        "reaped idle claim (sandbox released, pool replenishes)"
-                                    );
-                                    true
-                                }
-                                Ok(false) => match store.delete_sandbox(&name).await {
-                                    Ok(v) => v,
-                                    Err(e) => {
-                                        stats.skipped += 1;
-                                        tracing::warn!(%name, error = %e, "reap delete failed");
-                                        continue;
-                                    }
-                                },
-                                Err(e) => {
-                                    stats.skipped += 1;
-                                    tracing::warn!(%name, claim = %c, error = %e, "reap claim delete failed");
-                                    continue;
-                                }
-                            },
-                            None => match store.delete_sandbox(&name).await {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    stats.skipped += 1;
-                                    tracing::warn!(%name, error = %e, "reap delete failed");
-                                    continue;
-                                }
-                            },
-                        };
-                        if deleted {
-                            stats.reaped += 1;
-                            tracing::info!(%name, idle, "reaped idle sandbox (deleted)");
-                            // #99 A6: why this sandbox was reaped (mirrors decide()'s
-                            // reap conditions) — drives idle_reaps_total{reason}.
-                            let reason = match profile {
-                                Profile::Ephemeral => "ephemeral_idle",
-                                // Mirrors decide(): only the empty-dir hot tier
-                                // reaps at IDLE_TTL (the cold tier is its only
-                                // durability). PVC hybrids reap at REAP_TTL.
-                                Profile::Persistent
-                                    if matches!(
-                                        cfg.persistent_mode,
-                                        shared::PersistentMode::EmptyDir
-                                    ) =>
-                                {
-                                    "cold_tier_idle"
-                                }
-                                Profile::Persistent => "persistent_reap_ttl",
-                            };
-                            metrics::counter!(IDLE_REAPS_TOTAL, "reason" => reason).increment(1);
-                            // PR-C-5 / #4: best-effort reap the per-session key Secret
-                            // (absent for claimed ephemeral — 404-tolerant).
-                            if let Err(e) = store.delete_runtime_key(&name).await {
-                                tracing::warn!(%name, error = %e, "reap runtime key failed");
-                            }
-                        } else {
-                            stats.skipped += 1; // already gone (404)
-                        }
+                        release_reaped(store, cfg, sbx, profile, idle, &name, &mut stats).await;
+                    }
+                    Err(e) if suspended_release => {
+                        stats.suspended_no_pod += 1;
+                        tracing::warn!(
+                            %name, error = %e,
+                            "offload unavailable for suspended s3-record sandbox (no serving pod); releasing anyway"
+                        );
+                        release_reaped(store, cfg, sbx, profile, idle, &name, &mut stats).await;
                     }
                     Err(e) => {
                         stats.offload_failed += 1;
@@ -703,6 +742,49 @@ mod tests {
                 ReaperAction::Reap
             );
         }
+    }
+
+    #[test]
+    fn s3_record_suspended_past_park_window_is_a_reap_candidate() {
+        // #207: s3-record has no Suspended state to keep alive — a parked
+        // sandbox past the park window is a reap candidate (archive-if-
+        // possible → release) even though it can never be re-parked.
+        let c = shared::BrokerConfig {
+            idle_ttl_seconds: 120,
+            park_idle_seconds: 300,
+            reap_seconds: 604_800,
+            s3_enabled: true,
+            persistent_mode: shared::PersistentMode::S3Record,
+            ..Default::default()
+        };
+        assert_eq!(
+            decide(Profile::Persistent, 301, OperatingMode::Suspended, &c),
+            ReaperAction::Reap
+        );
+        assert_eq!(
+            decide(Profile::Persistent, 299, OperatingMode::Suspended, &c),
+            ReaperAction::Skip,
+            "under the park window a suspended sandbox is still left alone"
+        );
+    }
+
+    #[test]
+    fn per_user_pvc_suspended_past_park_window_stays_parked() {
+        // #207: the reap-candidate branch is mode-gated — per-user-pvc keeps
+        // Suspended as a valid parked state (the PVC holds the data), even
+        // with the cold tier enabled.
+        let c = shared::BrokerConfig {
+            idle_ttl_seconds: 120,
+            park_idle_seconds: 300,
+            reap_seconds: 604_800,
+            s3_enabled: true,
+            persistent_mode: shared::PersistentMode::PerUserPvc,
+            ..Default::default()
+        };
+        assert_eq!(
+            decide(Profile::Persistent, 301, OperatingMode::Suspended, &c),
+            ReaperAction::Skip
+        );
     }
 
     // --- annotation/label parsing -------------------------------------------

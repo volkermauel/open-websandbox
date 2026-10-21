@@ -387,3 +387,100 @@ async fn claimed_ephemeral_reap_claim_gone_falls_back_to_sandbox() {
     assert_eq!(stats.reaped, 1);
     assert!(!store.snapshot().contains_key("owui-warm000002"));
 }
+
+// --- #207 s3-record: suspended sandboxes are reap candidates ----------------
+
+/// Reaper config in s3-record mode (S3 store of record; suspend = snapshot
+/// + release).
+fn cfg_s3_record(idle: u64, park: u64, reap: u64) -> shared::BrokerConfig {
+    shared::BrokerConfig {
+        idle_ttl_seconds: idle,
+        park_idle_seconds: park,
+        reap_seconds: reap,
+        s3_enabled: true,
+        persistent_mode: shared::PersistentMode::S3Record,
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn s3_record_reaps_suspended_sandbox_past_park_window() {
+    // A Suspended s3-record sandbox pins its scratch storage (or a warm-pool
+    // member) — past the park window it is released like any other idle
+    // sandbox instead of being skipped forever.
+    let store = StubSandboxStore::new();
+    store.insert_sandbox(seed(
+        "owui-rec-1",
+        "persistent",
+        NOW - 400,
+        Some(OperatingMode::Suspended),
+    ));
+    let c = cfg_s3_record(120, 300, 604_800);
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(
+        stats.reaped, 1,
+        "suspended s3-record sandbox past the park window is released"
+    );
+    assert_eq!(stats.skipped, 0);
+    assert!(
+        !store.snapshot().contains_key("owui-rec-1"),
+        "released from the store"
+    );
+}
+
+#[tokio::test]
+async fn s3_record_suspended_without_offload_still_released_with_distinct_stat() {
+    // The suspended sandbox's pod cannot serve an offload (the offloader's
+    // resume already failed) — holding it achieves nothing: the no-pod case
+    // gets its own stat and the release proceeds without the snapshot.
+    let store = StubSandboxStore::new();
+    store.insert_sandbox(seed(
+        "owui-rec-2",
+        "persistent",
+        NOW - 400,
+        Some(OperatingMode::Suspended),
+    ));
+    let c = cfg_s3_record(120, 300, 604_800);
+
+    let stats = reap_once(&store, &FailingOffload, &c, NOW).await;
+
+    assert_eq!(stats.suspended_no_pod, 1, "no-pod case surfaced distinctly");
+    assert_eq!(
+        stats.offload_failed, 0,
+        "the D7 keep-alive stat is NOT used for this case"
+    );
+    assert_eq!(stats.reaped, 1, "release proceeds without the offload");
+    assert!(!store.snapshot().contains_key("owui-rec-2"));
+}
+
+#[tokio::test]
+async fn per_user_pvc_leaves_suspended_sandboxes_untouched_even_with_s3_enabled() {
+    // Mode gate: a PVC hot tier keeps the old contract — Suspended is a
+    // valid parked state and the reaper skips it, even with the cold tier on.
+    let store = StubSandboxStore::new();
+    store.insert_sandbox(seed(
+        "owui-pvc-1",
+        "persistent",
+        NOW - 400,
+        Some(OperatingMode::Suspended),
+    ));
+    let c = shared::BrokerConfig {
+        idle_ttl_seconds: 120,
+        park_idle_seconds: 300,
+        reap_seconds: 604_800,
+        s3_enabled: true,
+        persistent_mode: shared::PersistentMode::PerUserPvc,
+        ..Default::default()
+    };
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(stats.reaped, 0);
+    assert_eq!(stats.skipped, 1, "suspended stays a parked state");
+    assert_eq!(
+        store.snapshot()["owui-pvc-1"].spec.operating_mode,
+        Some(OperatingMode::Suspended)
+    );
+}

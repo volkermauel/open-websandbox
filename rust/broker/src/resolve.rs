@@ -584,6 +584,33 @@ async fn resolve_by_claim(
         }
     }
 
+    // #207: a bound-but-`Suspended` member (parked while bound — e.g. under
+    // an earlier persistent mode before a mode switch) can never become
+    // Ready on its own: its pod is gone and nothing else flips the mode
+    // back. Resume it once here (one attempt; a failed patch only logs) and
+    // let the normal readiness gate below decide — 503-on-timeout preserved.
+    if let Ok(Some(sbx)) = state.store.get_sandbox(&bound).await {
+        if sbx.spec.operating_mode == Some(shared::OperatingMode::Suspended) {
+            tracing::info!(sandbox = %bound, "claim bound a Suspended sandbox; resuming before readiness");
+            match state
+                .store
+                .patch_operating_mode(&bound, shared::OperatingMode::Running)
+                .await
+            {
+                Ok(()) => {
+                    // Restart the idle clock before readiness (same rationale
+                    // as the direct path): last-used is otherwise only touched
+                    // AFTER readiness, and a slow resume let the reaper
+                    // re-park the sandbox mid-boot.
+                    let _ = state.store.touch_last_used(&bound, now_unix()).await;
+                }
+                Err(e) => {
+                    tracing::warn!(sandbox = %bound, error = %e, "claim resume patch failed");
+                }
+            }
+        }
+    }
+
     // Pod-direct readiness — same fast path as persistent, on the bound name.
     let resolved = wait_for_ready(state, &bound).await?;
     if let Err(e) = state
