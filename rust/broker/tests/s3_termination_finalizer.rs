@@ -394,7 +394,7 @@ async fn cold_create_outside_s3_record_never_carries_the_finalizer() {
         sbx.metadata
             .finalizers
             .as_ref()
-            .is_none_or(|f| f.is_empty()),
+            .is_none_or(Vec::is_empty),
         "per-user-pvc never registers the snapshot finalizer"
     );
 }
