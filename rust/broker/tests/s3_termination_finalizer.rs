@@ -391,10 +391,7 @@ async fn cold_create_outside_s3_record_never_carries_the_finalizer() {
     let snap = store.snapshot();
     let sbx = snap.get(&resolved.name).expect("sandbox");
     assert!(
-        sbx.metadata
-            .finalizers
-            .as_ref()
-            .is_none_or(Vec::is_empty),
+        sbx.metadata.finalizers.as_ref().is_none_or(Vec::is_empty),
         "per-user-pvc never registers the snapshot finalizer"
     );
 }
