@@ -28,7 +28,8 @@ permissions:
 concurrency:
   # Cancel superseded runs of the same PR: only the newest SHA can merge.
   group: >-
-    ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+    ci-${{ github.workflow }}-${{
+    github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
