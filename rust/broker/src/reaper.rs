@@ -68,10 +68,13 @@ pub struct ReaperStats {
     pub reaped: u64,
     /// Reaps deferred because the offload hook failed (D7 keep-alive).
     pub offload_failed: u64,
-    /// s3-record (#207): suspended reaps whose offload could not run (the
-    /// sandbox's pod cannot serve one) — surfaced with this counter, then
-    /// released anyway; holding a suspended sandbox achieves nothing.
-    pub suspended_no_pod: u64,
+    /// s3-record (#207): suspended reaps released without a snapshot because
+    /// the offload could not run — fired on ANY offload failure for a
+    /// suspended sandbox (no serving pod to resume, or an S3 outage) while
+    /// a re-check still finds it `Suspended`; holding a suspended sandbox
+    /// achieves nothing. A sandbox the offloader already resumed keeps the
+    /// ordinary D7 keep-alive instead and is NOT counted here.
+    pub suspended_offload_unavailable: u64,
     /// Terminating sandboxes whose deletion stayed blocked this tick: the
     /// termination offload failed, or the finalizer release failed.
     pub termination_blocked: u64,
@@ -105,15 +108,15 @@ fn decide(
         // persistent (non-s3-tiered) — park at PARK_TTL, reap at REAP_TTL.
         // Reap takes precedence; an already-Suspended sandbox is never re-parked.
         Profile::Persistent if idle_secs > cfg.reap_seconds => ReaperAction::Reap,
-        // s3-record (#207): a Suspended sandbox past the park window is a reap
-        // candidate like any other — there Suspended pins its scratch storage
-        // (or a warm-pool member) instead of parking data, and the `reap_once`
-        // Park→Reap collapse below only covers the Running case. PVC hot tiers
-        // keep Suspended as a valid parked state (the PVC holds the data).
+        // s3-record (#207): past the park window EVERY s3-record sandbox is a
+        // reap candidate, whatever its mode — the store of record replaces
+        // both parked states. A Suspended sandbox only pins its scratch
+        // storage (or a warm-pool member), and parking a Running one would
+        // suspend it into that same pin. Keeping the whole s3-record policy
+        // here makes decide() the single policy surface. PVC hot tiers keep
+        // Suspended as a valid parked state (the PVC holds the data).
         Profile::Persistent
-            if cfg.persistent_mode.is_s3_record()
-                && idle_secs > cfg.park_idle_seconds
-                && current_mode == OperatingMode::Suspended =>
+            if cfg.persistent_mode.is_s3_record() && idle_secs > cfg.park_idle_seconds =>
         {
             ReaperAction::Reap
         }
@@ -422,14 +425,7 @@ pub async fn reap_once(
         let idle = (now - lu).max(0) as u64;
         let profile = profile_of(sbx.metadata.labels.as_ref());
         let mode = sbx.spec.operating_mode.unwrap_or(OperatingMode::Running);
-        let mut action = decide(profile, idle, mode, cfg);
-        // s3-record: park and reap collapse into "archive + release" — the
-        // snapshot lands in the store of record at the park threshold and the
-        // claim delete cascades pod + scratch PVC; S3 retention is the real
-        // expiry (no Suspended state to keep alive).
-        if cfg.persistent_mode.is_s3_record() && matches!(action, ReaperAction::Park) {
-            action = ReaperAction::Reap;
-        }
+        let action = decide(profile, idle, mode, cfg);
         match action {
             ReaperAction::Skip => stats.skipped += 1,
             ReaperAction::Park => match store
@@ -447,24 +443,54 @@ pub async fn reap_once(
             },
             ReaperAction::Reap => {
                 // C-4 seam: offload first; on failure keep-alive for the next
-                // tick (D7). s3-record exception (#207): a Suspended candidate
-                // has no pod that can serve an offload (the offloader's resume
-                // already failed) — holding it achieves nothing, so surface
-                // the no-pod case with its own stat and release anyway.
+                // tick (D7). s3-record exception (#207): a still-Suspended
+                // candidate has no pod that can serve an offload and nothing
+                // else will resume it — holding it achieves nothing, so
+                // surface the degraded case with its own stat and release it
+                // without a snapshot. The release is GATED on a re-fetch:
+                // the offloader may have legitimately resumed the sandbox
+                // (patch Running + boot succeeded) before its S3 put failed —
+                // then the ordinary D7 keep-alive applies, never a release
+                // (and never the finalizer strip inside `release_reaped`).
                 let suspended_release =
                     cfg.persistent_mode.is_s3_record() && mode == OperatingMode::Suspended;
                 match offload.offload_on_reap(sbx).await {
                     Ok(()) => {
                         release_reaped(store, cfg, sbx, profile, idle, &name, &mut stats).await;
                     }
-                    Err(e) if suspended_release => {
-                        stats.suspended_no_pod += 1;
-                        tracing::warn!(
-                            %name, error = %e,
-                            "offload unavailable for suspended s3-record sandbox (no serving pod); releasing anyway"
-                        );
-                        release_reaped(store, cfg, sbx, profile, idle, &name, &mut stats).await;
-                    }
+                    Err(e) if suspended_release => match store.get_sandbox(&name).await {
+                        // Still Suspended after the failed offload — the
+                        // #207 degraded release: no snapshot can be taken,
+                        // so release without one (surfaced via the stat).
+                        Ok(Some(current))
+                            if current.spec.operating_mode == Some(OperatingMode::Suspended) =>
+                        {
+                            stats.suspended_offload_unavailable += 1;
+                            tracing::warn!(
+                                %name, error = %e,
+                                "offload unavailable for suspended s3-record sandbox; releasing without a snapshot"
+                            );
+                            release_reaped(store, cfg, sbx, profile, idle, &name, &mut stats).await;
+                        }
+                        // Resumed by the offloader (or already gone) — keep
+                        // the ordinary D7 keep-alive contract.
+                        Ok(_) => {
+                            stats.offload_failed += 1;
+                            tracing::warn!(
+                                %name, error = %e,
+                                "offload failed after resume; keeping sandbox alive for next tick"
+                            );
+                        }
+                        // Cannot confirm still-Suspended → conservative
+                        // keep-alive; the gate re-checks next tick.
+                        Err(fetch_err) => {
+                            stats.offload_failed += 1;
+                            tracing::warn!(
+                                %name, error = %e, fetch_error = %fetch_err,
+                                "offload failed for suspended s3-record sandbox; state re-check failed, keeping alive"
+                            );
+                        }
+                    },
                     Err(e) => {
                         stats.offload_failed += 1;
                         tracing::warn!(
@@ -765,6 +791,26 @@ mod tests {
             decide(Profile::Persistent, 299, OperatingMode::Suspended, &c),
             ReaperAction::Skip,
             "under the park window a suspended sandbox is still left alone"
+        );
+    }
+
+    #[test]
+    fn s3_record_running_past_park_window_is_a_reap_candidate_not_parked() {
+        // The Park→Reap collapse lives in decide(): a Running s3-record
+        // member past the park window comes back as Reap, so decide()
+        // alone is the idle-policy surface (no reap_once rewriting).
+        let c = shared::BrokerConfig {
+            idle_ttl_seconds: 120,
+            park_idle_seconds: 300,
+            reap_seconds: 604_800,
+            s3_enabled: true,
+            persistent_mode: shared::PersistentMode::S3Record,
+            ..Default::default()
+        };
+        assert_eq!(
+            decide(Profile::Persistent, 301, OperatingMode::Running, &c),
+            ReaperAction::Reap,
+            "park+1 Running member is a reap candidate in s3-record"
         );
     }
 

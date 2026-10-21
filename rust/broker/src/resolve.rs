@@ -589,8 +589,8 @@ async fn resolve_by_claim(
     // Ready on its own: its pod is gone and nothing else flips the mode
     // back. Resume it once here (one attempt; a failed patch only logs) and
     // let the normal readiness gate below decide — 503-on-timeout preserved.
-    if let Ok(Some(sbx)) = state.store.get_sandbox(&bound).await {
-        if sbx.spec.operating_mode == Some(shared::OperatingMode::Suspended) {
+    match state.store.get_sandbox(&bound).await {
+        Ok(Some(sbx)) if sbx.spec.operating_mode == Some(shared::OperatingMode::Suspended) => {
             tracing::info!(sandbox = %bound, "claim bound a Suspended sandbox; resuming before readiness");
             match state
                 .store
@@ -609,6 +609,15 @@ async fn resolve_by_claim(
                 }
             }
         }
+        // A transient store error must not silently skip the resume —
+        // mirror the patch-failure arm so the skip is visible to ops.
+        Err(e) => {
+            tracing::warn!(
+                sandbox = %bound, error = %e,
+                "pre-resume sandbox get failed; resume skipped"
+            );
+        }
+        Ok(_) => {}
     }
 
     // Pod-direct readiness — same fast path as persistent, on the bound name.
