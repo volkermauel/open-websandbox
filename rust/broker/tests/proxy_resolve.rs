@@ -625,3 +625,174 @@ async fn s3_record_persistent_claims_and_restores() {
     assert_eq!(annots.get("broker-user").unwrap(), "user-1");
     assert_eq!(annots.get("broker-session").unwrap(), "chat-1");
 }
+
+#[tokio::test]
+async fn s3_record_claim_binds_suspended_member_and_resumes_it() {
+    // #207: a member parked while bound (e.g. under an earlier persistent
+    // mode before a mode switch) can never become Ready on its own — the
+    // claim path must resume it (operatingMode → Running) instead of
+    // returning not-ready forever.
+    let store = store_with_template();
+    store.set_pool_key("pool-key-123");
+    let mut cfg = claim_config(5);
+    cfg.persistent_mode = shared::PersistentMode::S3Record;
+    cfg.warm_pool_record = "record-pool".into();
+    let state = state(store.clone(), cfg);
+
+    // The controller binds the claim to a member that sits in Suspended
+    // with no pod; the resume patch flips it back to Running, then the pod
+    // becomes Ready and the resolve completes.
+    let s2 = store.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let claims = s2.snapshot_claims();
+        let (claim_name, _) = claims.into_iter().next().expect("claim created");
+        let bound = "owui-rec0000002";
+        s2.mark_claim_bound(&claim_name, bound);
+        let sbx = Sandbox::new(
+            bound,
+            SandboxSpec {
+                template_name: None,
+                operating_mode: Some(shared::OperatingMode::Suspended),
+                shutdown_policy: None,
+                pod_template: None,
+            },
+        );
+        s2.insert_sandbox(sbx);
+        s2.mark_pod_ready(bound, "10.1.1.2");
+    });
+
+    let resolved = resolve_sandbox(&state, "user-1", "chat-2", Profile::Persistent)
+        .await
+        .expect("suspended bound member resumes and resolves");
+
+    assert_eq!(resolved.name, "owui-rec0000002");
+    let snap = store.snapshot();
+    let sbx = snap.get("owui-rec0000002").expect("bound sandbox");
+    assert_eq!(
+        sbx.spec.operating_mode,
+        Some(shared::OperatingMode::Running),
+        "the claim path resumed the suspended member"
+    );
+    let annots = sbx.metadata.annotations.as_ref().expect("annotations");
+    let lu: i64 = annots
+        .get("broker-last-used")
+        .expect("idle clock restarted")
+        .parse()
+        .expect("epoch stamp");
+    assert!(lu > 0, "last-used stamped with a real epoch");
+}
+
+#[tokio::test]
+async fn s3_record_claim_resume_restarts_the_idle_clock_before_readiness() {
+    // #207 + #150: the pre-readiness touch_last_used is the whole point —
+    // a slow resume must not let the reaper re-park the sandbox mid-boot.
+    // Pin it on the error path: the pod NEVER becomes ready (resolve 503s
+    // before the post-readiness touch), but the idle clock is already
+    // restarted by the resume itself.
+    let store = store_with_template();
+    store.set_pool_key("pool-key-123");
+    let mut cfg = claim_config(1);
+    cfg.persistent_mode = shared::PersistentMode::S3Record;
+    cfg.warm_pool_record = "record-pool".into();
+    let state = state(store.clone(), cfg);
+
+    let s2 = store.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let claims = s2.snapshot_claims();
+        let (claim_name, _) = claims.into_iter().next().expect("claim created");
+        let bound = "owui-rec0000003";
+        s2.mark_claim_bound(&claim_name, bound);
+        let sbx = Sandbox::new(
+            bound,
+            SandboxSpec {
+                template_name: None,
+                operating_mode: Some(shared::OperatingMode::Suspended),
+                shutdown_policy: None,
+                pod_template: None,
+            },
+        );
+        s2.insert_sandbox(sbx);
+        // Deliberately NO mark_pod_ready — the pod never serves.
+    });
+
+    let err = resolve_sandbox(&state, "user-1", "chat-3", Profile::Persistent)
+        .await
+        .expect_err("pod never ready → 503");
+    assert!(matches!(err, ApiError::ServiceUnavailable(_)), "{err:?}");
+
+    let snap = store.snapshot();
+    let sbx = snap.get("owui-rec0000003").expect("bound sandbox");
+    assert_eq!(
+        sbx.spec.operating_mode,
+        Some(shared::OperatingMode::Running),
+        "the resume patch succeeded"
+    );
+    let annots = sbx.metadata.annotations.as_ref().expect("annotations");
+    let lu: i64 = annots
+        .get("broker-last-used")
+        .expect("idle clock restarted BEFORE readiness (post-ready touch never ran)")
+        .parse()
+        .expect("epoch stamp");
+    assert!(lu > 0);
+}
+
+#[tokio::test]
+async fn s3_record_claim_resume_patch_failure_keeps_suspended_and_503s() {
+    // The other half of AC2: when the resume patch fails, the member stays
+    // Suspended, the claim survives ("or rebinds" is left to the client),
+    // the idle clock is NOT restarted, and the request 503s.
+    let store = store_with_template();
+    store.set_pool_key("pool-key-123");
+    let mut cfg = claim_config(1);
+    cfg.persistent_mode = shared::PersistentMode::S3Record;
+    cfg.warm_pool_record = "record-pool".into();
+    let state = state(store.clone(), cfg);
+
+    let s2 = store.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let claims = s2.snapshot_claims();
+        let (claim_name, _) = claims.into_iter().next().expect("claim created");
+        let bound = "owui-rec0000004";
+        s2.mark_claim_bound(&claim_name, bound);
+        let sbx = Sandbox::new(
+            bound,
+            SandboxSpec {
+                template_name: None,
+                operating_mode: Some(shared::OperatingMode::Suspended),
+                shutdown_policy: None,
+                pod_template: None,
+            },
+        );
+        s2.insert_sandbox(sbx);
+    });
+    // Inject the patch failure AFTER the claim binds (the resume patch is
+    // the only patch_operating_mode on this path).
+    store.set_patch_mode_failure(true);
+
+    let err = resolve_sandbox(&state, "user-1", "chat-4", Profile::Persistent)
+        .await
+        .expect_err("failed resume → never ready → 503");
+    assert!(matches!(err, ApiError::ServiceUnavailable(_)), "{err:?}");
+
+    let snap = store.snapshot();
+    let sbx = snap.get("owui-rec0000004").expect("bound sandbox survives");
+    assert_eq!(
+        sbx.spec.operating_mode,
+        Some(shared::OperatingMode::Suspended),
+        "a failed resume patch leaves the member Suspended"
+    );
+    assert!(
+        sbx.metadata
+            .annotations
+            .as_ref()
+            .is_none_or(|a| !a.contains_key("broker-last-used")),
+        "the idle clock is NOT restarted on a failed resume"
+    );
+    assert!(
+        !store.snapshot_claims().is_empty(),
+        "the claim survives for a client rebind"
+    );
+}

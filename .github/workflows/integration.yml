@@ -1,9 +1,10 @@
 name: integration
 
 # Real-backend integration tests for the broker (issue #101, items C1 + C2):
-#   * kube_live.rs — real kube-rs backends (KubeSandboxStore + KubeLease) vs a
-#     live KIND cluster (C1);
-#   * s3_live.rs   — real aws-sdk-s3 AwsColdStore vs a MinIO service container (C2).
+#   * kube_live.rs — real kube-rs backends (KubeSandboxStore + KubeLease)
+#     vs a live KIND cluster (C1);
+#   * s3_live.rs   — real aws-sdk-s3 AwsColdStore vs a MinIO service
+#     container (C2).
 #
 # Both tests are env-gated (OWUI_KUBE_LIVE / OWUI_S3_LIVE) and skip cleanly
 # otherwise; this job stands the infra up and opts the tests in. It is far
@@ -26,7 +27,9 @@ permissions:
 
 concurrency:
   # Cancel superseded runs of the same PR: only the newest SHA can merge.
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: >-
+    ci-${{ github.workflow }}-${{
+    github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -89,13 +92,16 @@ jobs:
       - uses: azure/setup-kubectl@v5
 
       - name: Apply broker CRDs (agents.x-k8s.io)
+        env:
+          CRDS: open-websandbox-platform/chart/crds
         run: |
-          kubectl apply -f open-websandbox-platform/chart/crds/upstream-agent-sandbox-v0.5.6-crds.yaml
+          kubectl apply -f $CRDS/upstream-agent-sandbox-v1.0.7-crds.yaml
           kubectl wait --for=condition=Established --all crd --timeout=120s
 
       - name: C1 — live K8s backend tests (OWUI_KUBE_LIVE=1)
         working-directory: rust
-        run: cargo test -p broker --test kube_live -- --nocapture --test-threads=1
+        run: cargo test -p broker --test kube_live -- --nocapture
+          --test-threads=1
         env:
           OWUI_KUBE_LIVE: "1"
           KUBECONFIG: /home/runner/.kube/config

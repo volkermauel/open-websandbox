@@ -387,3 +387,270 @@ async fn claimed_ephemeral_reap_claim_gone_falls_back_to_sandbox() {
     assert_eq!(stats.reaped, 1);
     assert!(!store.snapshot().contains_key("owui-warm000002"));
 }
+
+// --- #207 s3-record: suspended sandboxes are reap candidates ----------------
+
+/// Reaper config in s3-record mode (S3 store of record; suspend = snapshot
+/// + release).
+fn cfg_s3_record(idle: u64, park: u64, reap: u64) -> shared::BrokerConfig {
+    shared::BrokerConfig {
+        idle_ttl_seconds: idle,
+        park_idle_seconds: park,
+        reap_seconds: reap,
+        s3_enabled: true,
+        persistent_mode: shared::PersistentMode::S3Record,
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn s3_record_reaps_suspended_sandbox_past_park_window() {
+    // A Suspended s3-record sandbox pins its scratch storage (or a warm-pool
+    // member) — past the park window it is released like any other idle
+    // sandbox instead of being skipped forever.
+    let store = StubSandboxStore::new();
+    store.insert_sandbox(seed(
+        "owui-rec-1",
+        "persistent",
+        NOW - 400,
+        Some(OperatingMode::Suspended),
+    ));
+    let c = cfg_s3_record(120, 300, 604_800);
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(
+        stats.reaped, 1,
+        "suspended s3-record sandbox past the park window is released"
+    );
+    assert_eq!(stats.skipped, 0);
+    assert!(
+        !store.snapshot().contains_key("owui-rec-1"),
+        "released from the store"
+    );
+}
+
+#[tokio::test]
+async fn s3_record_suspended_without_offload_still_released_with_distinct_stat() {
+    // The suspended sandbox cannot be offloaded (no serving pod, or an S3
+    // outage) while a re-check still finds it Suspended — holding it
+    // achieves nothing: the degraded case gets its own stat and the release
+    // proceeds without the snapshot.
+    let store = StubSandboxStore::new();
+    store.insert_sandbox(seed(
+        "owui-rec-2",
+        "persistent",
+        NOW - 400,
+        Some(OperatingMode::Suspended),
+    ));
+    let c = cfg_s3_record(120, 300, 604_800);
+
+    let stats = reap_once(&store, &FailingOffload, &c, NOW).await;
+
+    assert_eq!(
+        stats.suspended_offload_unavailable, 1,
+        "degraded suspend release surfaced distinctly"
+    );
+    assert_eq!(
+        stats.offload_failed, 0,
+        "the D7 keep-alive stat is NOT used for this case"
+    );
+    assert_eq!(stats.reaped, 1, "release proceeds without the offload");
+    assert!(!store.snapshot().contains_key("owui-rec-2"));
+}
+
+#[tokio::test]
+async fn per_user_pvc_leaves_suspended_sandboxes_untouched_even_with_s3_enabled() {
+    // Mode gate: a PVC hot tier keeps the old contract — Suspended is a
+    // valid parked state and the reaper skips it, even with the cold tier on.
+    let store = StubSandboxStore::new();
+    store.insert_sandbox(seed(
+        "owui-pvc-1",
+        "persistent",
+        NOW - 400,
+        Some(OperatingMode::Suspended),
+    ));
+    let c = shared::BrokerConfig {
+        idle_ttl_seconds: 120,
+        park_idle_seconds: 300,
+        reap_seconds: 604_800,
+        s3_enabled: true,
+        persistent_mode: shared::PersistentMode::PerUserPvc,
+        ..Default::default()
+    };
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(stats.reaped, 0);
+    assert_eq!(stats.skipped, 1, "suspended stays a parked state");
+    assert_eq!(
+        store.snapshot()["owui-pvc-1"].spec.operating_mode,
+        Some(OperatingMode::Suspended)
+    );
+}
+
+// --- #207 review fixes: gated release, decide() policy fold, release details ---
+
+#[tokio::test]
+async fn s3_record_running_member_past_park_window_is_reaped_not_parked() {
+    // Composed pin for the decide() fold: a Running s3-record member past
+    // the park window is reaped at park+1 — decide() alone is the policy
+    // surface, no reap_once Park→Reap collapse.
+    let store = StubSandboxStore::new();
+    store.insert_sandbox(seed(
+        "owui-rec-run",
+        "persistent",
+        NOW - 400,
+        Some(OperatingMode::Running),
+    ));
+    let c = cfg_s3_record(120, 300, 604_800);
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(stats.parked, 0, "s3-record never parks");
+    assert_eq!(stats.reaped, 1, "Running member is reaped at park+1");
+    assert!(!store.snapshot().contains_key("owui-rec-run"));
+}
+
+/// Simulates the P1-1 sequence: the offloader resumes the suspended sandbox
+/// (patch `Running` + boot succeeds) and THEN fails its S3 put.
+struct ResumeThenFailOffload {
+    store: Arc<StubSandboxStore>,
+}
+
+#[async_trait]
+impl ReapOffload for ResumeThenFailOffload {
+    async fn offload_on_reap(&self, sbx: &Sandbox) -> Result<(), OffloadError> {
+        let name = sbx.metadata.name.clone().unwrap_or_default();
+        self.store
+            .patch_operating_mode(&name, OperatingMode::Running)
+            .await
+            .expect("resume patch");
+        Err(OffloadError::Failed("s3 put failed after resume".into()))
+    }
+}
+
+#[tokio::test]
+async fn s3_record_suspended_release_is_gated_when_offloader_resumed() {
+    // The offloader resumed the sandbox before its S3 put failed — the
+    // workspace is recoverable on the next tick, so the reaper must NOT
+    // release it: ordinary D7 keep-alive, no release, no finalizer strip.
+    let store = Arc::new(StubSandboxStore::new());
+    let mut sbx = seed(
+        "owui-rec-res",
+        "persistent",
+        NOW - 400,
+        Some(OperatingMode::Suspended),
+    );
+    sbx.metadata.finalizers = Some(vec![shared::FINALIZER_S3_SNAPSHOT.to_string()]);
+    store.insert_sandbox(sbx);
+    let c = cfg_s3_record(120, 300, 604_800);
+
+    let stats = reap_once(
+        store.as_ref(),
+        &ResumeThenFailOffload {
+            store: store.clone(),
+        },
+        &c,
+        NOW,
+    )
+    .await;
+
+    assert_eq!(
+        stats.suspended_offload_unavailable, 0,
+        "a resumed sandbox is NOT a degraded release"
+    );
+    assert_eq!(
+        stats.offload_failed, 1,
+        "resumed candidate keeps the ordinary D7 keep-alive stat"
+    );
+    assert_eq!(stats.reaped, 0, "a resumed sandbox is never released");
+    let snap = store.snapshot();
+    let kept = snap.get("owui-rec-res").expect("sandbox kept alive");
+    assert_eq!(
+        kept.spec.operating_mode,
+        Some(OperatingMode::Running),
+        "the offloader's resume stands"
+    );
+    assert!(
+        store.finalizer_removals().is_empty(),
+        "no finalizer strip on the keep-alive path"
+    );
+}
+
+#[tokio::test]
+async fn s3_record_suspended_bound_member_release_cascades_the_claim() {
+    // The production stranded shape (#207): a claim-bound Suspended member.
+    // The degraded release must delete the CLAIM (cascade frees the bound
+    // Sandbox + pod and the pool replenishes), not the bare Sandbox.
+    let store = Arc::new(StubSandboxStore::new());
+    let mut sbx = seed(
+        "owui-rec-bound",
+        "persistent",
+        NOW - 400,
+        Some(OperatingMode::Suspended),
+    );
+    sbx.metadata
+        .annotations
+        .as_mut()
+        .unwrap()
+        .insert("broker-claim".to_string(), "owui-rec-claim".to_string());
+    store.insert_sandbox(sbx);
+    store.insert_claim(shared::SandboxClaim::new(
+        "owui-rec-claim",
+        shared::SandboxClaimSpec {
+            warm_pool_ref: shared::SandboxPoolRef {
+                name: "code-standard-record-pool".into(),
+            },
+            additional_pod_metadata: None,
+        },
+    ));
+    let store_dyn: Arc<dyn SandboxStore> = store.clone();
+    let c = cfg_s3_record(120, 300, 604_800);
+
+    let stats = reap_once(store_dyn.as_ref(), &FailingOffload, &c, NOW).await;
+
+    assert_eq!(stats.suspended_offload_unavailable, 1);
+    assert_eq!(stats.reaped, 1);
+    assert!(
+        !store.snapshot_claims().contains_key("owui-rec-claim"),
+        "the claim is deleted (cascade)"
+    );
+    assert!(
+        !store.snapshot().contains_key("owui-rec-bound"),
+        "the bound sandbox is cascade-released"
+    );
+}
+
+#[tokio::test]
+async fn s3_record_suspended_release_strips_finalizer_when_knob_active() {
+    // The degraded release runs the release path's finalizer branch: with
+    // the termination-finalizer knob active, the s3-snapshot finalizer is
+    // stripped pre-delete so the released sandbox cannot linger Terminating
+    // with no snapshot ever coming.
+    let store = StubSandboxStore::new();
+    let mut sbx = seed(
+        "owui-rec-fin",
+        "persistent",
+        NOW - 400,
+        Some(OperatingMode::Suspended),
+    );
+    sbx.metadata.finalizers = Some(vec![shared::FINALIZER_S3_SNAPSHOT.to_string()]);
+    store.insert_sandbox(sbx);
+    let c = cfg_s3_record(120, 300, 604_800);
+    assert!(
+        c.termination_finalizer_active(),
+        "precondition: the termination-finalizer knob is active"
+    );
+
+    let stats = reap_once(&store, &FailingOffload, &c, NOW).await;
+
+    assert_eq!(stats.suspended_offload_unavailable, 1);
+    assert_eq!(stats.reaped, 1);
+    assert!(!store.snapshot().contains_key("owui-rec-fin"));
+    assert_eq!(
+        store.finalizer_removals(),
+        vec!["owui-rec-fin".to_string()],
+        "the release path stripped the s3-snapshot finalizer"
+    );
+}

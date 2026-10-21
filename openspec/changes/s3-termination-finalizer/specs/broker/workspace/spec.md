@@ -36,6 +36,41 @@ stored in S3.
 - **THEN** the finalizer stays, the broker retries with backoff, and an
   alert-grade log records the blocked deletion
 
+### Requirement: unresumable suspended sandbox release
+
+In `s3-record` mode, a Suspended Sandbox whose offload fails SHALL be
+released only when the broker re-fetches it and still finds
+`operatingMode: Suspended`. That degraded release SHALL skip the S3
+snapshot and SHALL be surfaced via a dedicated stat and an alert-grade log.
+A Sandbox the offloader already resumed SHALL NOT be released: the ordinary
+offload-failure keep-alive applies.
+
+#### Scenario: still-suspended candidate released without a snapshot
+
+- **WHEN** the reaper reaps a Suspended `s3-record` Sandbox past the park
+  window, its offload fails, and a re-fetch still reports `operatingMode:
+  Suspended`
+- **THEN** the broker releases the Sandbox (deleting its bound claim, when
+  present, so the cascade frees the pod) without an S3 snapshot, and the
+  release is surfaced via the `suspended_offload_unavailable` stat plus an
+  alert-grade log
+
+#### Scenario: resumed candidate keeps the keep-alive
+
+- **WHEN** the offloader has already resumed the Sandbox (patched
+  `operatingMode: Running` and booted a serving pod) before its S3 put
+  failed, so the broker's re-fetch no longer reports `Suspended`
+- **THEN** the broker counts an ordinary offload failure, keeps the Sandbox
+  alive for the next tick, and removes no finalizer
+
+#### Scenario: S3 outage surfaces as offload unavailability
+
+- **WHEN** the S3 backend is unreachable for a Suspended `s3-record` Sandbox
+  whose offload cannot complete, and the Sandbox remains `Suspended`
+- **THEN** the release proceeds without a snapshot and the same
+  `suspended_offload_unavailable` stat (not a pod-absence stat) is
+  incremented, so alerting pages on offload availability rather than pod
+  absence
 ### Requirement: drain-belt for direct pod eviction
 
 The `s3-record` SandboxTemplate pod spec SHALL set

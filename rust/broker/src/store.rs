@@ -717,6 +717,12 @@ pub mod test_fakes {
         /// Pool-scoped runtime key (`owui-pool-key`); `None` (default) = the
         /// pool key is not provisioned and pool-key fallback fails closed.
         pool_key: Mutex<Option<String>>,
+        /// When set, `patch_operating_mode` fails with a synthetic apiserver
+        /// error (failure injection for the resume paths).
+        patch_mode_failure: AtomicBool,
+        /// Recorded remove_finalizer calls (sandbox names, oldest first) —
+        /// lets tests assert the finalizer-release branch ran.
+        finalizer_removals: Mutex<Vec<String>>,
     }
 
     impl StubSandboxStore {
@@ -734,6 +740,8 @@ pub mod test_fakes {
                 pods: Mutex::new(HashMap::new()),
                 claims: Mutex::new(HashMap::new()),
                 pool_key: Mutex::new(None),
+                patch_mode_failure: AtomicBool::new(false),
+                finalizer_removals: Mutex::new(Vec::new()),
             }
         }
 
@@ -874,6 +882,20 @@ pub mod test_fakes {
         pub fn moves(&self) -> Vec<WorkspaceMove> {
             self.job_moves.lock().expect("stub job_moves").clone()
         }
+
+        /// Toggle synthetic `patch_operating_mode` failures (default off).
+        pub fn set_patch_mode_failure(&self, failing: bool) {
+            self.patch_mode_failure.store(failing, Ordering::SeqCst);
+        }
+
+        /// Recorded remove_finalizer calls (sandbox names, oldest first).
+        #[must_use]
+        pub fn finalizer_removals(&self) -> Vec<String> {
+            self.finalizer_removals
+                .lock()
+                .expect("stub finalizer_removals")
+                .clone()
+        }
     }
 
     impl Default for StubSandboxStore {
@@ -978,6 +1000,12 @@ pub mod test_fakes {
             name: &str,
             mode: shared::OperatingMode,
         ) -> Result<(), StoreError> {
+            if self.patch_mode_failure.load(Ordering::SeqCst) {
+                return Err(StoreError::Kube(kube::Error::Api(Box::new(
+                    kube::core::Status::failure("injected stub patch failure", "InternalError")
+                        .with_code(500),
+                ))));
+            }
             let mut map = self.sandboxes.lock().expect("stub sandboxes");
             match map.get_mut(name) {
                 Some(sbx) => {
@@ -1048,6 +1076,10 @@ pub mod test_fakes {
         async fn remove_finalizer(&self, name: &str, finalizer: &str) -> Result<(), StoreError> {
             // Lenient like the kube impl: a vanished object means the delete
             // already completed.
+            self.finalizer_removals
+                .lock()
+                .expect("stub finalizer_removals")
+                .push(name.to_string());
             let mut map = self.sandboxes.lock().expect("stub sandboxes");
             if let Some(sbx) = map.get_mut(name) {
                 if let Some(finalizers) = sbx.metadata.finalizers.as_mut() {
