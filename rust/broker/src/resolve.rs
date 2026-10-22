@@ -691,14 +691,17 @@ async fn restore_on_resolve(
                         session_id,
                     )
                     .await?;
-                state
-                    .store
-                    .set_annotation(
-                        &resolved.name,
-                        crate::s3::RESTORED_POD_ANNOTATION,
-                        resolved.pod_uid.as_deref().unwrap_or_default(),
-                    )
-                    .await
+                // Never stamp an empty pod half: the gate treats a missing
+                // pod as "always re-restore" (the safe side) — an empty
+                // string stamp would make it skip forever.
+                if let Some(uid) = resolved.pod_uid.as_deref().filter(|u| !u.is_empty()) {
+                    state
+                        .store
+                        .set_annotation(&resolved.name, crate::s3::RESTORED_POD_ANNOTATION, uid)
+                        .await
+                } else {
+                    Ok(())
+                }
             }
             .await;
             if let Err(e) = stamped {

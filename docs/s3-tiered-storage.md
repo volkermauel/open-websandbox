@@ -76,17 +76,21 @@ projected files (no S3 secret lands in pod env, consistent with #48).
 
 Retention is **session-scoped**, not a global fixed window:
 
-- The broker keeps **only the latest** object per session prefix — each offload deletes prior
-  objects under `users/<uid-hash>/chats/<sid-hash>/`, so a prefix holds exactly one tarball.
+- The broker keeps **only the latest** object per session prefix — each offload writes a new
+  timestamped object under `users/<uid-hash>/chats/<sid-hash>/` and then prunes older ones
+  (best-effort: if the S3 policy denies delete, the snapshot is kept and a warn +
+  `open_websandbox_broker_s3_prune_failures_total` counter fire — **the bucket lifecycle rule
+  below is then the only retention mechanism and is REQUIRED**.
 - Each object is written with an `Expires` header (`now + retentionDays`) and
   `retention-days`/`session-snapshot` metadata (R2/D5).
 
 ### Recommended bucket lifecycle rule
 
-As a portable age-out safety net (the broker intentionally does **not** auto-manage the
-bucket lifecycle, to stay portable across AWS/MinIO/R2/Proxmox), apply a single lifecycle
-rule on the bucket prefix that matches every session and expires objects after
-`retentionDays`. AWS S3 / MinIO example:
+The broker's inline prune is best-effort and deliberately **not** auto-managed (portability
+across AWS/MinIO/R2/Proxmox): apply a lifecycle rule on the bucket prefix that matches every
+session and expires objects after `retentionDays`. Treat this rule as REQUIRED, not optional —
+it is the retention mechanism when deletes are denied at the policy level. AWS S3 / MinIO
+example:
 
 ```json
 {

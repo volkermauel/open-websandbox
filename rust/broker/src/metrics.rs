@@ -49,6 +49,7 @@ pub(crate) const SANDBOXES_CREATED_TOTAL: &str = "open_websandbox_broker_sandbox
 pub(crate) const SANDBOXES_DELETED_TOTAL: &str = "open_websandbox_broker_sandboxes_deleted_total";
 /// Frozen runtime-hop-error counter name.
 pub(crate) const RUNTIME_HOP_ERRORS_TOTAL: &str = "open_websandbox_broker_runtime_hop_errors_total";
+pub(crate) const S3_PRUNE_FAILURES_TOTAL: &str = "open_websandbox_broker_s3_prune_failures_total";
 /// Frozen auth-failure counter name (shared-Bearer guard + WS first-message auth).
 pub(crate) const AUTH_FAILURES_TOTAL: &str = "open_websandbox_broker_auth_failures_total";
 /// Frozen idle-reap counter name (leader reaper deletes, by reason).

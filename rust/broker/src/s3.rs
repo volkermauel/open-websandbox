@@ -578,6 +578,7 @@ impl S3Offload {
         // lifecycle policy's job; the broker only attempts the prune.
         let ns = s3_namespace(&self.prefix, user, session);
         if let Err(e) = self.cold.delete_prefix_except(&ns, Some(&key)).await {
+            metrics::counter!(crate::metrics::S3_PRUNE_FAILURES_TOTAL).increment(1);
             tracing::warn!(
                 sandbox = %name, prefix = %ns, error = %e,
                 "s3 keep-latest prune failed (snapshot kept; retention relies on the S3 lifecycle policy)"
