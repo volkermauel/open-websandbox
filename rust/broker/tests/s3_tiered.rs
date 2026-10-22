@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+use k8s_openapi::api::core::v1::Pod;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -347,4 +348,235 @@ async fn resolve_resumes_suspended_sandbox_and_restores_from_s3() {
 #[test]
 fn persistent_is_the_offload_gate() {
     assert_ne!(Profile::Persistent, Profile::Ephemeral);
+}
+
+// --- #209: restore gate — once per pod+session ------------------------------
+
+/// Ready pod with a stable UID (the #209 gate pins the restore stamp to it).
+fn ready_pod(name: &str, uid: &str) -> Pod {
+    Pod {
+        metadata: k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta {
+            name: Some(name.to_string()),
+            uid: Some(uid.to_string()),
+            ..Default::default()
+        },
+        status: Some(k8s_openapi::api::core::v1::PodStatus {
+            phase: Some("Running".into()),
+            pod_ip: Some("10.0.0.9".into()),
+            conditions: Some(vec![k8s_openapi::api::core::v1::PodCondition {
+                type_: "Ready".into(),
+                status: "True".into(),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+/// Number of `PUT /restore` hops the mock runtime has seen.
+async fn restore_puts(server: &MockServer) -> usize {
+    server
+        .received_requests()
+        .await
+        .expect("wiremock captures requests")
+        .into_iter()
+        .filter(|r| r.method == "PUT" && r.url.path() == "/restore")
+        .count()
+}
+
+#[tokio::test]
+async fn second_resolve_of_bound_pod_session_skips_restore_new_pod_restores() {
+    let server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path("/restore"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let store = Arc::new(StubSandboxStore::new());
+    let name = sandbox_name("user-1", "chat-1", Profile::Persistent);
+    store.insert_sandbox(persistent_sandbox(&name, "10.0.0.9"));
+    store.put_pod(ready_pod(&name, "pod-uid-1"));
+
+    let cold = Arc::new(InMemoryColdStore::new());
+    cold.seed(
+        &s3_object_key("users", "user-1", "chat-1", 1_700_000_000),
+        &b"workspace-tar-zst"[..],
+    );
+    let s3 = S3Offload::new(
+        &shared::BrokerConfig {
+            s3_prefix: "users".into(),
+            runtime_api_key: "rt-test-key".into(),
+            ..Default::default()
+        },
+        cold.clone(),
+        reqwest::Client::new(),
+    )
+    .with_runtime_upstream_override(server.uri());
+    let cfg = shared::BrokerConfig {
+        s3_prefix: "users".into(),
+        claim_timeout_seconds: 5,
+        ..Default::default()
+    };
+    let state = AppState::new(cfg, store.clone()).with_s3_restore(Arc::new(s3));
+
+    // Resolve 1: the pod has not served this session yet → restore runs.
+    resolve_sandbox(&state, "user-1", "chat-1", Profile::Persistent)
+        .await
+        .expect("first resolve restores");
+    assert_eq!(restore_puts(&server).await, 1, "first resolve PUT /restore");
+    let sbx = &store.snapshot()[&name];
+    assert_eq!(
+        sbx.metadata
+            .annotations
+            .as_ref()
+            .unwrap()
+            .get(broker::s3::RESTORED_SESSION_ANNOTATION)
+            .map(String::as_str),
+        Some("chat-1"),
+        "the successful restore stamps the served session"
+    );
+    assert_eq!(
+        sbx.metadata
+            .annotations
+            .as_ref()
+            .unwrap()
+            .get(broker::s3::RESTORED_POD_ANNOTATION)
+            .map(String::as_str),
+        Some("pod-uid-1"),
+        "the stamp is pinned to the pod UID"
+    );
+
+    // Resolve 2 (OWUI poll, same pod): the gate skips the S3 hop entirely —
+    // no new restore PUT and no new S3 GET.
+    let log_before = cold.log();
+    resolve_sandbox(&state, "user-1", "chat-1", Profile::Persistent)
+        .await
+        .expect("second resolve succeeds via the gate");
+    assert_eq!(
+        restore_puts(&server).await,
+        1,
+        "second resolve must NOT re-issue PUT /restore"
+    );
+    assert_eq!(
+        cold.log(),
+        log_before,
+        "second resolve must not touch S3 (no new GET)"
+    );
+
+    // Resolve 3: the pod was REPLACED (new UID, fresh empty workspace) —
+    // the stamp no longer matches, so the restore runs again (D7 keeps
+    // covering workspace loss).
+    store.put_pod(ready_pod(&name, "pod-uid-2"));
+    resolve_sandbox(&state, "user-1", "chat-1", Profile::Persistent)
+        .await
+        .expect("post-replacement resolve restores");
+    assert_eq!(restore_puts(&server).await, 2, "a new pod restores again");
+    assert_eq!(
+        store.snapshot()[&name]
+            .metadata
+            .annotations
+            .as_ref()
+            .unwrap()
+            .get(broker::s3::RESTORED_POD_ANNOTATION)
+            .map(String::as_str),
+        Some("pod-uid-2"),
+        "the stamp tracks the new pod"
+    );
+}
+
+#[tokio::test]
+async fn resolve_survives_touch_last_used_failure() {
+    // The best-effort `broker-last-used` touches must never fail a resolve
+    // (#209: they now log at warn instead of staying silent).
+    let store = Arc::new(StubSandboxStore::new());
+    store.set_touch_failure(true);
+    let name = sandbox_name("user-1", "chat-2", Profile::Persistent);
+    store.insert_sandbox(persistent_sandbox(&name, "10.0.0.9"));
+    store.put_pod(ready_pod(&name, "pod-uid-1"));
+
+    let cfg = shared::BrokerConfig {
+        claim_timeout_seconds: 5,
+        ..Default::default()
+    };
+    let state = AppState::new(cfg, store.clone());
+
+    let resolved = resolve_sandbox(&state, "user-1", "chat-2", Profile::Persistent)
+        .await
+        .expect("a failed touch must not fail the resolve");
+    assert_eq!(resolved.pod_ip, "10.0.0.9");
+}
+
+// --- #209 follow-up: keep-latest prune failure is NON-fatal ------------------
+
+/// ColdStore double whose keep-latest prune always fails (e.g. the bucket
+/// policy denies `s3:DeleteObject`) while puts/gets keep working.
+struct DenyDeleteStore {
+    inner: InMemoryColdStore,
+}
+
+#[async_trait::async_trait]
+impl ColdStore for DenyDeleteStore {
+    async fn put_object(
+        &self,
+        key: &str,
+        body: bytes::Bytes,
+        retention_days: u32,
+    ) -> Result<(), broker::ColdError> {
+        self.inner.put_object(key, body, retention_days).await
+    }
+    async fn latest_key(&self, prefix: &str) -> Result<Option<String>, broker::ColdError> {
+        self.inner.latest_key(prefix).await
+    }
+    async fn get_object(&self, key: &str) -> Result<bytes::Bytes, broker::ColdError> {
+        self.inner.get_object(key).await
+    }
+    async fn delete_prefix_except(
+        &self,
+        _prefix: &str,
+        _skip: Option<&str>,
+    ) -> Result<u64, broker::ColdError> {
+        Err(broker::ColdError::S3(
+            "delete denied by bucket policy".to_string(),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn offload_succeeds_when_keep_latest_prune_is_denied() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/snapshot"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"fresh-snapshot".as_slice()))
+        .mount(&server)
+        .await;
+
+    let cold = Arc::new(DenyDeleteStore {
+        inner: InMemoryColdStore::new(),
+    });
+    // An old snapshot that can no longer be pruned.
+    cold.inner.seed(
+        &s3_object_key("users", "u", "s", 1_699_000_000),
+        &b"old"[..],
+    );
+
+    let cfg = shared::BrokerConfig {
+        s3_prefix: "users".into(),
+        runtime_api_key: "rt-test-key".into(),
+        ..Default::default()
+    };
+    let offload = S3Offload::new(&cfg, cold.clone(), reqwest::Client::new())
+        .with_runtime_upstream_override(server.uri())
+        .with_retry_policy(1, Duration::ZERO);
+
+    offload
+        .offload_on_reap(&persistent_sandbox("owui-c-abc", "10.0.0.5"))
+        .await
+        .expect("a denied prune must not fail the offload — the snapshot uploaded fine");
+    assert_eq!(
+        cold.inner.keys().len(),
+        2,
+        "new snapshot AND the undeletable old object both remain"
+    );
 }
