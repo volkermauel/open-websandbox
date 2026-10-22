@@ -340,6 +340,10 @@ mod tests {
             last_offloaded_key: None,
             name: "owui-c-deadbeef".into(),
             pod_ip: "10.0.0.5".into(),
+            restored_session: None,
+            restored_pod: None,
+            pod_uid: None,
+            operating_mode: None,
         }
     }
 

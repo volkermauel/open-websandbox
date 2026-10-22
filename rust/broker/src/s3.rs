@@ -55,6 +55,19 @@ const DEFAULT_RETENTION_DAYS: u32 = 30;
 /// read-after-list race on the S3 backend cannot restore a stale snapshot
 /// (#195 hardening).
 pub const S3_LAST_KEY_ANNOTATION: &str = "broker-s3-last-offloaded-key";
+
+/// Sandbox annotation stamped after a successful restore-on-resume, naming
+/// the session that pod is already serving (#209): later resolves of the
+/// same pod+session skip the S3 LIST + `/restore` PUT entirely. Cleared
+/// implicitly by pod replacement — the companion
+/// [`RESTORED_POD_ANNOTATION`] pins the stamp to the pod UID.
+pub const RESTORED_SESSION_ANNOTATION: &str = "broker-s3-restored-session";
+
+/// Pod-UID half of the [`RESTORED_SESSION_ANNOTATION`] gate (#209): the
+/// skip only applies while the SAME pod still serves the session. A new
+/// pod (pod replaced, or a Suspended sandbox resumed) mismatches and
+/// restores as usual — D7 keeps covering every workspace-loss path.
+pub const RESTORED_POD_ANNOTATION: &str = "broker-s3-restored-pod";
 const DEFAULT_OFFLOAD_MAX_ATTEMPTS: u32 = 5;
 const DEFAULT_OFFLOAD_BACKOFF: Duration = Duration::from_secs(10);
 
@@ -558,14 +571,17 @@ impl S3Offload {
 
         // Then delete OLD under the namespace, skipping the just-uploaded key
         // (keep-latest; per-object delete; prefix never empty mid-offload).
+        // NON-FATAL (#209 follow-up, live-verified): a prune the S3 policy
+        // denies must not turn a durable snapshot into a "failed" offload —
+        // that held the termination finalizer (deletion blocked) and, under
+        // serial retries, stalled whole reaper ticks. Retention is the S3
+        // lifecycle policy's job; the broker only attempts the prune.
         let ns = s3_namespace(&self.prefix, user, session);
         if let Err(e) = self.cold.delete_prefix_except(&ns, Some(&key)).await {
-            // A keep-latest delete failure does NOT lose the snapshot (the new
-            // object is already durably stored); surface it so the reaper can
-            // decide, but the data is safe.
-            return Err(OffloadError::Failed(format!(
-                "s3 keep-latest delete {ns}: {e}"
-            )));
+            tracing::warn!(
+                sandbox = %name, prefix = %ns, error = %e,
+                "s3 keep-latest prune failed (snapshot kept; retention relies on the S3 lifecycle policy)"
+            );
         }
         tracing::info!(
             sandbox = %name, %key, user, session, "s3 offload complete"

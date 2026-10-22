@@ -654,3 +654,93 @@ async fn s3_record_suspended_release_strips_finalizer_when_knob_active() {
         "the release path stripped the s3-snapshot finalizer"
     );
 }
+
+// --- #209: untracked (no broker-last-used) sandboxes age from creationTimestamp ---
+
+/// A seed sandbox with NO `broker-last-used` (the claim-created shape: the
+/// controller built the object and the best-effort touch never landed) whose
+/// `metadata.creationTimestamp` is `created` epoch seconds.
+fn seed_untracked_created_at(name: &str, profile: &str, created: i64) -> Sandbox {
+    let mut sbx = seed_no_last_used(name, profile);
+    sbx.metadata.creation_timestamp = Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+        k8s_openapi::jiff::Timestamp::from_second(created).unwrap(),
+    ));
+    sbx
+}
+
+#[tokio::test]
+async fn s3_record_sandbox_without_last_used_reaps_after_creation_timestamp_age() {
+    let store = StubSandboxStore::new();
+    store.insert_sandbox(seed_untracked_created_at(
+        "owui-rec-nolu-1",
+        "persistent",
+        NOW - 400,
+    ));
+    let c = cfg_s3_record(120, 300, 604_800);
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(
+        stats.reaped, 1,
+        "creationTimestamp age past the park window reaps instead of stranding forever"
+    );
+    assert!(!store.snapshot().contains_key("owui-rec-nolu-1"));
+}
+
+#[tokio::test]
+async fn s3_record_sandbox_without_last_used_under_park_window_is_skipped() {
+    let store = StubSandboxStore::new();
+    store.insert_sandbox(seed_untracked_created_at(
+        "owui-rec-nolu-2",
+        "persistent",
+        NOW - 10,
+    ));
+    let c = cfg_s3_record(120, 300, 604_800);
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(stats.reaped, 0);
+    assert_eq!(stats.skipped, 1, "a young untracked sandbox is still warm");
+    assert!(store.snapshot().contains_key("owui-rec-nolu-2"));
+}
+
+#[tokio::test]
+async fn s3_record_sandbox_without_last_used_nor_creation_timestamp_is_skipped() {
+    let store = StubSandboxStore::new();
+    store.insert_sandbox(seed_no_last_used("owui-rec-nolu-3", "persistent"));
+    let c = cfg_s3_record(120, 300, 604_800);
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(
+        stats.skipped, 1,
+        "no aging input at all → conservative skip"
+    );
+    assert_eq!(stats.reaped, 0);
+}
+
+#[tokio::test]
+async fn per_user_pvc_sandbox_without_last_used_still_skips_not_reaps() {
+    // Mode gate unchanged: parked per-user PVCs are legitimate, so an
+    // untracked PVC-mode sandbox keeps the "not yet tracked" skip.
+    let store = StubSandboxStore::new();
+    store.insert_sandbox(seed_untracked_created_at(
+        "owui-pvc-nolu-1",
+        "persistent",
+        NOW - 400,
+    ));
+    let c = shared::BrokerConfig {
+        idle_ttl_seconds: 120,
+        park_idle_seconds: 300,
+        reap_seconds: 604_800,
+        s3_enabled: true,
+        persistent_mode: shared::PersistentMode::PerUserPvc,
+        ..Default::default()
+    };
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(stats.reaped, 0);
+    assert_eq!(stats.skipped, 1);
+    assert!(store.snapshot().contains_key("owui-pvc-nolu-1"));
+}

@@ -49,6 +49,17 @@ pub struct ResolvedSandbox {
     /// (`None` when absent) — the restore path prefers it over a fresh S3
     /// LIST (#195 hardening).
     pub last_offloaded_key: Option<String>,
+    /// `broker-s3-restored-session` stamp at resolve time (`None` when
+    /// absent) — the #209 once-per-pod+session restore gate.
+    pub restored_session: Option<String>,
+    /// `broker-s3-restored-pod` stamp: the pod UID the session was restored
+    /// into. The gate skips only when it equals the CURRENT pod's UID.
+    pub restored_pod: Option<String>,
+    /// Current pod UID (`None` when resolved via the Sandbox-status fallback,
+    /// which does not read the Pod object — the gate never skips then).
+    pub pod_uid: Option<String>,
+    /// `spec.operatingMode` at resolve time (gate requires `Running`).
+    pub operating_mode: Option<shared::OperatingMode>,
 }
 
 /// Deterministic, DNS-label-safe per-session Sandbox name.
@@ -123,6 +134,13 @@ fn ready_pod_ip(sbx: &Sandbox) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Non-empty annotation snapshot for the #209 restore gate (`None` when
+/// the sandbox read failed or the annotation is absent/empty).
+fn sbx_snapshot(sbx: Option<&Sandbox>, key: &str) -> Option<String> {
+    sbx.map(|s| crate::s3::annotation(s, key))
+        .filter(|v| !v.is_empty())
 }
 
 /// Map a [`StoreError`] onto an [`ApiError`] for the resolve path.
@@ -331,7 +349,9 @@ pub async fn resolve_sandbox(
             // the sandbox mid-boot (digest-verified: "not ready in 60s
             // (… Suspended reason=PodTerminated … SandboxSuspended)"), and the
             // resolve could never win the race.
-            let _ = state.store.touch_last_used(&name, now_unix()).await;
+            if let Err(e) = state.store.touch_last_used(&name, now_unix()).await {
+                tracing::warn!(sandbox = %name, error = %e, "non-fatal last-used touch failed");
+            }
         }
     }
 
@@ -344,51 +364,13 @@ pub async fn resolve_sandbox(
         .touch_last_used(&resolved.name, now_unix())
         .await
     {
-        tracing::debug!(sandbox = %resolved.name, error = %e, "non-fatal last-used touch");
+        tracing::warn!(sandbox = %resolved.name, error = %e, "non-fatal last-used touch failed");
     }
-    // C-4 restore-on-resume (gated on S3 tiering +
-    // persistent profile): block readiness until S3 → /workspace is present.
-    // No-op on first creation (no object under the namespace); on restore
-    // failure we FAIL the resume (502) so the user never gets an empty
-    // workspace (D7).
+    // C-4 restore-on-resume (gated on S3 tiering + persistent profile): block
+    // readiness until S3 → /workspace is present, once per pod+session (#209).
     if profile == Profile::Persistent {
         if let Some(tier) = state.s3_restore.clone() {
-            // Prefer the Sandbox's last-offloaded-key stamp over a fresh LIST
-            // (#195 hardening: a read-after-list race on the S3 backend could
-            // otherwise restore a stale snapshot over newer hot-tier data).
-            let recorded = resolved.last_offloaded_key.as_deref();
-            match tier
-                .restore_on_resume(
-                    &resolved.name,
-                    &resolved.pod_ip,
-                    user_id,
-                    session_id,
-                    recorded,
-                )
-                .await
-            {
-                Ok(crate::s3::RestoreOutcome::Restored(key)) => {
-                    tracing::info!(
-                        sandbox = %resolved.name, key = %key,
-                        "s3 restore-on-resume complete"
-                    );
-                }
-                Ok(crate::s3::RestoreOutcome::NoObject) => {
-                    tracing::debug!(
-                        sandbox = %resolved.name,
-                        "s3 restore skipped (no object — first creation)"
-                    );
-                }
-                Ok(crate::s3::RestoreOutcome::HotTierHit) => {
-                    tracing::debug!(
-                        sandbox = %resolved.name,
-                        "s3 restore skipped (workspace non-empty — hot-tier hit)"
-                    );
-                }
-                Err(e) => {
-                    return Err(ApiError::BadGateway(format!("s3 restore failed: {e}")));
-                }
-            }
+            restore_on_resolve(state, tier.as_ref(), &resolved, user_id, session_id).await?;
         }
     }
     // #157 draft adoption: block until the draft→chat move completed so the
@@ -602,7 +584,12 @@ async fn resolve_by_claim(
                     // as the direct path): last-used is otherwise only touched
                     // AFTER readiness, and a slow resume let the reaper
                     // re-park the sandbox mid-boot.
-                    let _ = state.store.touch_last_used(&bound, now_unix()).await;
+                    if let Err(e) = state.store.touch_last_used(&bound, now_unix()).await {
+                        tracing::warn!(
+                            sandbox = %bound, error = %e,
+                            "non-fatal last-used touch failed"
+                        );
+                    }
                 }
                 Err(e) => {
                     tracing::warn!(sandbox = %bound, error = %e, "claim resume patch failed");
@@ -627,39 +614,14 @@ async fn resolve_by_claim(
         .touch_last_used(&resolved.name, now_unix())
         .await
     {
-        tracing::debug!(sandbox = %resolved.name, error = %e, "non-fatal last-used touch");
+        tracing::warn!(sandbox = %resolved.name, error = %e, "non-fatal last-used touch failed");
     }
 
-    // s3-record: restore-before-ready — the resolve response blocks until
-    // the S3 snapshot is back in the fresh scratch PVC (same contract as the
-    // per-user-pvc restore-on-resume: on failure we 502 so the user never
-    // sees an empty workspace, D7).
+    // s3-record: restore-before-ready — once per pod+session (#209); on
+    // failure we 502 so the user never sees an empty workspace, D7.
     if profile == Profile::Persistent {
         if let Some(tier) = state.s3_restore.clone() {
-            let recorded = resolved.last_offloaded_key.as_deref();
-            match tier
-                .restore_on_resume(
-                    &resolved.name,
-                    &resolved.pod_ip,
-                    user_id,
-                    session_id,
-                    recorded,
-                )
-                .await
-            {
-                Ok(crate::s3::RestoreOutcome::Restored(key)) => {
-                    tracing::info!(sandbox = %resolved.name, key = %key, "s3 restore-before-ready complete");
-                }
-                Ok(crate::s3::RestoreOutcome::NoObject) => {
-                    tracing::debug!(sandbox = %resolved.name, "s3 restore skipped (no snapshot — first creation)");
-                }
-                Ok(crate::s3::RestoreOutcome::HotTierHit) => {
-                    tracing::debug!(sandbox = %resolved.name, "s3 restore skipped (workspace non-empty — hot-tier hit)");
-                }
-                Err(e) => {
-                    return Err(ApiError::BadGateway(format!("s3 restore failed: {e}")));
-                }
-            }
+            restore_on_resolve(state, tier.as_ref(), &resolved, user_id, session_id).await?;
         }
     }
 
@@ -671,6 +633,104 @@ async fn resolve_by_claim(
         adopt_draft_s3(state, user_id, session_id, &resolved).await;
     }
     Ok(resolved)
+}
+
+/// s3-record restore-on-resume, gated once per pod+session (#209).
+///
+/// The FIRST successful restore stamps `broker-s3-restored-session` +
+/// `broker-s3-restored-pod` (pod UID) on the Sandbox. While that same pod
+/// keeps serving the same session in `Running` mode, later resolves skip the
+/// S3 LIST + `/restore` PUT entirely — Open Web UI's polling resolves every
+/// few seconds and would otherwise re-issue the restore hop each time (the
+/// observed log flood). Any other shape — fresh sandbox, pod replaced, a
+/// Suspended sandbox resumed, a resolve that only saw the Sandbox-status
+/// fallback (no Pod UID in hand) — restores as before, so D7 semantics are
+/// untouched when the gate does not skip.
+async fn restore_on_resolve(
+    state: &AppState,
+    tier: &crate::s3::S3Offload,
+    resolved: &ResolvedSandbox,
+    user_id: &str,
+    session_id: &str,
+) -> Result<(), ApiError> {
+    if resolved.restored_session.as_deref() == Some(session_id)
+        && resolved.restored_pod.is_some()
+        && resolved.restored_pod == resolved.pod_uid
+        && resolved.operating_mode == Some(shared::OperatingMode::Running)
+    {
+        tracing::debug!(
+            sandbox = %resolved.name,
+            "s3 restore skipped (pod already serves this session)"
+        );
+        return Ok(());
+    }
+    // Prefer the Sandbox's last-offloaded-key stamp over a fresh LIST
+    // (#195 hardening: a read-after-list race on the S3 backend could
+    // otherwise restore a stale snapshot over newer hot-tier data).
+    let recorded = resolved.last_offloaded_key.as_deref();
+    match tier
+        .restore_on_resume(
+            &resolved.name,
+            &resolved.pod_ip,
+            user_id,
+            session_id,
+            recorded,
+        )
+        .await
+    {
+        Ok(outcome) => {
+            // Stamp AFTER a successful restore so the next resolve skips the
+            // S3 hop. Best-effort: a failed stamp merely re-restores next
+            // resolve (D7-safe).
+            let stamped = async {
+                state
+                    .store
+                    .set_annotation(
+                        &resolved.name,
+                        crate::s3::RESTORED_SESSION_ANNOTATION,
+                        session_id,
+                    )
+                    .await?;
+                state
+                    .store
+                    .set_annotation(
+                        &resolved.name,
+                        crate::s3::RESTORED_POD_ANNOTATION,
+                        resolved.pod_uid.as_deref().unwrap_or_default(),
+                    )
+                    .await
+            }
+            .await;
+            if let Err(e) = stamped {
+                tracing::warn!(
+                    sandbox = %resolved.name, error = %e,
+                    "restored-session stamp failed (next resolve re-restores)"
+                );
+            }
+            match outcome {
+                crate::s3::RestoreOutcome::Restored(key) => {
+                    tracing::info!(
+                        sandbox = %resolved.name, key = %key,
+                        "s3 restore-on-resume complete"
+                    );
+                }
+                crate::s3::RestoreOutcome::NoObject => {
+                    tracing::debug!(
+                        sandbox = %resolved.name,
+                        "s3 restore skipped (no snapshot — first creation)"
+                    );
+                }
+                crate::s3::RestoreOutcome::HotTierHit => {
+                    tracing::debug!(
+                        sandbox = %resolved.name,
+                        "s3 restore skipped (workspace non-empty — hot-tier hit)"
+                    );
+                }
+            }
+            Ok(())
+        }
+        Err(e) => Err(ApiError::BadGateway(format!("s3 restore failed: {e}"))),
+    }
 }
 
 /// s3-record draft adoption: when the user's draft sandbox
@@ -923,6 +983,14 @@ async fn wait_for_ready(state: &AppState, name: &str) -> Result<ResolvedSandbox,
                     name: name.to_string(),
                     pod_ip: ip,
                     last_offloaded_key: last_offloaded_key.flatten(),
+                    restored_session: sbx_snapshot(
+                        sbx.as_ref(),
+                        crate::s3::RESTORED_SESSION_ANNOTATION,
+                    ),
+                    restored_pod: sbx_snapshot(sbx.as_ref(), crate::s3::RESTORED_POD_ANNOTATION),
+                    // Only the Pod object carries the UID the #209 gate pins to.
+                    pod_uid: pod.metadata.uid.clone().filter(|u| !u.is_empty()),
+                    operating_mode: sbx.as_ref().and_then(|s| s.spec.operating_mode),
                 });
             }
             last_digest = pod_condition_summary(&pod);
@@ -942,6 +1010,15 @@ async fn wait_for_ready(state: &AppState, name: &str) -> Result<ResolvedSandbox,
                     name: name.to_string(),
                     pod_ip: ip,
                     last_offloaded_key,
+                    restored_session: sbx_snapshot(
+                        Some(&sbx),
+                        crate::s3::RESTORED_SESSION_ANNOTATION,
+                    ),
+                    restored_pod: sbx_snapshot(Some(&sbx), crate::s3::RESTORED_POD_ANNOTATION),
+                    // No Pod object in hand → no UID → the #209 gate never
+                    // skips (restore runs, the safe side).
+                    pod_uid: None,
+                    operating_mode: sbx.spec.operating_mode,
                 });
             }
             last_digest = condition_summary(sbx.status.as_ref());

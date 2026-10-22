@@ -153,6 +153,12 @@ fn last_used_of(annotations: &BTreeMap<String, String>) -> Option<i64> {
         .and_then(|v| v.parse::<i64>().ok())
 }
 
+/// Sandbox `metadata.creationTimestamp` as epoch seconds (`None` when
+/// absent). The #209 aging fallback for untracked s3-record sandboxes.
+fn creation_epoch_secs(sbx: &Sandbox) -> Option<i64> {
+    Some(sbx.metadata.creation_timestamp.as_ref()?.0.as_second())
+}
+
 /// Whether the s3-snapshot finalizer is present on the sandbox.
 fn has_finalizer(sbx: &Sandbox, finalizer: &str) -> bool {
     sbx.metadata
@@ -412,16 +418,27 @@ pub async fn reap_once(
             handle_terminating(store, offload, cfg, sbx, &mut stats).await;
             continue;
         }
-        // No usable last-used → skip (treat absent as "not yet tracked").
-        let lu = sbx.metadata.annotations.as_ref().and_then(last_used_of);
-        let Some(lu) = lu else {
-            stats.skipped += 1;
-            continue;
+        // No usable last-used → in s3-record, age the sandbox from its
+        // creationTimestamp instead (#209: claim-created members only get
+        // `broker-last-used` from the best-effort resolve-time touch — a
+        // silent failure used to strand them forever). Every other mode
+        // keeps the "not yet tracked" skip (parked per-user PVCs are
+        // legitimate).
+        let lu = match sbx.metadata.annotations.as_ref().and_then(last_used_of) {
+            Some(lu) if lu != 0 => lu,
+            None if cfg.persistent_mode.is_s3_record() => {
+                if let Some(ts) = creation_epoch_secs(sbx) {
+                    ts
+                } else {
+                    stats.skipped += 1;
+                    continue;
+                }
+            }
+            _ => {
+                stats.skipped += 1;
+                continue;
+            }
         };
-        if lu == 0 {
-            stats.skipped += 1;
-            continue;
-        }
         let idle = (now - lu).max(0) as u64;
         let profile = profile_of(sbx.metadata.labels.as_ref());
         let mode = sbx.spec.operating_mode.unwrap_or(OperatingMode::Running);
@@ -858,5 +875,21 @@ mod tests {
         assert_eq!(last_used_of(&a), Some(1_700_000_000));
         a.insert(LAST_USED_KEY.into(), "0".into());
         assert_eq!(last_used_of(&a), Some(0), "0 parses but the loop skips it");
+    }
+
+    #[test]
+    fn creation_timestamp_ages_to_epoch_seconds() {
+        let ts = |secs| {
+            let mut sbx = Sandbox::new("n", shared::SandboxSpec::default());
+            sbx.metadata.creation_timestamp =
+                Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+                    k8s_openapi::jiff::Timestamp::from_second(secs).unwrap(),
+                ));
+            sbx
+        };
+        assert_eq!(creation_epoch_secs(&ts(1_700_000_000)), Some(1_700_000_000));
+        let mut none = Sandbox::new("n", shared::SandboxSpec::default());
+        none.metadata.creation_timestamp = None;
+        assert_eq!(creation_epoch_secs(&none), None);
     }
 }
