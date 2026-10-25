@@ -1,3 +1,11 @@
 {
-  "ignore": ["open-websandbox-platform/chart/templates/**", "open-websandbox-platform/upstream/**"]
+  "ignore": ["open-websandbox-platform/chart/templates/**", "open-websandbox-platform/upstream/**"],
+  "rules": {
+    "rust-conventions": {
+      "disable": ["rust-expect", "rust-unwrap"]
+    },
+    "docs-style": {
+      "disable": ["MD060", "MD024", "MD036", "document-start", "comments-indentation"]
+    }
+  }
 }
