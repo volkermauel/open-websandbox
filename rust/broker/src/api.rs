@@ -402,6 +402,9 @@ pub async fn create_sandbox(
         .ok_or_else(|| ApiError::NotFound(format!("template {} not found", req.template_name)))?;
 
     let pod_template = extract_pod_template(&template)?;
+    // Drift-detection stamp: hash the PRISTINE template (build_sandbox
+    // mutates its clone).
+    let hash = crate::sandbox::template_hash(&template);
     let sandbox = build_sandbox(
         &req.name,
         req.user_id.as_deref(),
@@ -410,6 +413,7 @@ pub async fn create_sandbox(
         pod_template,
         &state.config.runtime_ns,
         now_unix(),
+        hash.as_deref(),
     );
 
     match state.store.create_sandbox(sandbox).await {

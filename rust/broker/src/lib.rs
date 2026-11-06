@@ -51,7 +51,7 @@ pub use s3::{
     s3_namespace, s3_object_key, AwsColdStore, ColdError, ColdStore, RestoreError, RestoreOutcome,
     S3Offload,
 };
-pub use sandbox::{build_sandbox, extract_pod_template};
+pub use sandbox::{build_sandbox, extract_pod_template, template_hash};
 pub use shared;
 pub use state::AppState;
 pub use store::{KubeSandboxStore, SandboxStore, StoreError};

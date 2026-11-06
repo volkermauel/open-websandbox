@@ -15,6 +15,7 @@
 use std::collections::BTreeMap;
 
 use kube::ResourceExt;
+use sha2::{Digest, Sha256};
 
 use serde_json::Value;
 use shared::{OperatingMode, Profile, Sandbox, SandboxSpec, SandboxTemplate, ShutdownPolicy};
@@ -56,6 +57,51 @@ pub const AUTH_POOL_KEY: &str = "pool-key";
 /// Name of the pool-scoped runtime key Secret (chart-rendered, mounted by
 /// the dedicated pool template).
 pub const POOL_KEY_SECRET: &str = "owui-pool-key";
+/// Annotation carrying the sha256 (hex) of the template fields cloned into
+/// the Sandbox at creation (`owui.io/template-hash`) — the template-drift
+/// self-heal compares it against the live [`SandboxTemplate`]. Absent on
+/// legacy sandboxes (pre-stamping) and controller-built (claim-path)
+/// sandboxes; both are never recycled.
+pub const TEMPLATE_HASH_KEY: &str = "owui.io/template-hash";
+/// Annotation stamped with the epoch seconds of the most recent
+/// template-drift recycle of the (deterministically named) sandbox. Gates a
+/// short anti-loop grace window: a freshly recycled sandbox is never
+/// recycled again within [`crate::reaper::RECYCLE_GRACE_SECS`].
+pub const RECYCLED_AT_KEY: &str = "broker-recycled-at";
+
+/// Canonical JSON: object keys sorted recursively, so the serialization is
+/// stable regardless of how the source was parsed/constructed (serde_json's
+/// `Map` ordering is not a contract we own). The hash input for
+/// [`template_hash`] must be identical across broker replicas and versions.
+fn canonical_json(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => map
+            .iter()
+            .map(|(k, v)| (k.clone(), canonical_json(v)))
+            .collect::<serde_json::Map<String, serde_json::Value>>()
+            .into(),
+        serde_json::Value::Array(items) => {
+            items.iter().map(canonical_json).collect::<Vec<_>>().into()
+        }
+        other => other.clone(),
+    }
+}
+
+/// sha256 (hex) over the [`SandboxTemplate`] fields the broker copies into
+/// each Sandbox — currently `spec.podTemplate`, the sole cloned field in the
+/// CRD model (`spec.envVarsInjectionPolicy` /
+/// `spec.volumeClaimTemplatesPolicy` do not exist on
+/// [`shared::SandboxTemplateSpec`] yet; when the CRD gains them they must be
+/// folded into this hash). `None` when the template carries no podTemplate —
+/// such a template can never build a sandbox, so there is nothing to stamp.
+#[must_use]
+pub fn template_hash(template: &SandboxTemplate) -> Option<String> {
+    let pod = template.spec.pod_template.as_ref()?;
+    let mut hasher = Sha256::new();
+    hasher.update(canonical_json(pod).to_string().as_bytes());
+    let digest = hasher.finalize();
+    Some(digest.iter().map(|b| format!("{b:02x}")).collect())
+}
 
 /// Extract the template's `podTemplate` (opaque JSON) to clone into a Sandbox.
 ///
@@ -143,6 +189,7 @@ pub fn apply_persistent_volume(
 /// passes the current epoch seconds. `pod_template` is the template's pod
 /// blueprint (the caller already [`extract_pod_template`]d it); this helper
 /// stamps the `profile` label onto it.
+#[allow(clippy::too_many_arguments)] // the broker-stamped field set is inherently wide
 #[must_use]
 pub fn build_sandbox(
     name: &str,
@@ -152,6 +199,7 @@ pub fn build_sandbox(
     mut pod_template: serde_json::Value,
     namespace: &str,
     now: i64,
+    template_hash: Option<&str>,
 ) -> Sandbox {
     // Stamp the profile label onto the pod blueprint's metadata
     // (pod_tmpl.metadata.labels["profile"] = profile).
@@ -186,6 +234,9 @@ pub fn build_sandbox(
     }
     if let Some(session) = session_id {
         annotations.insert(SESSION_KEY.to_string(), session.to_string());
+    }
+    if let Some(hash) = template_hash {
+        annotations.insert(TEMPLATE_HASH_KEY.to_string(), hash.to_string());
     }
 
     let mut sandbox = Sandbox::new(
@@ -238,6 +289,7 @@ mod tests {
             pod,
             "agent-sandbox-runtime",
             1_700_000_000,
+            Some("abc123"),
         );
 
         assert_eq!(sbx.name_any(), "owui-c-abcdef");
@@ -252,6 +304,7 @@ mod tests {
         assert_eq!(annots.get(LAST_USED_KEY).unwrap(), "1700000000");
         assert_eq!(annots.get(USER_KEY).unwrap(), "user-1");
         assert_eq!(annots.get(SESSION_KEY).unwrap(), "chat-1");
+        assert_eq!(annots.get(TEMPLATE_HASH_KEY).unwrap(), "abc123");
 
         assert_eq!(sbx.spec.operating_mode, Some(OperatingMode::Running));
         assert_eq!(sbx.spec.shutdown_policy, Some(ShutdownPolicy::Retain));
@@ -271,10 +324,11 @@ mod tests {
     fn build_sandbox_omits_user_session_when_absent() {
         let tmpl = template_with_pod();
         let pod = extract_pod_template(&tmpl).unwrap();
-        let sbx = build_sandbox("noid", None, None, Profile::Ephemeral, pod, "ns", 0);
+        let sbx = build_sandbox("noid", None, None, Profile::Ephemeral, pod, "ns", 0, None);
         let annots = sbx.metadata.annotations.as_ref().unwrap();
         assert!(!annots.contains_key(USER_KEY));
         assert!(!annots.contains_key(SESSION_KEY));
+        assert!(!annots.contains_key(TEMPLATE_HASH_KEY));
         assert_eq!(
             sbx.metadata
                 .labels
@@ -303,7 +357,7 @@ mod tests {
     fn build_sandbox_stamps_profile_label_onto_metadataless_template() {
         // A podTemplate with no metadata must still get the profile label.
         let pod = serde_json::json!({"spec": {"containers": []}});
-        let sbx = build_sandbox("x", None, None, Profile::Ephemeral, pod, "ns", 1);
+        let sbx = build_sandbox("x", None, None, Profile::Ephemeral, pod, "ns", 1, None);
         assert_eq!(
             sbx.spec.pod_template.as_ref().unwrap()["metadata"]["labels"]["profile"],
             "ephemeral"
@@ -378,5 +432,71 @@ mod tests {
         }});
         let err = apply_persistent_volume(&mut pod, "c", "s").unwrap_err();
         assert!(matches!(err, ApiError::BadRequest(_)), "{err:?}");
+    }
+
+    // --- template hash (drift self-heal stamp) -------------------------------
+
+    #[test]
+    fn template_hash_is_deterministic_and_key_order_independent() {
+        let a = SandboxTemplate::new(
+            "t",
+            shared::SandboxTemplateSpec {
+                description: None,
+                pod_template: Some(serde_json::json!({
+                    "spec": {"containers": [{"image": "img:1", "name": "sandbox"}]}
+                })),
+            },
+        );
+        // Same content, different construction order of the object keys.
+        let b = SandboxTemplate::new(
+            "t",
+            shared::SandboxTemplateSpec {
+                description: None,
+                pod_template: Some(serde_json::json!({
+                    "spec": {"containers": [{"name": "sandbox", "image": "img:1"}]}
+                })),
+            },
+        );
+        let ha = template_hash(&a).unwrap();
+        assert_eq!(ha, template_hash(&a).unwrap(), "deterministic");
+        assert_eq!(ha, template_hash(&b).unwrap(), "canonical (key-order free)");
+        assert_eq!(ha.len(), 64, "sha256 hex");
+    }
+
+    #[test]
+    fn template_hash_changes_with_pod_blueprint_and_ignores_description() {
+        let mk = |image: &str, desc: Option<String>| {
+            SandboxTemplate::new(
+                "t",
+                shared::SandboxTemplateSpec {
+                    description: desc,
+                    pod_template: Some(serde_json::json!({
+                        "spec": {"containers": [{"name": "sandbox", "image": image}]}
+                    })),
+                },
+            )
+        };
+        // Description is NOT cloned into the Sandbox → must not affect the hash.
+        assert_eq!(
+            template_hash(&mk("img:1", None)).unwrap(),
+            template_hash(&mk("img:1", Some("edited docs".into()))).unwrap()
+        );
+        // An image bump IS a drift.
+        assert_ne!(
+            template_hash(&mk("img:1", None)).unwrap(),
+            template_hash(&mk("img:2", None)).unwrap()
+        );
+    }
+
+    #[test]
+    fn template_hash_is_none_without_pod_template() {
+        let t = SandboxTemplate::new(
+            "empty",
+            shared::SandboxTemplateSpec {
+                description: None,
+                pod_template: None,
+            },
+        );
+        assert!(template_hash(&t).is_none());
     }
 }

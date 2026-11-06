@@ -12,8 +12,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Terminal-unschedulability fast-fail (2026-11-06 incident).** Resolve's
+  readiness poll now returns 503 immediately when the pod (or its
+  Sandbox-status mirror) reports `PodScheduled=False reason=Unschedulable`,
+  carrying the scheduler's condition message
+  (`sandbox <name> unschedulable: <message>`) instead of polling out the full
+  claim timeout — a cordoned node pinned by the template made every persistent
+  resolve hang for `claimTimeoutSeconds` and the UI look "extremely slow"
+  instead of failing with the reason. The claim path inherits the fast-fail;
+  `SchedulingGated` keeps the wait/timeout contract (gates can be lifted).
+  WARN log on each fast-fail (sandbox + reason + condition message) and a new
+  counter `open_websandbox_broker_sandbox_not_ready_total`
+  (`reason=unschedulable|timeout|other`).
+
 ### Added
 
+- **Template-drift self-heal (idle only).** Each Sandbox stores a COPY of the
+  template podTemplate at creation, so a template fix never reached existing
+  CRs (drifted sandboxes stayed broken until deleted by hand). Broker-created
+  Sandboxes now carry `owui.io/template-hash` (sha256 over canonical JSON of
+  the cloned `spec.podTemplate`, hashed before the clone is mutated). When a
+  sandbox's stamp differs from the live `SandboxTemplate`, resolve and the
+  leader idle reaper recycle it — delete + recreate through the normal
+  cold-create path — but ONLY when the reaper's idle predicate says nothing is
+  using it: never parked (`Suspended`) sandboxes, never within a 120s
+  anti-loop grace window (`broker-recycled-at`), never legacy/controller-built
+  sandboxes without a stamp, and a failed pre-delete offload (D7) defers the
+  recycle. Log: `recycled sandbox <name>: template <old> -> <new>`; reaper
+  stats gain `recycled`.
 - Broker desktop/browser/event WebSocket relays (`GET /desktop/stream`,
   `GET /desktop/audio`, `GET /events`,
   `GET /browser/view/{sid}/{token}/{channel}`, channel `ws`/`stream`/`vnc`):

@@ -16,6 +16,8 @@
 //! - `open_websandbox_broker_runtime_hop_errors_total` (counter)
 //! - `open_websandbox_broker_auth_failures_total` (counter, `outcome` label; #99 A6)
 //! - `open_websandbox_broker_idle_reaps_total` (counter, `reason` label; #99 A6)
+//! - `open_websandbox_broker_sandbox_not_ready_total` (counter, `reason` label;
+//!   resolve 503s: unschedulable fast-fail / claim timeout)
 //!
 //! HTTP rate/latency is recorded via [`shared::HttpMetrics`]; the lifecycle
 //! counters/gauge are recorded with `metrics::counter!` / `metrics::gauge!` at
@@ -58,6 +60,12 @@ pub(crate) const IDLE_REAPS_TOTAL: &str = "open_websandbox_broker_idle_reaps_tot
 pub(crate) const DRAFT_ADOPTIONS_TOTAL: &str = "open_websandbox_broker_draft_adoptions_total";
 /// Frozen terminal WS-touch counter name (#158, by relay direction).
 pub(crate) const WS_TOUCHES_TOTAL: &str = "open_websandbox_broker_ws_touches_total";
+/// Frozen not-ready counter name: resolve readiness ended in a 503, by reason
+/// (`unschedulable` = terminal PodScheduled=False fast-fail, `timeout` =
+/// claim deadline, `other` reserved for future 503 sources).
+pub(crate) const SANDBOX_NOT_READY_TOTAL: &str = "open_websandbox_broker_sandbox_not_ready_total";
+/// The fixed `reason` label values of [`SANDBOX_NOT_READY_TOTAL`].
+pub(crate) const SANDBOX_NOT_READY_REASONS: [&str; 3] = ["unschedulable", "timeout", "other"];
 
 /// Broker HTTP rate/latency holder + the install point for the global
 /// recorder.
@@ -143,6 +151,15 @@ impl BrokerMetrics {
         );
         for direction in ["client", "upstream"] {
             metrics::counter!(WS_TOUCHES_TOTAL, "direction" => direction).increment(0);
+        }
+        metrics::describe_counter!(
+            SANDBOX_NOT_READY_TOTAL,
+            "Resolve readiness attempts that ended in a 503, by reason: `unschedulable` \
+             (terminal PodScheduled=False fast-fail), `timeout` (claim deadline), \
+             `other` (reserved)."
+        );
+        for reason in SANDBOX_NOT_READY_REASONS {
+            metrics::counter!(SANDBOX_NOT_READY_TOTAL, "reason" => reason).increment(0);
         }
 
         Arc::new(Self {
@@ -327,8 +344,16 @@ mod tests {
             RUNTIME_HOP_ERRORS_TOTAL,
             AUTH_FAILURES_TOTAL,
             IDLE_REAPS_TOTAL,
+            SANDBOX_NOT_READY_TOTAL,
         ] {
             assert!(out.contains(name), "missing frozen metric {name}:\n{out}");
+        }
+        // The not-ready counter materialises one live series per fixed reason.
+        for reason in SANDBOX_NOT_READY_REASONS {
+            assert!(
+                out.contains(&format!("{SANDBOX_NOT_READY_TOTAL}{{reason=\"{reason}\"}}")),
+                "missing {SANDBOX_NOT_READY_TOTAL}{{reason=\"{reason}\"}}:\n{out}"
+            );
         }
     }
 }

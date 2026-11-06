@@ -37,12 +37,21 @@ use shared::{OperatingMode, Profile, Sandbox};
 use crate::leaser::LeaderGate;
 use crate::metrics::{ACTIVE_SANDBOXES, IDLE_REAPS_TOTAL, SANDBOXES_DELETED_TOTAL};
 use crate::s3::S3_LAST_KEY_ANNOTATION;
-use crate::sandbox::{LAST_USED_KEY, PROFILE_LABEL_KEY};
+use crate::sandbox::{
+    template_hash, LAST_USED_KEY, PROFILE_LABEL_KEY, RECYCLED_AT_KEY, TEMPLATE_HASH_KEY,
+};
 use crate::store::SandboxStore;
 
 /// Label selector matching exactly the broker-owned `Sandbox` set
 /// (`app.kubernetes.io/managed-by=owui-broker`).
 pub const MANAGED_BY_SELECTOR: &str = "app.kubernetes.io/managed-by=owui-broker";
+
+/// Anti-loop grace for the template-drift recycle: a sandbox recycled less
+/// than this many seconds ago is never recycled again. The fresh sandbox is
+/// stamped with the current hash (so it cannot drift back instantly), but a
+/// clock/race edge (e.g. two concurrent recycles, or a template read racing
+/// the recycle) must not turn a drift into a delete/create loop.
+pub(crate) const RECYCLE_GRACE_SECS: i64 = 120;
 
 /// What the reaper decided to do with one sandbox this tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +87,9 @@ pub struct ReaperStats {
     /// Terminating sandboxes whose deletion stayed blocked this tick: the
     /// termination offload failed, or the finalizer release failed.
     pub termination_blocked: u64,
+    /// Sandboxes recycled for template drift (deleted + recreated from the
+    /// current template) this tick.
+    pub recycled: u64,
 }
 
 /// Decide the action for one sandbox from its profile, idle time, current mode,
@@ -157,6 +169,148 @@ fn last_used_of(annotations: &BTreeMap<String, String>) -> Option<i64> {
 /// absent). The #209 aging fallback for untracked s3-record sandboxes.
 fn creation_epoch_secs(sbx: &Sandbox) -> Option<i64> {
     Some(sbx.metadata.creation_timestamp.as_ref()?.0.as_second())
+}
+
+/// Idle seconds for a sandbox on the reaper's clock: `now - broker-last-used`.
+/// s3-record sandboxes without a usable last-used stamp age from their
+/// creationTimestamp instead (#209). `None` = untracked → skip (both the
+/// idle policy and the drift recycle treat that as "leave alone").
+fn idle_secs(sbx: &Sandbox, cfg: &shared::BrokerConfig, now: i64) -> Option<u64> {
+    match sbx.metadata.annotations.as_ref().and_then(last_used_of) {
+        Some(lu) if lu != 0 => Some((now - lu).max(0) as u64),
+        None if cfg.persistent_mode.is_s3_record() => {
+            creation_epoch_secs(sbx).map(|ts| (now - ts).max(0) as u64)
+        }
+        _ => None,
+    }
+}
+
+/// The template-drift recycle eligibility predicate — the reaper's own idle
+/// policy, nothing new: a sandbox may only be recycled when `decide()` would
+/// act on it (past the profile's idle/park TTL; `broker-last-used` is what
+/// resolve touches per request and terminal relays touch per frame, so a
+/// fresh last-used IS "active connections"). Explicit extra guards on top:
+/// never a parked (`Suspended`) sandbox — the reaper parked it deliberately
+/// and a recycle must not race a resume; never a terminating sandbox — the
+/// finalizer contract owns the exit; and never one recycled within
+/// [`RECYCLE_GRACE_SECS`] (anti-loop). An in-flight S3 restore always has a
+/// fresh last-used (resolve touches before the restore), so it can never
+/// pass the idle predicate.
+pub(crate) fn recycle_eligible(sbx: &Sandbox, cfg: &shared::BrokerConfig, now: i64) -> bool {
+    if sbx.metadata.deletion_timestamp.is_some() {
+        return false;
+    }
+    if sbx.spec.operating_mode == Some(OperatingMode::Suspended) {
+        return false;
+    }
+    if let Some(ts) = sbx
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|a| a.get(RECYCLED_AT_KEY))
+        .and_then(|v| v.parse::<i64>().ok())
+    {
+        if now - ts < RECYCLE_GRACE_SECS {
+            return false;
+        }
+    }
+    let Some(idle) = idle_secs(sbx, cfg, now) else {
+        return false;
+    };
+    let profile = profile_of(sbx.metadata.labels.as_ref());
+    let mode = sbx.spec.operating_mode.unwrap_or(OperatingMode::Running);
+    decide(profile, idle, mode, cfg) != ReaperAction::Skip
+}
+
+/// The `owui.io/template-hash` stamp of a sandbox (`None` when absent/empty —
+/// legacy or controller-built sandboxes are never drift-recycled).
+fn template_hash_of(sbx: &Sandbox) -> Option<String> {
+    sbx.metadata
+        .annotations
+        .as_ref()?
+        .get(TEMPLATE_HASH_KEY)
+        .filter(|v| !v.is_empty())
+        .cloned()
+}
+
+/// One template-drift recycle: offload (D7 — failure defers), delete, then
+/// recreate through the same cold-create path resolve uses. Returns whether
+/// the sandbox was recycled.
+#[allow(clippy::too_many_arguments)]
+async fn recycle_sandbox(
+    store: &dyn SandboxStore,
+    offload: &dyn ReapOffload,
+    cfg: &shared::BrokerConfig,
+    sbx: &Sandbox,
+    profile: Profile,
+    old_hash: &str,
+    new_hash: &str,
+    stats: &mut ReaperStats,
+) -> bool {
+    let name = sbx.name_any();
+    if let Err(e) = offload.offload_on_reap(sbx).await {
+        stats.skipped += 1;
+        tracing::warn!(%name, error = %e, "drift recycle deferred: offload failed");
+        return false;
+    }
+    // Recycle REPLACES the object: a held s3-snapshot finalizer would leave
+    // the delete dangling Terminating and the recreate would Conflict on the
+    // name. The offload above already made the snapshot durable, so release
+    // it first (mirrors release_reaped's post-offload release).
+    if has_finalizer(sbx, shared::FINALIZER_S3_SNAPSHOT) && cfg.termination_finalizer_active() {
+        if let Err(e) = store
+            .remove_finalizer(&name, shared::FINALIZER_S3_SNAPSHOT)
+            .await
+        {
+            tracing::warn!(
+                %name,
+                error = %e,
+                "finalizer release before drift recycle failed; object lingers Terminating"
+            );
+        }
+    }
+    if let Err(e) = store.delete_sandbox(&name).await {
+        stats.skipped += 1;
+        tracing::warn!(%name, error = %e, "drift recycle delete failed");
+        return false;
+    }
+    let (user, session) = {
+        let annots = sbx.metadata.annotations.as_ref();
+        (
+            annots.and_then(|a| a.get(crate::sandbox::USER_KEY)),
+            annots.and_then(|a| a.get(crate::sandbox::SESSION_KEY)),
+        )
+    };
+    let now = now_unix();
+    match crate::resolve::create_sandbox_from_template(
+        store,
+        cfg,
+        None,
+        &name,
+        user.map(String::as_str),
+        session.map(String::as_str),
+        profile,
+        now,
+    )
+    .await
+    {
+        Ok(_) => {
+            if let Err(e) = store
+                .set_annotation(&name, RECYCLED_AT_KEY, &now.to_string())
+                .await
+            {
+                tracing::debug!(%name, error = %e, "recycled-at stamp failed");
+            }
+            stats.recycled += 1;
+            tracing::info!("recycled sandbox {name}: template {old_hash} -> {new_hash}");
+            true
+        }
+        Err(e) => {
+            stats.skipped += 1;
+            tracing::warn!(%name, error = %e, "drift recycle create failed");
+            false
+        }
+    }
 }
 
 /// Whether the s3-snapshot finalizer is present on the sandbox.
@@ -409,6 +563,27 @@ pub async fn reap_once(
     };
     stats.scanned = sandboxes.len() as u64;
 
+    // Live template hash for the drift recycle — ONE read per tick. Unreadable
+    // (missing template, apiserver error, no podTemplate) ⇒ no recycling this
+    // tick: the sandboxes keep serving and the next tick retries.
+    let live_hash: Option<String> = match store.get_template(&cfg.base_template).await {
+        Ok(Some(t)) => template_hash(&t),
+        Ok(None) => {
+            tracing::debug!(
+                template = %cfg.base_template,
+                "drift recycle: base template not found; skipping drift checks"
+            );
+            None
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "drift recycle: template read failed; skipping drift checks this tick"
+            );
+            None
+        }
+    };
+
     for sbx in &sandboxes {
         let name = sbx.name_any();
         // Terminating (deletionTimestamp set): the finalizer contract owns
@@ -424,24 +599,27 @@ pub async fn reap_once(
         // silent failure used to strand them forever). Every other mode
         // keeps the "not yet tracked" skip (parked per-user PVCs are
         // legitimate).
-        let lu = match sbx.metadata.annotations.as_ref().and_then(last_used_of) {
-            Some(lu) if lu != 0 => lu,
-            None if cfg.persistent_mode.is_s3_record() => {
-                if let Some(ts) = creation_epoch_secs(sbx) {
-                    ts
-                } else {
-                    stats.skipped += 1;
-                    continue;
-                }
-            }
-            _ => {
-                stats.skipped += 1;
-                continue;
-            }
+        let Some(idle) = idle_secs(sbx, cfg, now) else {
+            stats.skipped += 1;
+            continue;
         };
-        let idle = (now - lu).max(0) as u64;
         let profile = profile_of(sbx.metadata.labels.as_ref());
         let mode = sbx.spec.operating_mode.unwrap_or(OperatingMode::Running);
+        // Template-drift recycle (idle only): the sandbox carries an older
+        // template hash than the live base template — e.g. a scheduling fix
+        // that never reaches already-created CRs — and the idle policy says
+        // nothing is using it. Delete + recreate through the cold-create
+        // path. Not idle (or parked / in grace): leave alone — the next
+        // resolve logs the drift at debug and this branch fires once the
+        // sandbox goes idle.
+        if let (Some(old), Some(new)) = (template_hash_of(sbx), live_hash.as_ref()) {
+            if old != *new
+                && recycle_eligible(sbx, cfg, now)
+                && recycle_sandbox(store, offload, cfg, sbx, profile, &old, new, &mut stats).await
+            {
+                continue;
+            }
+        }
         let action = decide(profile, idle, mode, cfg);
         match action {
             ReaperAction::Skip => stats.skipped += 1,
@@ -553,11 +731,17 @@ pub async fn run_reaper_loop(
     loop {
         let stats =
             maybe_reap_once(&gate, store.as_ref(), offload.as_ref(), &cfg, now_unix()).await;
-        if stats.scanned > 0 || stats.parked > 0 || stats.reaped > 0 || stats.offload_failed > 0 {
+        if stats.scanned > 0
+            || stats.parked > 0
+            || stats.reaped > 0
+            || stats.offload_failed > 0
+            || stats.recycled > 0
+        {
             tracing::info!(
                 scanned = stats.scanned,
                 parked = stats.parked,
                 reaped = stats.reaped,
+                recycled = stats.recycled,
                 offload_failed = stats.offload_failed,
                 termination_blocked = stats.termination_blocked,
                 "reaper tick"
@@ -891,5 +1075,106 @@ mod tests {
         let mut none = Sandbox::new("n", shared::SandboxSpec::default());
         none.metadata.creation_timestamp = None;
         assert_eq!(creation_epoch_secs(&none), None);
+    }
+
+    // --- recycle_eligible (template-drift recycle, idle only) ----------------
+
+    fn eligible_cfg() -> shared::BrokerConfig {
+        cfg(120, 300, 604_800)
+    }
+
+    const NOW: i64 = 1_700_000_000;
+
+    fn drift_sbx(mode: OperatingMode, last_used: i64) -> Sandbox {
+        let mut sbx = Sandbox::new(
+            "owui-c-x",
+            shared::SandboxSpec {
+                template_name: None,
+                operating_mode: Some(mode),
+                shutdown_policy: Some(shared::ShutdownPolicy::Retain),
+                pod_template: None,
+            },
+        );
+        sbx.metadata.labels = Some(BTreeMap::from([
+            (
+                "app.kubernetes.io/managed-by".to_string(),
+                "owui-broker".to_string(),
+            ),
+            ("broker-profile".to_string(), "persistent".to_string()),
+        ]));
+        sbx.metadata.annotations = Some(BTreeMap::from([(
+            LAST_USED_KEY.to_string(),
+            last_used.to_string(),
+        )]));
+        sbx
+    }
+
+    #[test]
+    fn idle_drifted_sandbox_is_recycle_eligible() {
+        let c = eligible_cfg();
+        assert!(recycle_eligible(
+            &drift_sbx(OperatingMode::Running, 1_699_999_000),
+            &c,
+            NOW
+        ));
+        assert!(
+            !recycle_eligible(&drift_sbx(OperatingMode::Running, NOW - 10), &c, NOW),
+            "active → not eligible (the reaper's Skip)"
+        );
+    }
+
+    #[test]
+    fn parked_sandbox_is_never_recycle_eligible() {
+        let c = eligible_cfg();
+        assert!(
+            !recycle_eligible(&drift_sbx(OperatingMode::Suspended, 1_699_999_000), &c, NOW),
+            "parked = the reaper's deliberate state, never recycled"
+        );
+    }
+
+    #[test]
+    fn terminating_sandbox_is_never_recycle_eligible() {
+        let c = eligible_cfg();
+        let mut sbx = drift_sbx(OperatingMode::Running, 1_699_999_000);
+        sbx.metadata.deletion_timestamp =
+            Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+                k8s_openapi::jiff::Timestamp::from_second(NOW).unwrap(),
+            ));
+        assert!(
+            !recycle_eligible(&sbx, &c, NOW),
+            "the finalizer contract owns the exit"
+        );
+    }
+
+    #[test]
+    fn freshly_recycled_sandbox_is_within_the_grace_window() {
+        let c = eligible_cfg();
+        let mut sbx = drift_sbx(OperatingMode::Running, 1_699_999_000);
+        sbx.metadata.annotations.as_mut().unwrap().insert(
+            crate::sandbox::RECYCLED_AT_KEY.to_string(),
+            (NOW - 10).to_string(),
+        );
+        assert!(!recycle_eligible(&sbx, &c, NOW), "anti-loop grace");
+        // Outside the window the sandbox is eligible again (still idle).
+        sbx.metadata.annotations.as_mut().unwrap().insert(
+            crate::sandbox::RECYCLED_AT_KEY.to_string(),
+            (NOW - RECYCLE_GRACE_SECS - 1).to_string(),
+        );
+        assert!(recycle_eligible(&sbx, &c, NOW));
+    }
+
+    #[test]
+    fn untracked_sandbox_is_never_recycle_eligible() {
+        let c = eligible_cfg();
+        let mut sbx = drift_sbx(OperatingMode::Running, NOW);
+        sbx.metadata
+            .annotations
+            .as_mut()
+            .unwrap()
+            .remove(LAST_USED_KEY);
+        assert!(
+            !recycle_eligible(&sbx, &c, NOW),
+            "no idle clock → leave alone"
+        );
     }
 }

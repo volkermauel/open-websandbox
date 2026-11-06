@@ -21,10 +21,11 @@ use sha2::{Digest, Sha256};
 use shared::{PersistentMode, Profile, Sandbox, SandboxStatus};
 
 use crate::error::ApiError;
-use crate::metrics::SANDBOXES_CREATED_TOTAL;
-use crate::sandbox::{apply_persistent_volume, build_sandbox, extract_pod_template};
+use crate::metrics::{SANDBOXES_CREATED_TOTAL, SANDBOX_NOT_READY_TOTAL};
+use crate::reaper::ReapOffload as _;
+use crate::sandbox::{apply_persistent_volume, build_sandbox, extract_pod_template, template_hash};
 use crate::state::AppState;
-use crate::store::{StoreError, WorkspacePvcSpec};
+use crate::store::{SandboxStore, StoreError, WorkspacePvcSpec};
 
 /// Prefix for ephemeral (per-SESSION, emptyDir) sandboxes.
 pub const EPHEMERAL_PREFIX: &str = "owui-";
@@ -212,120 +213,51 @@ pub async fn resolve_sandbox(
     // already sees the adopted files.
     let mut draft_adoption: Option<crate::store::WorkspaceMove> = None;
     // --- get-or-create -----------------------------------------------------
-    let existing = state
+    let mut existing = state
         .store
         .get_sandbox(&name)
         .await
         .map_err(map_store_err)?;
-    if existing.is_none() {
-        let template = state
-            .store
-            .get_template(&state.config.base_template)
-            .await
-            .map_err(map_store_err)?
-            .ok_or_else(|| {
-                ApiError::Internal(format!(
-                    "base template {} not found",
-                    state.config.base_template
-                ))
-            })?;
-        let mut pod_template = extract_pod_template(&template)?;
-
-        // PVC hot tiers (#140): ensure the backing PVC exists, then repoint
-        // the cloned pod template's `workspace` volume at it with the
-        // per-chat subPath. s3-tiered keeps its emptyDir hot tier (the S3
-        // restore below handles persistence) and skips this block.
-        if profile == Profile::Persistent && state.config.persistent_mode.is_pvc() {
-            let (claim, sub_path) = workspace_layout(&state.config, user_id, session_id);
-            let create = (state.config.persistent_mode == PersistentMode::PerUserPvc).then(|| {
-                WorkspacePvcSpec {
-                    access_modes: state.config.persistent_access_modes.clone(),
-                    storage: state.config.persistent_storage.clone(),
-                    storage_class: state.config.persistent_storage_class.clone(),
-                }
-            });
-            state
-                .store
-                .ensure_workspace_pvc(&claim, create.as_ref())
-                .await
-                .map_err(|e| match e {
-                    StoreError::NotFound => ApiError::Internal(format!(
-                        "persistentMode=shared-subpath but PVC '{claim}' not found — install the chart with sharedPvc configured",
-                    )),
-                    other => map_store_err(other),
-                })?;
-            apply_persistent_volume(&mut pod_template, &claim, &sub_path)?;
+    // Template-drift self-heal (idle only): a sandbox stamped with an older
+    // template hash than the LIVE base template runs a stale pod blueprint
+    // that a template fix can never reach (the podTemplate is copied at
+    // creation). Recycle — delete + recreate through the cold-create path
+    // below — ONLY when the reaper's idle predicate says nothing is using it;
+    // otherwise keep serving and let the reaper's recycle branch pick it up
+    // once idle.
+    let mut recycled: Option<(String, String)> = None;
+    if let Some(sbx) = existing.as_ref() {
+        recycled = recycle_drifted_idle(state, &name, sbx).await;
+        if recycled.is_some() {
+            existing = None;
         }
-        // #157: a fresh chat sandbox may adopt the user's draft workspace
-        // (pre-first-message uploads) — plan the move now, run it after the
-        // sandbox is ready. Placed before `build_sandbox` because the pod
-        // template is moved into the Sandbox below.
-        draft_adoption =
-            capture_draft_adoption(state, user_id, session_id, &name, &pod_template, profile).await;
-
-        // PR-C-5 / #4: ensure the per-session runtime-key Secret exists BEFORE
-        // the Sandbox is created, so the non-optional runtime-key volume is
-        // satisfiable when the controller schedules the pod. Fail-fast: a missing
-        // key would CrashLoop the runtime (fail-closed boot guard).
-        state
-            .store
-            .ensure_runtime_key(&name)
-            .await
-            .map_err(map_store_err)?;
-        let mut sandbox = build_sandbox(
+    }
+    if existing.is_none() {
+        draft_adoption = create_sandbox_from_template(
+            state.store.as_ref(),
+            &state.config,
+            state.s3_restore.as_deref(),
             &name,
             Some(user_id),
             Some(session_id),
             profile,
-            pod_template,
-            &state.config.runtime_ns,
             now_unix(),
-        );
-        // #140: stamp the hot-tier mode onto the Sandbox for ops
-        // (`kubectl get sandbox -l broker-persistent-mode=shared-subpath`).
-        if profile == Profile::Persistent {
-            if let Some(labels) = sandbox.metadata.labels.as_mut() {
-                labels.insert(
-                    crate::sandbox::PERSISTENT_MODE_LABEL_KEY.to_string(),
-                    state.config.persistent_mode.as_str().to_string(),
-                );
-            }
-        }
-        // s3-record: hold deletion until the termination snapshot is durable
-        // (spec: deletion waits for the S3 snapshot). Set atomically with the
-        // create — a concurrent-resolve loser skips this; the winner's object
-        // carries the finalizer for both.
-        if profile == Profile::Persistent && state.config.termination_finalizer_active() {
-            let finalizers = sandbox.metadata.finalizers.get_or_insert_with(Vec::new);
-            if !finalizers
-                .iter()
-                .any(|v| v == shared::FINALIZER_S3_SNAPSHOT)
+        )
+        .await?;
+        if let Some((old, new)) = recycled {
+            // Best-effort anti-loop stamp + the recycle audit log.
+            if let Err(e) = state
+                .store
+                .set_annotation(
+                    &name,
+                    crate::sandbox::RECYCLED_AT_KEY,
+                    &now_unix().to_string(),
+                )
+                .await
             {
-                finalizers.push(shared::FINALIZER_S3_SNAPSHOT.to_string());
+                tracing::debug!(sandbox = %name, error = %e, "recycled-at stamp failed");
             }
-        }
-
-        // #157: persist the adoption intent on the Sandbox itself — a claim
-        // attempt can time out before readiness (slow first boot) and the
-        // in-memory plan dies with it; the pending marker lets any LATER
-        // resolve of this chat rebuild and run the move (one-shot: cleared
-        // once the move ran).
-        if draft_adoption.is_some() {
-            if let Some(annots) = sandbox.metadata.annotations.as_mut() {
-                annots.insert(
-                    crate::sandbox::DRAFT_ADOPT_PENDING_KEY.to_string(),
-                    sandbox_name(user_id, user_id, Profile::Persistent),
-                );
-            }
-        }
-        match state.store.create_sandbox(sandbox).await {
-            Ok(_) => {
-                // D9: a new sandbox was actually created (resolve path).
-                metrics::counter!(SANDBOXES_CREATED_TOTAL).increment(1);
-            }
-            // A concurrent resolve won the create race — poll for the winner.
-            Err(StoreError::Conflict) => {}
-            Err(e) => return Err(map_store_err(e)),
+            tracing::info!("recycled sandbox {name}: template {old} -> {new}");
         }
     }
     // Resume a parked sandbox before the ready poll: flip a `Suspended`
@@ -419,6 +351,253 @@ pub async fn resolve_sandbox(
     Ok(resolved)
 }
 
+/// The cold-create path shared by resolve's get-or-create AND the reaper's
+/// template-drift recycle: fetch the live base template, ensure the PVC/
+/// runtime-key prerequisites, build the Sandbox (stamping the template hash
+/// for drift detection), and create it. Everything here needs only the
+/// store + config, so the leader reaper can recycle an idle drifted sandbox
+/// without holding an [`AppState`].
+///
+/// Returns the #157 draft-adoption plan captured for the fresh sandbox
+/// (`None` when adoption does not apply). Resolve executes it after
+/// readiness; the reaper's recycle relies on the pending marker stamped here
+/// and the next resolve's resume path. A
+/// [`StoreError::Conflict`] is not an error: another replica/resolve won
+/// the create race — the caller polls the winner.
+#[allow(clippy::too_many_arguments)] // the Sandbox field set is inherently wide (see build_sandbox)
+pub(crate) async fn create_sandbox_from_template(
+    store: &dyn SandboxStore,
+    cfg: &shared::BrokerConfig,
+    s3_restore: Option<&crate::s3::S3Offload>,
+    name: &str,
+    user_id: Option<&str>,
+    session_id: Option<&str>,
+    profile: Profile,
+    now: i64,
+) -> Result<Option<crate::store::WorkspaceMove>, ApiError> {
+    let template = store
+        .get_template(&cfg.base_template)
+        .await
+        .map_err(map_store_err)?
+        .ok_or_else(|| {
+            ApiError::Internal(format!("base template {} not found", cfg.base_template))
+        })?;
+    // B: hash the PRISTINE template — the podTemplate clone is mutated below
+    // (profile label, runtime-key volume, PVC surgery) and the stamp must
+    // describe the template, not the mutated copy.
+    let hash = template_hash(&template);
+    let mut pod_template = extract_pod_template(&template)?;
+
+    // PVC hot tiers (#140): ensure the backing PVC exists, then repoint
+    // the cloned pod template's `workspace` volume at it with the
+    // per-chat subPath. s3-tiered keeps its emptyDir hot tier (the S3
+    // restore handles persistence) and skips this block.
+    if profile == Profile::Persistent && cfg.persistent_mode.is_pvc() {
+        let (claim, sub_path) =
+            workspace_layout(cfg, user_id.unwrap_or(""), session_id.unwrap_or(""));
+        let create =
+            (cfg.persistent_mode == PersistentMode::PerUserPvc).then(|| WorkspacePvcSpec {
+                access_modes: cfg.persistent_access_modes.clone(),
+                storage: cfg.persistent_storage.clone(),
+                storage_class: cfg.persistent_storage_class.clone(),
+            });
+        store
+            .ensure_workspace_pvc(&claim, create.as_ref())
+            .await
+            .map_err(|e| match e {
+                StoreError::NotFound => ApiError::Internal(format!(
+                    "persistentMode=shared-subpath but PVC '{claim}' not found — install the chart with sharedPvc configured",
+                )),
+                other => map_store_err(other),
+            })?;
+        apply_persistent_volume(&mut pod_template, &claim, &sub_path)?;
+    }
+    // #157: a fresh chat sandbox may adopt the user's draft workspace
+    // (pre-first-message uploads) — plan the move now, run it after the
+    // sandbox is ready (resolve) or via the pending marker (reaper recycle).
+    let draft_adoption = capture_draft_adoption(
+        store,
+        cfg,
+        s3_restore,
+        user_id,
+        session_id,
+        name,
+        &pod_template,
+        profile,
+    )
+    .await;
+
+    // PR-C-5 / #4: ensure the per-session runtime-key Secret exists BEFORE
+    // the Sandbox is created, so the non-optional runtime-key volume is
+    // satisfiable when the controller schedules the pod. Fail-fast: a missing
+    // key would CrashLoop the runtime (fail-closed boot guard).
+    store
+        .ensure_runtime_key(name)
+        .await
+        .map_err(map_store_err)?;
+    let mut sandbox = build_sandbox(
+        name,
+        user_id,
+        session_id,
+        profile,
+        pod_template,
+        &cfg.runtime_ns,
+        now,
+        hash.as_deref(),
+    );
+    // #140: stamp the hot-tier mode onto the Sandbox for ops
+    // (`kubectl get sandbox -l broker-persistent-mode=shared-subpath`).
+    if profile == Profile::Persistent {
+        if let Some(labels) = sandbox.metadata.labels.as_mut() {
+            labels.insert(
+                crate::sandbox::PERSISTENT_MODE_LABEL_KEY.to_string(),
+                cfg.persistent_mode.as_str().to_string(),
+            );
+        }
+    }
+    // s3-record: hold deletion until the termination snapshot is durable
+    // (spec: deletion waits for the S3 snapshot). Set atomically with the
+    // create — a concurrent-resolve loser skips this; the winner's object
+    // carries the finalizer for both.
+    if profile == Profile::Persistent && cfg.termination_finalizer_active() {
+        let finalizers = sandbox.metadata.finalizers.get_or_insert_with(Vec::new);
+        if !finalizers
+            .iter()
+            .any(|v| v == shared::FINALIZER_S3_SNAPSHOT)
+        {
+            finalizers.push(shared::FINALIZER_S3_SNAPSHOT.to_string());
+        }
+    }
+
+    // #157: persist the adoption intent on the Sandbox itself — a claim
+    // attempt can time out before readiness (slow first boot) and the
+    // in-memory plan dies with it; the pending marker lets any LATER
+    // resolve of this chat rebuild and run the move (one-shot: cleared
+    // once the move ran).
+    if let (Some(_mv), Some(uid)) = (&draft_adoption, user_id) {
+        if let Some(annots) = sandbox.metadata.annotations.as_mut() {
+            annots.insert(
+                crate::sandbox::DRAFT_ADOPT_PENDING_KEY.to_string(),
+                sandbox_name(uid, uid, Profile::Persistent),
+            );
+        }
+    }
+    let created = match store.create_sandbox(sandbox).await {
+        Ok(_) => {
+            // D9: a new sandbox was actually created (resolve or reaper
+            // recycle).
+            metrics::counter!(SANDBOXES_CREATED_TOTAL).increment(1);
+            true
+        }
+        // A concurrent create won the race — the caller polls the winner.
+        Err(StoreError::Conflict) => false,
+        Err(e) => return Err(map_store_err(e)),
+    };
+    if !created {
+        tracing::debug!(sandbox = %name, "create race lost; polling the winner");
+    }
+    Ok(draft_adoption)
+}
+
+/// Template-drift recycle guard (B, idle only): `Some((old, new))` when the
+/// sandbox runs an OLD template — its `owui.io/template-hash` stamp differs
+/// from the live base-template hash — AND the reaper's idle predicate says
+/// nothing is using it. The caller deletes the sandbox and falls into the
+/// cold-create path. `None` = keep serving: legacy/controller-built
+/// sandboxes (no stamp), unreadable template (log + keep serving), no drift,
+/// an active/parked/grace-window sandbox, or a failed pre-delete offload.
+async fn recycle_drifted_idle(
+    state: &AppState,
+    name: &str,
+    sbx: &Sandbox,
+) -> Option<(String, String)> {
+    let old = sbx
+        .metadata
+        .annotations
+        .as_ref()?
+        .get(crate::sandbox::TEMPLATE_HASH_KEY)
+        .filter(|v| !v.is_empty())
+        .cloned()?;
+    let new = match state.store.get_template(&state.config.base_template).await {
+        Ok(Some(t)) => template_hash(&t),
+        Ok(None) => {
+            tracing::debug!(
+                sandbox = %name,
+                template = %state.config.base_template,
+                "template drift check: base template not found; keeping sandbox"
+            );
+            None
+        }
+        Err(e) => {
+            tracing::warn!(
+                sandbox = %name,
+                error = %e,
+                "template drift check failed; keeping sandbox"
+            );
+            None
+        }
+    }?;
+    if old == new {
+        return None; // no drift — the common case
+    }
+    if !crate::reaper::recycle_eligible(sbx, &state.config, now_unix()) {
+        tracing::debug!(
+            sandbox = %name,
+            from = %old,
+            to = %new,
+            "template drift detected; sandbox active — the reaper recycles it once idle"
+        );
+        return None;
+    }
+    // D7: hand the workspace to the cold tier before the delete (no-op for
+    // profiles that carry nothing). Failure defers the recycle — keep
+    // serving the stale sandbox; the reaper retries later.
+    if let Some(tier) = state.s3_restore.as_deref() {
+        if let Err(e) = tier.offload_on_reap(sbx).await {
+            tracing::warn!(
+                sandbox = %name,
+                error = %e,
+                "drift recycle deferred: pre-delete offload failed"
+            );
+            return None;
+        }
+        // Recycle REPLACES the object: a held s3-snapshot finalizer would
+        // leave the delete dangling Terminating and the recreate would
+        // Conflict on the name. The offload above already made the snapshot
+        // durable, so release it first (same contract as the reaper's reap).
+        if sbx
+            .metadata
+            .finalizers
+            .as_ref()
+            .is_some_and(|f| f.iter().any(|v| v == shared::FINALIZER_S3_SNAPSHOT))
+            && state.config.termination_finalizer_active()
+        {
+            if let Err(e) = state
+                .store
+                .remove_finalizer(name, shared::FINALIZER_S3_SNAPSHOT)
+                .await
+            {
+                tracing::warn!(
+                    sandbox = %name,
+                    error = %e,
+                    "finalizer release before drift recycle failed; object lingers Terminating"
+                );
+            }
+        }
+    }
+    match state.store.delete_sandbox(name).await {
+        Ok(_) => Some((old, new)),
+        Err(e) => {
+            tracing::warn!(
+                sandbox = %name,
+                error = %e,
+                "drift recycle delete failed; keeping sandbox"
+            );
+            None
+        }
+    }
+}
+
 /// Ephemeral resolve via `SandboxClaim` (ephemeral warm-pool claiming).
 ///
 /// Upstream v0.5.6 binding semantics: the controller adopts a ready pool
@@ -497,6 +676,7 @@ async fn resolve_by_claim(
             break name;
         }
         if Instant::now() >= deadline {
+            metrics::counter!(SANDBOX_NOT_READY_TOTAL, "reason" => "timeout").increment(1);
             return Err(ApiError::ServiceUnavailable(format!(
                 "claim {claim_name} did not bind from pool {pool} in {}s",
                 state.config.claim_timeout_seconds
@@ -829,18 +1009,28 @@ async fn adopt_draft_s3(
 /// — where OWUI's session-less traffic lands) was last used within the
 /// window. Pure preconditions return early so the store is only hit when
 /// everything else already lined up.
+#[allow(clippy::too_many_arguments)]
 async fn capture_draft_adoption(
-    state: &AppState,
-    user_id: &str,
-    session_id: &str,
+    store: &dyn SandboxStore,
+    cfg: &shared::BrokerConfig,
+    s3_restore: Option<&crate::s3::S3Offload>,
+    user_id: Option<&str>,
+    session_id: Option<&str>,
     chat_name: &str,
     pod_template: &serde_json::Value,
     profile: Profile,
 ) -> Option<crate::store::WorkspaceMove> {
-    if state.config.draft_adoption_window_seconds == 0
-        || state.s3_restore.is_some()
+    // user/session-less calls cannot own a draft workspace. `cfg.s3_enabled`
+    // covers the reaper's recycle call, which passes `s3_restore = None` —
+    // the S3 tier owns persistence there too.
+    let (Some(user_id), Some(session_id)) = (user_id, session_id) else {
+        return None;
+    };
+    if cfg.draft_adoption_window_seconds == 0
+        || s3_restore.is_some()
+        || cfg.s3_enabled
         || profile != Profile::Persistent
-        || !state.config.persistent_mode.is_pvc()
+        || !cfg.persistent_mode.is_pvc()
     {
         return None;
     }
@@ -854,7 +1044,7 @@ async fn capture_draft_adoption(
         .as_str()?
         .to_string();
     let ownership = template_pod_ownership(pod_template);
-    let draft = match state.store.get_sandbox(&draft_name).await {
+    let draft = match store.get_sandbox(&draft_name).await {
         Ok(Some(draft)) => draft,
         Ok(None) => {
             metrics::counter!(crate::metrics::DRAFT_ADOPTIONS_TOTAL, "result" => "skipped_no_draft")
@@ -870,15 +1060,15 @@ async fn capture_draft_adoption(
         .get(crate::sandbox::LAST_USED_KEY)?
         .parse::<i64>()
         .ok()?;
-    let window = i64::try_from(state.config.draft_adoption_window_seconds).unwrap_or(i64::MAX);
+    let window = i64::try_from(cfg.draft_adoption_window_seconds).unwrap_or(i64::MAX);
     if now_unix() - last_used > window {
         metrics::counter!(crate::metrics::DRAFT_ADOPTIONS_TOTAL, "result" => "skipped_stale")
             .increment(1);
         return None;
     }
     // Both subpaths live on the same claim (same user).
-    let (claim, from_subpath) = workspace_layout(&state.config, user_id, user_id);
-    let (_, to_subpath) = workspace_layout(&state.config, user_id, session_id);
+    let (claim, from_subpath) = workspace_layout(cfg, user_id, user_id);
+    let (_, to_subpath) = workspace_layout(cfg, user_id, session_id);
     Some(crate::store::WorkspaceMove {
         job_name: format!("draft-adopt-{chat_name}-{}", now_unix()),
         image,
@@ -997,6 +1187,10 @@ async fn wait_for_ready(state: &AppState, name: &str) -> Result<ResolvedSandbox,
                 });
             }
             last_digest = pod_condition_summary(&pod);
+            // Terminal unschedulability: fail immediately with the reason.
+            if let Some(msg) = pod_unschedulable_message(&pod) {
+                return Err(unschedulable_error(name, &msg));
+            }
         }
         // Pod absent (controller may not have created it yet) or the read
         // failed: fall through to the Sandbox-status path.
@@ -1025,8 +1219,14 @@ async fn wait_for_ready(state: &AppState, name: &str) -> Result<ResolvedSandbox,
                 });
             }
             last_digest = condition_summary(sbx.status.as_ref());
+            // The status mirror can report unschedulability before/without the
+            // Pod object being readable — same fast-fail contract.
+            if let Some(msg) = sandbox_unschedulable_message(sbx.status.as_ref()) {
+                return Err(unschedulable_error(name, &msg));
+            }
         }
         if Instant::now() >= deadline {
+            metrics::counter!(SANDBOX_NOT_READY_TOTAL, "reason" => "timeout").increment(1);
             return Err(ApiError::ServiceUnavailable(format!(
                 "sandbox {name} not ready in {}s ({last_digest})",
                 state.config.claim_timeout_seconds
@@ -1034,6 +1234,60 @@ async fn wait_for_ready(state: &AppState, name: &str) -> Result<ResolvedSandbox,
         }
         tokio::time::sleep(READY_POLL_INTERVAL).await;
     }
+}
+
+/// Terminal unschedulability on the Pod object: `Some(condition message)`
+/// when the conditions carry `PodScheduled=False reason=Unschedulable` — the
+/// scheduler gave up placing the pod (e.g. the only matching node is
+/// cordoned). `SchedulingGated` is deliberately NOT terminal: gates can be
+/// lifted, so that shape keeps the normal wait/timeout.
+fn pod_unschedulable_message(pod: &Pod) -> Option<String> {
+    pod.status
+        .as_ref()?
+        .conditions
+        .as_ref()?
+        .iter()
+        .find_map(|c| {
+            (c.type_ == "PodScheduled"
+                && c.status == "False"
+                && c.reason.as_deref() == Some("Unschedulable"))
+            .then(|| {
+                c.message
+                    .clone()
+                    .unwrap_or_else(|| "no condition message".to_string())
+            })
+        })
+}
+
+/// Sandbox-status mirror of [`pod_unschedulable_message`]: the v0.5.6
+/// controller mirrors `PodScheduled` (including the Unschedulable reason)
+/// into `Sandbox.status.conditions`.
+fn sandbox_unschedulable_message(status: Option<&SandboxStatus>) -> Option<String> {
+    status?.conditions.as_ref()?.iter().find_map(|c| {
+        (c.r#type == "PodScheduled"
+            && c.status == "False"
+            && c.reason.as_deref() == Some("Unschedulable"))
+        .then(|| {
+            c.message
+                .clone()
+                .unwrap_or_else(|| "no condition message".to_string())
+        })
+    })
+}
+
+/// The unschedulable fast-fail (A): 503 carrying the reason so Open Web UI
+/// shows it (clipped to keep the detail one line) + WARN + the not-ready
+/// counter — instead of polling out the full claim timeout.
+fn unschedulable_error(name: &str, message: &str) -> ApiError {
+    let clipped: String = message.chars().take(200).collect();
+    metrics::counter!(SANDBOX_NOT_READY_TOTAL, "reason" => "unschedulable").increment(1);
+    tracing::warn!(
+        sandbox = %name,
+        reason = "unschedulable",
+        condition = %clipped,
+        "sandbox unschedulable; failing fast instead of waiting out the claim timeout"
+    );
+    ApiError::ServiceUnavailable(format!("sandbox {name} unschedulable: {clipped}"))
 }
 
 /// `podIP` of a Pod whose Ready condition is True, else `None`.
@@ -1129,7 +1383,6 @@ fn template_pod_ownership(pod_template: &serde_json::Value) -> crate::store::Pod
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::SandboxStore as _;
     use shared::SandboxStatus;
 
     // --- template pod ownership mirroring (#182) ---------------------------
@@ -1360,7 +1613,7 @@ mod tests {
         };
         let state = AppState::for_test(config);
         let stub = crate::store::test_fakes::StubSandboxStore::new();
-        stub.insert_sandbox(blocked_fixture());
+        stub.insert_sandbox(gated_fixture());
         // for_test wires its own stub; rebuild the state with OUR stub so the
         // seeded sandbox is what the poll loop sees.
         let state = AppState {
@@ -1375,8 +1628,55 @@ mod tests {
         match err {
             ApiError::ServiceUnavailable(detail) => {
                 assert!(detail.contains("not ready in 0s"), "{detail}");
-                assert!(detail.contains("Unschedulable"), "{detail}");
+                assert!(detail.contains("SchedulingGated"), "{detail}");
                 assert!(detail.contains("PodTerminating"), "{detail}");
+            }
+            other => panic!("expected ServiceUnavailable, got {other:?}"),
+        }
+    }
+
+    /// A gated pod keeps the wait/timeout contract (gates can be lifted), so
+    /// its conditions surface through the timeout digest instead of the
+    /// fast-fail.
+    fn gated_fixture() -> Sandbox {
+        let mut s = blocked_fixture();
+        let conds = s.status.as_mut().unwrap().conditions.as_mut().unwrap();
+        for c in conds.iter_mut().filter(|c| c.r#type == "PodScheduled") {
+            c.reason = Some("SchedulingGated".into());
+            c.message = None;
+        }
+        s
+    }
+
+    /// Terminal unschedulability fails fast — before the deadline — with the
+    /// condition message (the incident contract: a cordoned node pinned by
+    /// the template must 503 with the reason, not hang out the timeout).
+    #[tokio::test]
+    async fn unschedulable_condition_fails_fast_without_waiting() {
+        let config = shared::BrokerConfig {
+            claim_timeout_seconds: 60,
+            ..Default::default()
+        };
+        let state = AppState::for_test(config);
+        let stub = crate::store::test_fakes::StubSandboxStore::new();
+        stub.insert_sandbox(blocked_fixture());
+        let state = AppState {
+            store: std::sync::Arc::new(stub),
+            ..state
+        };
+        let start = std::time::Instant::now();
+        let err = match wait_for_ready(&state, "n").await {
+            Err(e) => e,
+            Ok(r) => panic!("expected ServiceUnavailable, resolved: {r:?}"),
+        };
+        assert!(
+            start.elapsed().as_secs() < 5,
+            "fast-fail must not poll out the 60s timeout"
+        );
+        match err {
+            ApiError::ServiceUnavailable(detail) => {
+                assert!(detail.starts_with("sandbox n unschedulable:"), "{detail}");
+                assert!(detail.contains("0/1 nodes are available"), "{detail}");
             }
             other => panic!("expected ServiceUnavailable, got {other:?}"),
         }

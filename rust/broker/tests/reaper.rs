@@ -13,9 +13,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use broker::reaper::{maybe_reap_once, reap_once, NoopOffload, OffloadError, ReapOffload};
+use broker::template_hash;
 use broker::test_fakes::StubSandboxStore;
 use broker::{LeaderGate, SandboxStore};
-use shared::{OperatingMode, Sandbox, SandboxSpec, ShutdownPolicy};
+use shared::{
+    OperatingMode, Sandbox, SandboxSpec, SandboxTemplate, SandboxTemplateSpec, ShutdownPolicy,
+};
 
 /// Build a broker-owned seed sandbox with the given profile / last-used / mode.
 fn seed(name: &str, profile: &str, last_used: i64, mode: Option<OperatingMode>) -> Sandbox {
@@ -743,4 +746,168 @@ async fn per_user_pvc_sandbox_without_last_used_still_skips_not_reaps() {
     assert_eq!(stats.reaped, 0);
     assert_eq!(stats.skipped, 1);
     assert!(store.snapshot().contains_key("owui-pvc-nolu-1"));
+}
+
+// --- template-drift recycle (idle only) -------------------------------------
+
+const HASH_KEY: &str = "owui.io/template-hash";
+const RECYCLED_KEY: &str = "broker-recycled-at";
+
+/// The base template under a given image (name == the config default so the
+/// reaper's per-tick template read finds it).
+fn drift_template(image: &str) -> SandboxTemplate {
+    SandboxTemplate::new(
+        "code-standard-v1",
+        SandboxTemplateSpec {
+            description: None,
+            pod_template: Some(serde_json::json!({
+                "spec": {
+                    "containers": [
+                        {"name": "sandbox", "image": image, "volumeMounts": [
+                            {"name": "workspace", "mountPath": "/workspace"}
+                        ]}
+                    ],
+                    "volumes": [{"name": "workspace", "emptyDir": {}}]
+                }
+            })),
+        },
+    )
+}
+
+/// Seed a broker-owned persistent sandbox carrying a stale template hash.
+fn drifted_seed(name: &str, last_used: i64, hash: &str) -> Sandbox {
+    let mut sbx = seed(name, "persistent", last_used, Some(OperatingMode::Running));
+    sbx.metadata
+        .annotations
+        .as_mut()
+        .unwrap()
+        .insert(HASH_KEY.to_string(), hash.to_string());
+    sbx
+}
+
+#[tokio::test]
+async fn reaper_recycles_idle_drifted_sandbox() {
+    let old = drift_template("code-standard:BROKEN");
+    let new = drift_template("code-standard:FIXED");
+    let store = StubSandboxStore::new();
+    store.insert_template(new.clone()); // live template = the fix
+    store.insert_sandbox(drifted_seed(
+        "owui-c-drift-1",
+        NOW - 1000, // idle: past the park TTL → the reaper's idle predicate
+        &template_hash(&old).unwrap(),
+    ));
+    let c = cfg(120, 300, 604_800);
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(stats.recycled, 1, "drifted + idle → recycled");
+    assert_eq!(stats.reaped, 0, "recycle is not counted as a reap");
+    let snap = store.snapshot();
+    let recreated = snap.get("owui-c-drift-1").expect("sandbox recreated");
+    assert_eq!(snap.len(), 1, "delete + recreate under the same name");
+    assert_eq!(
+        recreated
+            .metadata
+            .annotations
+            .as_ref()
+            .unwrap()
+            .get(HASH_KEY)
+            .map(String::as_str),
+        template_hash(&new).as_deref(),
+        "recreated from the CURRENT template"
+    );
+    assert!(
+        recreated
+            .metadata
+            .annotations
+            .as_ref()
+            .unwrap()
+            .contains_key(RECYCLED_KEY),
+        "anti-loop grace marker stamped"
+    );
+    assert_eq!(
+        recreated.spec.operating_mode,
+        Some(OperatingMode::Running),
+        "a recycled sandbox is a normal cold create"
+    );
+}
+
+#[tokio::test]
+async fn reaper_leaves_active_drifted_sandbox_alone() {
+    let old = drift_template("code-standard:BROKEN");
+    let new = drift_template("code-standard:FIXED");
+    let store = StubSandboxStore::new();
+    store.insert_template(new);
+    store.insert_sandbox(drifted_seed(
+        "owui-c-drift-2",
+        NOW - 10, // active: under every TTL
+        &template_hash(&old).unwrap(),
+    ));
+    let c = cfg(120, 300, 604_800);
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(stats.recycled, 0);
+    let snap = store.snapshot();
+    let kept = snap.get("owui-c-drift-2").expect("kept");
+    assert_eq!(
+        kept.metadata
+            .annotations
+            .as_ref()
+            .unwrap()
+            .get(HASH_KEY)
+            .map(String::as_str),
+        template_hash(&old).as_deref(),
+        "an ACTIVE drifted sandbox waits until it goes idle"
+    );
+}
+
+#[tokio::test]
+async fn reaper_grace_window_blocks_an_immediate_repeat_recycle() {
+    let old = drift_template("code-standard:BROKEN");
+    let new = drift_template("code-standard:FIXED");
+    let store = StubSandboxStore::new();
+    store.insert_template(new);
+    let mut sbx = drifted_seed("owui-c-drift-3", NOW - 1000, &template_hash(&old).unwrap());
+    // Recycled moments ago (within the grace window) — never again now.
+    sbx.metadata
+        .annotations
+        .as_mut()
+        .unwrap()
+        .insert(RECYCLED_KEY.to_string(), (NOW - 10).to_string());
+    store.insert_sandbox(sbx);
+    let c = cfg(120, 300, 604_800);
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(stats.recycled, 0, "grace window blocks the re-recycle");
+    let snap = store.snapshot();
+    let kept = snap.get("owui-c-drift-3").expect("kept");
+    assert_eq!(
+        kept.metadata
+            .annotations
+            .as_ref()
+            .unwrap()
+            .get(HASH_KEY)
+            .map(String::as_str),
+        template_hash(&old).as_deref(),
+    );
+}
+
+#[tokio::test]
+async fn reaper_skips_drift_check_when_template_unreadable() {
+    let old = drift_template("code-standard:BROKEN");
+    let store = StubSandboxStore::new();
+    // NO template in the store → hash cannot be read → keep serving.
+    store.insert_sandbox(drifted_seed(
+        "owui-c-drift-4",
+        NOW - 1000,
+        &template_hash(&old).unwrap(),
+    ));
+    let c = cfg(120, 300, 604_800);
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(stats.recycled, 0);
+    assert!(store.snapshot().contains_key("owui-c-drift-4"));
 }
