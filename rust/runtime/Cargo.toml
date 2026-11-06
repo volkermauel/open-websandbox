@@ -23,6 +23,9 @@ name = "runtime"
 path = "src/main.rs"
 
 [dependencies]
+# `futures-util` is promoted from a dev-dependency: the desktop WS relays split
+# the client/upstream sockets into sink + stream halves for the pump tasks.
+futures-util = "0.3"
 anyhow.workspace = true
 # Native tar+zstd pipeline for `/snapshot`+`/restore` (#94): `async-compression`
 # is the fully-async `zstd` stage (tokio `ZstdEncoder`/`ZstdDecoder`, Q1-b); `tar`
@@ -41,7 +44,9 @@ mime_guess = "2"
 # Shared localhost HTTP client for `/proxy/{port}` (open-terminal 0.9.0 surface).
 # `default-features = false`: no TLS stack — localhost HTTP only, mirroring
 # upstream httpx usage; keeps the audited tree free of extra crypto deps.
-reqwest = { version = "0.12", default-features = false }
+# `stream` adds only `Response::bytes_stream` (no new crates) — the desktop
+# fallback streams sidecar responses through instead of buffering them.
+reqwest = { version = "0.12", default-features = false, features = ["stream"] }
 metrics.workspace = true
 regex = "1"
 nix = { version = "0.31", features = ["resource", "signal", "process", "fs", "user"] }
@@ -64,15 +69,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # the audited tree lean (no bzip2/zstd/time deps).
 zip = { version = "9", default-features = false, features = ["deflate"] }
 walkdir.workspace = true
+# Desktop-sidecar WS relays (`/desktop/stream`, `/desktop/audio`, `/events`,
+# `/browser/view/{sid}/{token}/{channel}`): outbound client connect only — no
+# TLS stack (localhost sidecar), mirroring the reqwest posture. The `connect`
+# feature already implies `handshake`.
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect"] }
 
 [dev-dependencies]
-futures-util = "0.3"
 http = "1"
 tempfile = "3"
 # `zip` is already a runtime dependency; re-declared here so the
 # upload/archive contract tests can read archives back + assert their entries.
 zip = { version = "9", default-features = false, features = ["deflate"] }
-tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect"] }
 
 # Issue #100 / B5: opt into the workspace-wide lint config (clippy::pedantic
 # at `warn`, neg. priority). See `[workspace.lints]` in the root manifest.

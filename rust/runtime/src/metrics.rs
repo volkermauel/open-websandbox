@@ -15,8 +15,9 @@
 //! - `open_websandbox_runtime_execute_timeouts_total` (counter)
 //!
 //! The `path` label is the **templated** matched route (bounded cardinality) —
-//! see [`route_label`]. The runtime registers no catch-all, so an unmatched
-//! request is reported as `path="unmatched"` (never the raw URL).
+//! see [`route_label`]. Explicit routes report their template; requests served
+//! by the desktop-sidecar fallback match no route and are reported as
+//! `path="unmatched"` (never the raw URL).
 
 #![forbid(unsafe_code)]
 
@@ -101,13 +102,16 @@ pub fn route_label(matched: &str) -> &str {
         | "/files/read" | "/files/write" | "/files/mkdir" | "/files/move" | "/files/delete"
         | "/files/view" | "/files/replace" | "/files/grep" | "/files/glob" | "/files/archive"
         | "/files/upload" | "/upload" | "/ports" | "/snapshot" | "/restore" | "/api/terminals"
-        | "/list" | "/list/" => matched,
+        | "/list" | "/list/"
+        // Desktop-sidecar WS relays (static paths).
+        | "/desktop/stream" | "/desktop/audio" | "/events" => matched,
         _ if matched.starts_with("/download/") => "/download/{file_path}",
         _ if matched.starts_with("/list/") => "/list/{file_path}",
         _ if matched.starts_with("/exists/") => "/exists/{file_path}",
         _ if matched.starts_with("/api/terminals/") => "/api/terminals/{id}",
-        // No catch-all on the runtime → an unmatched (404) request reports
-        // `MatchedPath == None` upstream; this branch is a defensive fallback.
+        _ if matched.starts_with("/browser/view/") => "/browser/view/{sid}/{token}/{channel}",
+        // Fallback-served requests (desktop sidecar proxy) match no route and
+        // report `MatchedPath == None` upstream; this branch stays defensive.
         _ => "unmatched",
     }
 }
@@ -125,9 +129,10 @@ pub async fn http_metrics_layer(
         .extensions()
         .get::<MatchedPath>()
         .map(|m| m.as_str().to_owned());
-    // The runtime has NO catch-all: a request that matched no route reports
-    // `MatchedPath == None` → label it "unmatched" (never the raw URL, which
-    // would be attacker-controlled and unbounded).
+    // Explicit routes report their templated path; requests served by the
+    // desktop fallback match no route (`MatchedPath == None`) and are labelled
+    // "unmatched" (never the raw URL, which would be attacker-controlled and
+    // unbounded).
     let path_label = match matched.as_deref() {
         Some(m) => route_label(m),
         None => "unmatched",
@@ -195,6 +200,21 @@ mod tests {
     #[test]
     fn unknown_route_falls_back_unmatched() {
         assert_eq!(route_label("/totally/made/up"), "unmatched");
+    }
+
+    #[test]
+    fn desktop_ws_routes_map_to_themselves() {
+        for r in ["/desktop/stream", "/desktop/audio", "/events"] {
+            assert_eq!(route_label(r), r, "{r} should map to itself");
+        }
+    }
+
+    #[test]
+    fn browser_view_collapses_to_template() {
+        assert_eq!(
+            route_label("/browser/view/sid-1/tok/ws"),
+            "/browser/view/{sid}/{token}/{channel}"
+        );
     }
 
     #[test]

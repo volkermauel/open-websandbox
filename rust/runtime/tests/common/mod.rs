@@ -113,6 +113,30 @@ impl Env {
         std::fs::write(&self.key_path, value).expect("set key");
     }
 
+    /// Send a request with arbitrary extra headers (desktop-sidecar contract
+    /// tests: header passthrough + inbound-Authorization stripping). The
+    /// default Bearer is injected; `body` is sent as-is when present.
+    pub async fn send_with(
+        &self,
+        method: Method,
+        uri: &str,
+        extra_headers: &[(&str, &str)],
+        body: Option<Vec<u8>>,
+    ) -> Response<Body> {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("authorization", format!("Bearer {}", self.bearer));
+        for (name, value) in extra_headers {
+            builder = builder.header(*name, *value);
+        }
+        let req = match body {
+            Some(b) => builder.body(Body::from(b)).unwrap(),
+            None => builder.body(Body::empty()).unwrap(),
+        };
+        self.router.clone().oneshot(req).await.expect("oneshot")
+    }
+
     /// Send a request, injecting the default Bearer + optional subdir + JSON body.
     pub async fn send(
         &self,

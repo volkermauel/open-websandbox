@@ -4,10 +4,15 @@
 #![forbid(unsafe_code)]
 
 use axum::extract::DefaultBodyLimit;
+use axum::extract::State;
 use axum::middleware::from_fn_with_state;
 use axum::routing::{delete, get, post, put};
 use axum::Router;
 
+use crate::desktop::{
+    desktop_audio_ws, desktop_browser_view, desktop_events_ws, desktop_fallback, desktop_stream_ws,
+    merged_api_config,
+};
 use crate::execute::execute;
 use crate::files::{
     archive, compare_files, delete_entry, display_file, get_cwd, glob_search, grep, list_dir,
@@ -41,21 +46,24 @@ async fn ok() -> axum::http::StatusCode {
     axum::http::StatusCode::OK
 }
 
-/// `GET /api/config` — feature discovery (open-terminal 0.8.1).
-///
-/// Unauthenticated exactly like upstream: it leaks only feature flags, and
-/// inside the cluster the route is reachable solely through the broker
-/// relay (broker auth still applies there). We always serve terminals,
-/// serve the system-prompt endpoint (stage 2, #169) and implement neither
-/// notebooks.
-async fn api_config() -> axum::Json<serde_json::Value> {
-    axum::Json(serde_json::json!({
+/// The runtime's OWN `/api/config` feature flags — the base document the
+/// desktop-sidecar merge (see [`crate::desktop::merged_api_config`]) builds on.
+/// We always serve terminals, serve the system-prompt endpoint (stage 2, #169)
+/// and implement neither notebooks.
+fn runtime_config_json() -> serde_json::Value {
+    serde_json::json!({
         "features": {
             "terminal": true,
             "notebooks": false,
             "system": true,
         }
-    }))
+    })
+}
+
+/// `GET /api/config` — feature discovery (open-terminal 0.8.1), merged with
+/// the desktop sidecar's flags when the lane is active.
+async fn api_config(State(state): State<AppState>) -> axum::Json<serde_json::Value> {
+    axum::Json(merged_api_config(&state, runtime_config_json()).await)
 }
 
 /// Build the full runtime router over `state`.
@@ -70,7 +78,54 @@ pub fn build_router(state: AppState) -> Router {
         .route("/healthz", get(ok))
         .route("/readyz", get(ok))
         // open-terminal 0.8.1 feature discovery — unauthenticated like upstream.
+        // Merged with the desktop sidecar's flags when DESKTOP_URL is set.
         .route("/api/config", get(api_config))
+        // Desktop/browser sidecar lane (explicit WS relays — axum must own the
+        // upgrade; see crate::desktop). Registered for the FULL method set (the
+        // `/proxy/{port}` pattern) so non-WS/non-GET requests forward to the
+        // sidecar exactly like the fallback instead of axum-405ing. Non-upgrade
+        // requests on these paths are forwarded like the fallback, so the
+        // explicit routes only ever EXTEND behaviour.
+        .route(
+            "/desktop/stream",
+            get(desktop_stream_ws)
+                .post(desktop_stream_ws)
+                .put(desktop_stream_ws)
+                .patch(desktop_stream_ws)
+                .delete(desktop_stream_ws)
+                .head(desktop_stream_ws)
+                .options(desktop_stream_ws),
+        )
+        .route(
+            "/desktop/audio",
+            get(desktop_audio_ws)
+                .post(desktop_audio_ws)
+                .put(desktop_audio_ws)
+                .patch(desktop_audio_ws)
+                .delete(desktop_audio_ws)
+                .head(desktop_audio_ws)
+                .options(desktop_audio_ws),
+        )
+        .route(
+            "/events",
+            get(desktop_events_ws)
+                .post(desktop_events_ws)
+                .put(desktop_events_ws)
+                .patch(desktop_events_ws)
+                .delete(desktop_events_ws)
+                .head(desktop_events_ws)
+                .options(desktop_events_ws),
+        )
+        .route(
+            "/browser/view/{sid}/{token}/{channel}",
+            get(desktop_browser_view)
+                .post(desktop_browser_view)
+                .put(desktop_browser_view)
+                .patch(desktop_browser_view)
+                .delete(desktop_browser_view)
+                .head(desktop_browser_view)
+                .options(desktop_browser_view),
+        )
         // OWUI v0.11.4 (#195): terminal-owned Agent Skills. `/{name}` is the
         // path-param alias OWUI's backend calls; `/skills/read?name=` is
         // upstream open-terminal's shape.
@@ -171,5 +226,9 @@ pub fn build_router(state: AppState) -> Router {
             crate::metrics::http_metrics_layer,
         ))
         .layer(DefaultBodyLimit::max(max_upload_bytes))
+        // Desktop/browser sidecar fallback: every request no explicit route
+        // claims is reverse-proxied to DESKTOP_URL (HTTP-only; WS traffic uses
+        // the explicit routes above). Inactive lane = the default 404.
+        .fallback(desktop_fallback)
         .with_state(state)
 }

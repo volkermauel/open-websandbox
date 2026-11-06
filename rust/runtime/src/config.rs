@@ -12,6 +12,7 @@
 use std::env;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Duration;
 
 /// Default workspace root (env `WORKDIR`).
 const DEFAULT_WORKDIR: &str = "/workspace";
@@ -55,6 +56,16 @@ const DEFAULT_SYSTEM_PROMPT: &str = "";
 // disabled — the prompt stays byte-for-byte upstream. The same knob also
 // gates the config-driven `## Workspace conventions` section (built from
 // `workdir`, not from the static file — WORKDIR varies per deployment).
+/// Default desktop-sidecar base URL (env `DESKTOP_URL`). This is the value
+/// the chart/sidecar lane sets; in code the lane activates only when the
+/// variable is actually present (see [`RuntimeConfig::desktop_lane_active`]).
+pub const DEFAULT_DESKTOP_URL: &str = "http://127.0.0.1:8000";
+/// Seconds a sidecar `/api/config` fetch may take before it is abandoned
+/// (the runtime's own flags are served unchanged when it does).
+const DESKTOP_CONFIG_FETCH_TIMEOUT_SECS: u64 = 2;
+/// Seconds a fetched sidecar `/api/config` stays cached.
+const DESKTOP_CONFIG_CACHE_TTL_SECS: u64 = 5;
+
 /// Runtime configuration loaded from the environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfig {
@@ -92,6 +103,45 @@ pub struct RuntimeConfig {
     /// Capability-manifest path appended to the `GET /system` prompt (env
     /// `SANDBOX_TOOLS_MANIFEST`; `None` ⇒ disabled, prompt unchanged).
     pub tools_manifest: Option<PathBuf>,
+    /// Desktop/browser sidecar base URL (env `DESKTOP_URL`, e.g. the default
+    /// [`DEFAULT_DESKTOP_URL`]). `Some(_)` activates the sidecar lane: the
+    /// HTTP fallback reverse-proxies unmatched requests to it and the explicit
+    /// `/desktop/*`, `/events`, `/browser/view/*` WS routes relay to it.
+    /// `None` (default) = lane off — the runtime behaves exactly as before
+    /// (default 404 for unmatched paths, own flags only in `/api/config`).
+    pub desktop_url: Option<String>,
+    /// Shared bearer token for the sidecar hop (env `DESKTOP_API_KEY`). The
+    /// runtime sends `Authorization: Bearer <key>` on every sidecar request
+    /// (HTTP fallback + WS upgrades + config fetch); the inbound caller's
+    /// Authorization is never forwarded. `None` = no Authorization injected.
+    pub desktop_api_key: Option<String>,
+    /// Operator kill switch for the desktop lane (env `DESKTOP_ENABLED`,
+    /// `true`/`false`, default `true`). `false` disables the fallback, the WS
+    /// relays and the config merge even when `DESKTOP_URL` is set.
+    pub desktop_enabled: bool,
+}
+
+impl RuntimeConfig {
+    /// True when the desktop-sidecar lane is active: a sidecar URL is
+    /// configured AND the operator has not disabled it. Unset/empty env keeps
+    /// the runtime byte-for-byte on its pre-desktop behaviour.
+    #[must_use]
+    pub fn desktop_lane_active(&self) -> bool {
+        self.desktop_enabled && self.desktop_url.as_deref().is_some_and(|u| !u.is_empty())
+    }
+
+    /// Sidecar `/api/config` fetch timeout (short — a hung sidecar must never
+    /// stall feature discovery).
+    #[must_use]
+    pub fn desktop_config_fetch_timeout(&self) -> Duration {
+        Duration::from_secs(DESKTOP_CONFIG_FETCH_TIMEOUT_SECS)
+    }
+
+    /// How long a fetched sidecar config stays cached.
+    #[must_use]
+    pub fn desktop_config_cache_ttl(&self) -> Duration {
+        Duration::from_secs(DESKTOP_CONFIG_CACHE_TTL_SECS)
+    }
 }
 
 impl Default for RuntimeConfig {
@@ -112,6 +162,9 @@ impl Default for RuntimeConfig {
             info: DEFAULT_INFO.to_string(),
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
             tools_manifest: None,
+            desktop_url: None,
+            desktop_api_key: None,
+            desktop_enabled: true,
         }
     }
 }
@@ -168,6 +221,13 @@ impl RuntimeConfig {
         if let Some(v) = get("SANDBOX_TOOLS_MANIFEST") {
             cfg.tools_manifest = Some(PathBuf::from(v));
         }
+        if let Some(v) = get("DESKTOP_URL") {
+            cfg.desktop_url = Some(v);
+        }
+        if let Some(v) = get("DESKTOP_API_KEY") {
+            cfg.desktop_api_key = Some(v);
+        }
+        cfg.desktop_enabled = env_t(&get, "DESKTOP_ENABLED", cfg.desktop_enabled);
         cfg
     }
 }
@@ -236,6 +296,12 @@ mod tests {
         assert_eq!(cfg.info, "");
         assert_eq!(cfg.system_prompt, "");
         assert_eq!(cfg.tools_manifest, None);
+        // Desktop lane: off unless DESKTOP_URL is actually set (unset env =
+        // byte-for-byte pre-desktop behaviour), kill switch defaults open.
+        assert_eq!(cfg.desktop_url, None);
+        assert_eq!(cfg.desktop_api_key, None);
+        assert!(cfg.desktop_enabled);
+        assert!(!cfg.desktop_lane_active());
     }
 
     #[test]
@@ -257,6 +323,8 @@ mod tests {
                 "SANDBOX_TOOLS_MANIFEST",
                 "/usr/local/share/sandbox-capabilities.md",
             ),
+            ("DESKTOP_URL", "http://127.0.0.1:8000"),
+            ("DESKTOP_API_KEY", "sidecar-secret"),
         ]));
         assert_eq!(cfg.workdir, PathBuf::from("/tmp/ws"));
         assert_eq!(cfg.max_procs, 512);
@@ -274,6 +342,41 @@ mod tests {
             cfg.tools_manifest,
             Some(PathBuf::from("/usr/local/share/sandbox-capabilities.md"))
         );
+        assert_eq!(
+            cfg.desktop_url.as_deref(),
+            Some("http://127.0.0.1:8000"),
+            "DESKTOP_URL is stored verbatim"
+        );
+        assert_eq!(cfg.desktop_api_key.as_deref(), Some("sidecar-secret"));
+        assert!(cfg.desktop_lane_active());
+    }
+
+    #[test]
+    fn desktop_kill_switch_disables_lane() {
+        let cfg = RuntimeConfig::from_map(map(&[
+            ("DESKTOP_URL", "http://127.0.0.1:8000"),
+            ("DESKTOP_ENABLED", "false"),
+        ]));
+        assert!(cfg.desktop_url.is_some());
+        assert!(!cfg.desktop_enabled);
+        assert!(!cfg.desktop_lane_active());
+    }
+
+    #[test]
+    fn desktop_url_alone_activates_lane() {
+        let cfg = RuntimeConfig::from_map(map(&[("DESKTOP_URL", DEFAULT_DESKTOP_URL)]));
+        assert!(cfg.desktop_lane_active());
+        assert_eq!(cfg.desktop_api_key, None);
+        // Blank URL never activates (empty values are filtered like upstream).
+        let blank = RuntimeConfig::from_map(map(&[("DESKTOP_URL", "")]));
+        assert!(!blank.desktop_lane_active());
+    }
+
+    #[test]
+    fn desktop_timeout_constants_are_short_and_cached() {
+        let cfg = RuntimeConfig::from_map(map(&[]));
+        assert_eq!(cfg.desktop_config_fetch_timeout(), Duration::from_secs(2));
+        assert_eq!(cfg.desktop_config_cache_ttl(), Duration::from_secs(5));
     }
 
     #[test]

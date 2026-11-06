@@ -11,6 +11,7 @@
 pub mod app;
 pub mod auth;
 pub mod config;
+pub mod desktop;
 pub mod error;
 pub mod execute;
 pub mod files;
