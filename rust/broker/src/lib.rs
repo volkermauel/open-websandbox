@@ -21,6 +21,7 @@ pub mod app;
 pub mod auth;
 pub mod client;
 pub mod config;
+pub mod desktop;
 pub mod error;
 pub mod leaser;
 pub mod metrics;

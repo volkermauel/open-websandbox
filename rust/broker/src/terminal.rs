@@ -35,7 +35,7 @@ use shared::{constant_time_eq, is_placeholder_secret, Profile};
 
 use crate::error::ApiError;
 use crate::proxy::{profile_from_header, RUNTIME_PORT};
-use crate::resolve::resolve_sandbox;
+use crate::resolve::{resolve_sandbox, ResolvedSandbox};
 
 use crate::metrics::{AUTH_FAILURES_TOTAL, WS_TOUCHES_TOTAL};
 use crate::state::AppState;
@@ -148,71 +148,15 @@ async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, s
     // 1. first-message shared-secret auth (only when the secret is configured).
     let mut client = socket;
     let secret = state.config.shared_secret.clone();
-    if !is_placeholder_secret(&secret) {
-        match wait_auth(&mut client, &secret).await {
-            AuthResult::Ok => {}
-            AuthResult::Deny => {
-                metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "bad_token").increment(1);
-                let _ = client
-                    .send(AxumMsg::Close(Some(axum::extract::ws::CloseFrame {
-                        code: 4001,
-                        reason: "invalid api key".into(),
-                    })))
-                    .await;
-                return;
-            }
-            AuthResult::Timeout => {
-                metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "auth_timeout").increment(1);
-                let _ = client
-                    .send(AxumMsg::Close(Some(axum::extract::ws::CloseFrame {
-                        code: 4001,
-                        reason: "auth timeout or invalid payload".into(),
-                    })))
-                    .await;
-                return;
-            }
-        }
+    if !authenticate_first_message(&mut client, &secret).await {
+        return;
     }
 
-    // 2. resolve the target sandbox (close 1011 on failure).
-    let resolved = match resolve_sandbox(
-        &state,
-        &identity.user_id,
-        &identity.session_id,
-        identity.profile,
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = client
-                .send(AxumMsg::Close(Some(axum::extract::ws::CloseFrame {
-                    code: 1011,
-                    reason: format!("sandbox unavailable: {e}").into(),
-                })))
-                .await;
-            return;
-        }
-    };
-
-    // 2.5 (#98/#147): the runtime's per-session key is MANDATORY on the pod
-    //     hop — the WS upgrade included. Fail closed (1011) rather than attach
-    //     unauthenticated and let the runtime reject the upgrade mid-relay.
-    let runtime_api_key = match state.store.read_runtime_key(&resolved.name).await {
-        Ok(Some(k)) => k,
-        Ok(None) => {
-            tracing::warn!(
-                sandbox = %resolved.name,
-                "no per-session runtime key for terminal relay (owui-runtime-key-* missing)"
-            );
-            close_1011(&mut client, "terminal unavailable").await;
-            return;
-        }
-        Err(e) => {
-            tracing::warn!(sandbox = %resolved.name, error = %e, "read runtime key failed");
-            close_1011(&mut client, "terminal unavailable").await;
-            return;
-        }
+    // 2. resolve the target sandbox + its mandatory per-session runtime key
+    //    (close 1011 on any failure; shared with the desktop relay).
+    let Some((resolved, runtime_api_key)) = resolve_and_key(&mut client, &state, &identity).await
+    else {
+        return;
     };
 
     // 3. best-effort: ensure an interactive PTY exists on the resolved pod before
@@ -268,6 +212,90 @@ async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, s
         upstream_touch,
     )
     .await;
+}
+
+/// First-message shared-secret auth shared by every broker WS relay (terminal
+/// and desktop). When the shared secret is configured (not a placeholder), read
+/// the first `{"type":"auth","token":...}` message within [`AUTH_TIMEOUT`]; on
+/// a bad token or timeout, count the failure (`AUTH_FAILURES_TOTAL`), close the
+/// client socket `4001`, and return `false`. A placeholder secret skips the
+/// handshake (fail-closed lives in the boot guard + `Authed`) — identical
+/// semantics to the original inline check in [`relay`].
+pub(crate) async fn authenticate_first_message(client: &mut WebSocket, secret: &str) -> bool {
+    if is_placeholder_secret(secret) {
+        return true;
+    }
+    match wait_auth(client, secret).await {
+        AuthResult::Ok => true,
+        AuthResult::Deny => {
+            metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "bad_token").increment(1);
+            close_4001(client, "invalid api key").await;
+            false
+        }
+        AuthResult::Timeout => {
+            metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "auth_timeout").increment(1);
+            close_4001(client, "auth timeout or invalid payload").await;
+            false
+        }
+    }
+}
+
+/// Close the client socket with `4001` + reason (first-message auth failure).
+async fn close_4001(client: &mut WebSocket, reason: &str) {
+    let _ = client
+        .send(AxumMsg::Close(Some(axum::extract::ws::CloseFrame {
+            code: 4001,
+            reason: reason.into(),
+        })))
+        .await;
+}
+
+/// Resolve the identity's sandbox and read its MANDATORY per-session runtime
+/// key (#98/#147), shared by every broker WS relay (terminal + desktop): the
+/// runtime hop requires the key on the WS upgrade too, so a missing or
+/// unreadable key fails closed (client socket closed `1011`, no shared-key
+/// fallback). Returns `None` after closing the socket on any failure.
+pub(crate) async fn resolve_and_key(
+    client: &mut WebSocket,
+    state: &AppState,
+    identity: &TerminalIdentity,
+) -> Option<(ResolvedSandbox, String)> {
+    let resolved = match resolve_sandbox(
+        state,
+        &identity.user_id,
+        &identity.session_id,
+        identity.profile,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = client
+                .send(AxumMsg::Close(Some(axum::extract::ws::CloseFrame {
+                    code: 1011,
+                    reason: format!("sandbox unavailable: {e}").into(),
+                })))
+                .await;
+            return None;
+        }
+    };
+    let runtime_api_key = match state.store.read_runtime_key(&resolved.name).await {
+        Ok(Some(k)) => k,
+        Ok(None) => {
+            tracing::warn!(
+                sandbox = %resolved.name,
+                "no per-session runtime key for ws relay (owui-runtime-key-* missing)"
+            );
+            close_1011(client, "terminal unavailable").await;
+            return None;
+        }
+        Err(e) => {
+            tracing::warn!(sandbox = %resolved.name, error = %e, "read runtime key failed");
+            close_1011(client, "terminal unavailable").await;
+            return None;
+        }
+    };
+    Some((resolved, runtime_api_key))
 }
 
 /// Close the client socket with `1011` + reason (shared failure path).
@@ -369,9 +397,32 @@ pub async fn relay_to_upstream(client: WebSocket, upstream_url: &str, runtime_ap
 /// calls [`SessionTouch::note_activity`] on every relayed frame (throttled,
 /// best-effort), so an actively-used terminal is never parked mid-session.
 pub async fn relay_to_upstream_with_touch(
+    client: WebSocket,
+    upstream_url: &str,
+    runtime_api_key: &str,
+    client_touch: Option<SessionTouch>,
+    upstream_touch: Option<SessionTouch>,
+) {
+    relay_to_upstream_with_headers(
+        client,
+        upstream_url,
+        runtime_api_key,
+        HeaderMap::new(),
+        client_touch,
+        upstream_touch,
+    )
+    .await;
+}
+
+/// [`relay_to_upstream_with_touch`] plus `extra_headers` merged into the
+/// upstream upgrade request after the Bearer — the desktop relay uses this to
+/// forward the client's requested WebSocket subprotocols verbatim (see
+/// [`crate::desktop`]).
+pub async fn relay_to_upstream_with_headers(
     mut client: WebSocket,
     upstream_url: &str,
     runtime_api_key: &str,
+    extra_headers: HeaderMap,
     client_touch: Option<SessionTouch>,
     upstream_touch: Option<SessionTouch>,
 ) {
@@ -396,6 +447,9 @@ pub async fn relay_to_upstream_with_touch(
             close_1011(&mut client, "terminal unavailable").await;
             return;
         }
+    }
+    for (name, value) in &extra_headers {
+        request.headers_mut().insert(name.clone(), value.clone());
     }
     let upstream = match tokio_tungstenite::connect_async(request).await {
         Ok((stream, _)) => stream,

@@ -11,6 +11,7 @@ use crate::api::{
     api_config, api_status, create_sandbox, delete_sandbox, docs, get_sandbox, healthz,
     list_sandboxes, metrics, openapi_json, readyz,
 };
+use crate::desktop::{browser_view_ws, desktop_audio_ws, desktop_stream_ws, events_ws};
 use crate::metrics::http_metrics_layer;
 use axum::extract::DefaultBodyLimit;
 
@@ -51,6 +52,16 @@ pub fn build_router(state: AppState) -> Router {
         // Interactive terminal WebSocket relay (OWUI open-terminal contract).
         // POST /api/terminals (create) still flows through the catch-all proxy.
         .route("/api/terminals/{id}", get(terminal_ws))
+        // Desktop/browser/event WebSocket relays (OWUI desktop-tab contract):
+        // same identity + first-message auth + resolve path as the terminal
+        // relay above. The catch-all below stays plain HTTP (strips Upgrade).
+        .route("/desktop/stream", get(desktop_stream_ws))
+        .route("/desktop/audio", get(desktop_audio_ws))
+        .route("/events", get(events_ws))
+        .route(
+            "/browser/view/{sid}/{token}/{channel}",
+            get(browser_view_ws),
+        )
         // Catch-all reverse proxy: /execute, /files/*, /snapshot, /restore,
         // /api/terminals (POST), … → resolved runtime pod.
         .route("/{*path}", any(proxy_catch_all))

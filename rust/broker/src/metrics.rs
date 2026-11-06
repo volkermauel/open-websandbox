@@ -170,6 +170,8 @@ impl Default for BrokerMetrics {
 /// - static open / gated routes (`/healthz`, `/api/sandboxes`, …) → verbatim;
 /// - `/api/sandboxes/{name}` → the `{name}` template;
 /// - `GET /api/terminals/{id}` (WS relay) → `terminal_ws`;
+/// - the desktop/browser/event WS relays → `desktop_ws` (`/desktop/*`),
+///   `events_ws` (`/events`), `browser_view` (`/browser/view/*`);
 /// - everything else (the `/{*path}` catch-all: `/execute`, `/files/*`,
 ///   `/snapshot`, `/restore`, `POST /api/terminals`, …) → `proxy`.
 ///
@@ -182,6 +184,9 @@ pub fn route_label(matched: &str) -> &str {
         | "/api/status" | "/api/sandboxes" => matched,
         _ if matched.starts_with("/api/sandboxes/") => "/api/sandboxes/{name}",
         _ if matched.starts_with("/api/terminals/") => "terminal_ws",
+        _ if matched == "/events" => "events_ws",
+        _ if matched.starts_with("/desktop/") => "desktop_ws",
+        _ if matched.starts_with("/browser/view/") => "browser_view",
         _ => "proxy",
     }
 }
@@ -265,6 +270,25 @@ mod tests {
     #[test]
     fn terminal_ws_collapses_to_fixed_label() {
         assert_eq!(route_label("/api/terminals/chat-42"), "terminal_ws");
+    }
+
+    #[test]
+    fn desktop_ws_routes_collapse_to_fixed_labels() {
+        assert_eq!(route_label("/desktop/stream"), "desktop_ws");
+        assert_eq!(route_label("/desktop/audio"), "desktop_ws");
+        assert_eq!(route_label("/events"), "events_ws");
+        // Channel/ids filled in (or the template) both collapse.
+        assert_eq!(
+            route_label("/browser/view/{sid}/{token}/{channel}"),
+            "browser_view"
+        );
+        assert_eq!(route_label("/browser/view/bs-1/tok-2/ws"), "browser_view");
+        assert_eq!(route_label("/browser/view/bs-1/tok-2/vnc"), "browser_view");
+        // Near-misses stay on the catch-all label.
+        assert_eq!(route_label("/desktop"), "proxy");
+        assert_eq!(route_label("/desktopx/stream"), "proxy");
+        assert_eq!(route_label("/browser"), "proxy");
+        assert_eq!(route_label("/eventsrc"), "proxy");
     }
 
     #[test]

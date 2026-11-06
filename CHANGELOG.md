@@ -12,6 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Broker desktop/browser/event WebSocket relays (`GET /desktop/stream`,
+  `GET /desktop/audio`, `GET /events`,
+  `GET /browser/view/{sid}/{token}/{channel}`, channel `ws`/`stream`/`vnc`):
+  the single OWUI terminal connection now also carries the desktop and
+  browser tabs. Same contract as the terminal relay — query/header identity,
+  first-message shared-secret auth (4001), `resolve_sandbox` + mandatory
+  per-session runtime key (fail-closed 1011), path+query forwarded verbatim
+to `ws://<pod-ip>:8888`, subprotocols passed through, idle-clock touches in
+  both directions. The `/{*path}` catch-all stays plain HTTP (strips
+  `Upgrade`); metrics collapse to `desktop_ws` / `events_ws` / `browser_view`.
+
 ## [0.2.0] - 2026-09-22
 
 ### Added — Open Web UI v0.11.4 terminal-server surface (#195, #196)
