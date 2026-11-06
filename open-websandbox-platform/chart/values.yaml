@@ -209,6 +209,36 @@ sandboxTemplate:
     tmp: { medium: Memory, sizeLimit: 2Gi }
     packages: 4Gi
 
+desktop:
+  # Desktop/browser sidecar (open-terminal) in every sandbox pod: ONE pod serves
+  # the terminal AND desktop/browser tabs. The runtime proxies desktop traffic
+  # to the sidecar over loopback; DESKTOP_URL/DESKTOP_API_KEY on the runtime
+  # container activate that path. false renders the single-container pod
+  # exactly as before this feature.
+  enabled: true
+  # Full image reference (external image — deliberately NOT the
+  # imageRegistry/imageOwner/imageTag trio used by the platform's own images).
+  # Pin by digest in production:
+  #   ghcr.io/volkermauel/open-terminal@sha256:<digest>
+  image: ghcr.io/volkermauel/open-terminal:0.16.1-desktop-sandbox
+  # Bearer token shared between the runtime and the sidecar (loopback only).
+  # Empty => auto-generate per render; both containers always get the SAME
+  # value (they are rendered from one Helm pass). Set explicitly for
+  # reproducible renders.
+  apiKey: ""
+  # runtime -> sidecar base URL (loopback; the sidecar binds 127.0.0.1:8000).
+  url: http://127.0.0.1:8000
+  # Memory-backed /dev/shm for the browser (Chrome mmaps shared memory
+  # heavily and crashes on a missing/small /dev/shm).
+  shmSize: 512Mi
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
 warmPool:
   # 1 (default): the pool pre-warms N sandboxes so a fresh ephemeral claim
   # binds INSTANTLY (upstream adopts the running pod in place). Pods boot from

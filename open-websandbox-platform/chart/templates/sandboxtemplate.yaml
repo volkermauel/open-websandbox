@@ -17,6 +17,8 @@
 {{- end -}}
 {{- $poolOn := gt ($.Values.warmPool.replicas | int) 0 }}
 {{- $recordOn := and ($.Values.warmPool.record.enabled) (gt ($.Values.warmPool.record.replicas | int) 0) }}
+{{- $desktopKey := $.Values.desktop.apiKey -}}
+{{- if not $desktopKey -}}{{- $desktopKey = randAlphaNum 48 -}}{{- end -}}
 {{- $templates := list (dict "name" $.Values.sandboxTemplate.name "poolKey" "" "vct" false) }}
 {{- if $poolOn -}}
 {{- $templates = append $templates (dict "name" $.Values.warmPool.templateName "poolKey" $.Values.broker.poolRuntimeKey "vct" false) -}}
@@ -138,6 +140,15 @@ spec:
         - name: MAX_WORKSPACE_BYTES
           value: {{ include "open-websandbox.sizeBytes" $.Values.broker.s3.sizeLimit | quote }}
         {{- end }}
+        {{- if $.Values.desktop.enabled }}
+        # Desktop/browser sidecar lane: the runtime proxies desktop traffic to
+        # the in-pod open-terminal sidecar (containers: desktop) over loopback.
+        # The SAME secret value is rendered into both containers.
+        - name: DESKTOP_URL
+          value: {{ $.Values.desktop.url | quote }}
+        - name: DESKTOP_API_KEY
+          value: {{ $desktopKey | quote }}
+        {{- end }}
         {{- if $otlp }}
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: {{ $otlp | quote }}
@@ -224,6 +235,46 @@ spec:
           mountPath: /etc/runtime-key
           readOnly: true
         {{- end }}
+      {{- if $.Values.desktop.enabled }}
+      # Desktop/browser sidecar (open-terminal): serves the desktop + browser
+      # tabs the runtime proxies to on loopback (:8000). Restricted profile per
+      # the spike proof (ns agent-sandbox-runtime): capabilities drop ALL, no
+      # privilege escalation, uid/gid 1000, RuntimeDefault seccomp. The
+      # -sandbox image variant ships a plain-python3 entrypoint — the stock
+      # open-terminal launcher (setcap cap_setgid indirection) breaks under
+      # drop:ALL, so do not rely on it.
+      - name: desktop
+        image: {{ $.Values.desktop.image }}
+        imagePullPolicy: IfNotPresent   # registry-hosted; the global imagePullPolicy (KIND: Never) must not govern this image
+        env:
+        - name: HOME
+          value: /home/user
+        - name: OPEN_TERMINAL_API_KEY
+          value: {{ $desktopKey | quote }}
+        - name: OPEN_TERMINAL_ENABLE_DESKTOP
+          value: "true"
+        - name: OPEN_TERMINAL_ENABLE_BROWSER
+          value: "true"
+        # Chromium cannot use user namespaces inside a container.
+        - name: OPEN_TERMINAL_BROWSER_NO_SANDBOX
+          value: "true"
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: {{ $.Values.sandboxTemplate.uid }}
+          runAsGroup: {{ $.Values.sandboxTemplate.uid }}
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+        resources:
+{{- toYaml $.Values.desktop.resources | nindent 10 }}
+        volumeMounts:
+        # Browser shared memory: Chrome mmaps /dev/shm heavily; without a
+        # writable memory-backed shm tabs crash.
+        - name: desktop-shm
+          mountPath: /dev/shm
+      {{- end }}
       {{- if $t.vct }}
       # Drain belt grace window (see the runtime container's preStop hook).
       terminationGracePeriodSeconds: 45
@@ -267,6 +318,12 @@ spec:
       - name: packages
         emptyDir:
           sizeLimit: {{ $.Values.sandboxTemplate.storage.packages }}
+      {{- if $.Values.desktop.enabled }}
+      - name: desktop-shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: {{ $.Values.desktop.shmSize }}
+      {{- end }}
       {{- if eq $t.name $.Values.warmPool.templateName }}
       - name: runtime-key
         secret:

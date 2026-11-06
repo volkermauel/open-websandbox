@@ -566,6 +566,61 @@
         }
       }
     },
+    "desktop": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Desktop/browser sidecar (open-terminal) in every sandbox pod. ONE pod serves the terminal AND desktop/browser tabs: the runtime proxies desktop traffic to the sidecar over loopback. enabled=false renders the single-container pod exactly as before this feature (no sidecar, no DESKTOP_* env on the runtime).",
+      "required": [
+        "enabled",
+        "image",
+        "apiKey",
+        "url",
+        "shmSize",
+        "resources"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Render the desktop sidecar container + its /dev/shm volume into the sandbox pod template and set DESKTOP_URL/DESKTOP_API_KEY on the runtime container. false keeps the pod exactly as before."
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Full image reference for the open-terminal desktop sidecar (external image, independent of the imageRegistry/imageOwner/imageTag trio). Pin by digest in production: ghcr.io/volkermauel/open-terminal@sha256:<digest>. Must be the -sandbox variant (plain-python3 entrypoint; the stock launcher's setcap indirection breaks under capabilities drop ALL)."
+        },
+        "apiKey": {
+          "type": "string",
+          "description": "Bearer token shared between the runtime (DESKTOP_API_KEY) and the sidecar (OPEN_TERMINAL_API_KEY), loopback only. Empty => auto-generated per render; both containers always receive the same value (one Helm pass)."
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "description": "runtime -> sidecar base URL rendered as DESKTOP_URL. The sidecar binds 127.0.0.1:8000."
+        },
+        "shmSize": {
+          "type": "string",
+          "pattern": "^[0-9]+(Ki|Mi|Gi|Ti)$",
+          "description": "SizeLimit of the memory-backed emptyDir mounted at /dev/shm in the sidecar (browser shared memory)."
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Kubernetes resource requirements for the sidecar container (rendered verbatim).",
+          "required": [
+            "requests",
+            "limits"
+          ],
+          "properties": {
+            "requests": {
+              "$ref": "#/definitions/containerResourcesHalf"
+            },
+            "limits": {
+              "$ref": "#/definitions/containerResourcesHalf"
+            }
+          }
+        }
+      }
+    },
     "warmPool": {
       "type": "object",
       "additionalProperties": false,
@@ -834,6 +889,22 @@
     }
   },
   "definitions": {
+    "containerResourcesHalf": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Kubernetes CPU quantity (e.g. 200m, \"1\")."
+        },
+        "memory": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Kubernetes memory quantity (e.g. 512Mi, 1Gi)."
+        }
+      }
+    },
     "httpProbe": {
       "type": "object",
       "additionalProperties": false,

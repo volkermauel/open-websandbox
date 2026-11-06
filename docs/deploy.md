@@ -268,6 +268,25 @@ the chart): `MAX_TIMEOUT` (600), `DEFAULT_TIMEOUT` (120), `MAX_OUTPUT_BYTES`
 default silently rejects larger uploads, #162),
 `RUNTIME_API_KEY` (optional WS auth, off by default).
 
+### Desktop/browser sidecar (`desktop.*`)
+
+`desktop.enabled: true` (default) adds a SECOND container, `desktop`, to every
+sandbox pod rendered from the SandboxTemplate (base + warm-pool + s3-record
+profiles): the open-terminal desktop/browser sidecar bound to
+`127.0.0.1:8000`. ONE pod serves the terminal AND the desktop/browser tabs —
+the runtime proxies desktop traffic to it over loopback, activated by
+`DESKTOP_URL` / `DESKTOP_API_KEY` env on the runtime container (same key
+value, rendered into both containers). The sidecar runs the restricted
+profile proven by the 2026-11-05 spike: `capabilities.drop: ["ALL"]`,
+`allowPrivilegeEscalation: false`, uid/gid 1000, RuntimeDefault seccomp, plus
+a memory-backed `/dev/shm` (`desktop.shmSize`, default 512Mi — browser shared
+memory). `desktop.apiKey` ("" = auto-generated per render) is the
+runtime↔sidecar bearer token; loopback only. `desktop.enabled: false` omits
+the sidecar and both env vars — the pod is byte-identical to the
+pre-sidecar rendering. KIND e2e profiles (`values-kind*.yaml`) set it false:
+the ghcr.io image is not node-loaded there and KIND pins
+`imagePullPolicy: Never`.
+
 ## Production values presets (must-override keys)
 
 The chart's defaults target a typical kubeadm-style cluster — several values
@@ -282,6 +301,7 @@ install, set at least these in your values file:
 | `imagePullPolicy` | `Never` | `IfNotPresent` once images are pulled from a registry (not pre-loaded). |
 | `broker.sharedSecret` | `dev-shared-secret-change-me` | `openssl rand -hex 32` — **must override**. Becomes the broker's `BROKER_SHARED_SECRET`. |
 | `broker.poolRuntimeKey` | `""` | `openssl rand -hex 32` — **must override when `warmPool.replicas` > 0** (the default). POOL-scoped key for claimed ephemeral sandboxes (`owui-pool-key` Secret); the runtime refuses to boot on an empty/placeholder key. |
+| `desktop.image` | `ghcr.io/volkermauel/open-terminal:0.16.1-desktop-sandbox` | **Pin by digest** (`...@sha256:<digest>`) in production. The desktop/browser sidecar (open-terminal) in every sandbox pod — must be the `-sandbox` variant: its plain-python3 entrypoint works under `capabilities.drop: ["ALL"]`, the stock launcher's setcap indirection does not. |
 | `router.kubeApiServerCidr` | `10.96.0.1/32` (kubeadm; default) | ClusterIP of the `kubernetes` Service. k3s: `10.43.0.1/32`; MicroK8s: `10.152.183.1/32`. Wrong here and the router can't reach the API server. |
 | `router.kubeDnsCidr` | `10.96.0.10/32` (kubeadm; default) | ClusterIP of kube-dns/CoreDNS. k3s: `10.43.0.10/32`; MicroK8s: `10.152.183.10/32`. |
 | `sharedPvc.storageClass` | `cephfs` | Your RWX StorageClass. Persistent sandboxes need RWX for park/resume. |

@@ -50,3 +50,8 @@ warmPool:
                                # test here
     scratch:
       storageClass: ""         # emptyDir scratch (S3 is the store of record)
+
+# Desktop/browser sidecar off in KIND e2e: the ghcr.io image is not node-loaded
+# and this profile pins imagePullPolicy: Never.
+desktop:
+  enabled: false
