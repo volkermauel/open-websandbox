@@ -236,6 +236,9 @@ desktop:
   # Memory-backed /dev/shm for the browser (Chrome mmaps shared memory
   # heavily and crashes on a missing/small /dev/shm).
   shmSize: 512Mi
+  # Writable HOME for the sidecar (emptyDir). An SCC-assigned UID cannot write
+  # the image's own /home/user; on clusters that pin uid 1000 it is unused.
+  homeSize: 2Gi
   resources:
     requests:
       cpu: 200m

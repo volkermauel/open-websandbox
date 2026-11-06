@@ -618,6 +618,11 @@
               "$ref": "#/definitions/containerResourcesHalf"
             }
           }
+        },
+        "homeSize": {
+          "type": "string",
+          "description": "Size limit of the sidecar's writable HOME (emptyDir). Needed because an SCC-assigned UID cannot write the image's /home/user.",
+          "default": "2Gi"
         }
       }
     },

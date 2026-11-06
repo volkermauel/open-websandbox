@@ -271,8 +271,10 @@ spec:
         securityContext:
           allowPrivilegeEscalation: false
           runAsNonRoot: true
-          runAsUser: {{ $.Values.sandboxTemplate.uid }}
-          runAsGroup: {{ $.Values.sandboxTemplate.uid }}
+          # No uid/gid pin on purpose: on clusters whose SCC assigns a UID from
+          # its own range (OKD restricted) a pinned uid is rejected at admission
+          # and the sandbox never starts. The sidecar runs as the assigned UID and
+          # gets a writable HOME (desktop-home below).
           capabilities:
             drop: ["ALL"]
           seccompProfile:
@@ -284,6 +286,10 @@ spec:
         # writable memory-backed shm tabs crash.
         - name: desktop-shm
           mountPath: /dev/shm
+        # The image's /home/user is only writable by uid 1000; with an
+        # SCC-assigned UID the server cannot create ~/.local there.
+        - name: desktop-home
+          mountPath: /home/user
       {{- end }}
       {{- if $t.vct }}
       # Drain belt grace window (see the runtime container's preStop hook).
@@ -333,6 +339,9 @@ spec:
         emptyDir:
           medium: Memory
           sizeLimit: {{ $.Values.desktop.shmSize }}
+      - name: desktop-home
+        emptyDir:
+          sizeLimit: {{ $.Values.desktop.homeSize | default "2Gi" }}
       {{- end }}
       {{- if eq $t.name $.Values.warmPool.templateName }}
       - name: runtime-key
