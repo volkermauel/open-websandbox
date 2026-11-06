@@ -413,6 +413,7 @@ pub async fn create_sandbox(
         pod_template,
         &state.config.runtime_ns,
         now_unix(),
+        Some(&req.template_name),
         hash.as_deref(),
     );
 

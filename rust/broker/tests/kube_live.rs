@@ -149,6 +149,7 @@ async fn sandbox_crud_create_get_list_delete() {
         base_pod_template(),
         NS,
         1_700_000_000,
+        Some("code-standard-v1"),
         None,
     );
 

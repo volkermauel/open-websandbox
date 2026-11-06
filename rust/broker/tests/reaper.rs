@@ -785,6 +785,66 @@ fn drifted_seed(name: &str, last_used: i64, hash: &str) -> Sandbox {
     sbx
 }
 
+/// A sandbox created from a NON-base template must be compared against THAT
+/// template: matching it means no drift, even though the base template differs.
+#[tokio::test]
+async fn reaper_compares_against_the_sandbox_own_template() {
+    let custom = drift_template("code-standard:CUSTOM");
+    let base = drift_template("code-standard:BASE");
+    let store = StubSandboxStore::new();
+    store.insert_template(base.clone()); // base differs from the sandbox's template
+                                         // custom template lives under its own name
+    let mut custom_named = custom.clone();
+    custom_named.metadata.name = Some("code-standard-custom".to_string());
+    store.insert_template(custom_named);
+    let mut sbx = drifted_seed(
+        "owui-c-custom-1",
+        NOW - 1000,
+        &template_hash(&custom).unwrap(),
+    );
+    sbx.metadata.annotations.as_mut().unwrap().insert(
+        "owui.io/template-name".to_string(),
+        "code-standard-custom".to_string(),
+    );
+    store.insert_sandbox(sbx);
+    let c = cfg(120, 300, 604_800);
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(stats.recycled, 0, "custom-template sandbox is not drifted");
+    assert!(store
+        .get_sandbox("owui-c-custom-1")
+        .await
+        .unwrap()
+        .is_some());
+}
+
+/// One template edit drifts every idle sandbox at once; the per-tick cap keeps
+/// that from storming the apiserver/offloads, and later ticks catch up.
+#[tokio::test]
+async fn reaper_caps_recycles_per_tick() {
+    let old = drift_template("code-standard:BROKEN");
+    let new = drift_template("code-standard:FIXED");
+    let store = StubSandboxStore::new();
+    store.insert_template(new.clone());
+    for i in 0..5 {
+        store.insert_sandbox(drifted_seed(
+            &format!("owui-c-burst-{i}"),
+            NOW - 1000,
+            &template_hash(&old).unwrap(),
+        ));
+    }
+    let c = cfg(120, 300, 604_800);
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(
+        stats.recycled,
+        broker::reaper::RECYCLE_PER_TICK,
+        "at most one tick's worth of recycles"
+    );
+}
+
 #[tokio::test]
 async fn reaper_recycles_idle_drifted_sandbox() {
     let old = drift_template("code-standard:BROKEN");

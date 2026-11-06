@@ -443,6 +443,7 @@ pub(crate) async fn create_sandbox_from_template(
         pod_template,
         &cfg.runtime_ns,
         now,
+        Some(&cfg.base_template),
         hash.as_deref(),
     );
     // #140: stamp the hot-tier mode onto the Sandbox for ops
@@ -518,13 +519,27 @@ async fn recycle_drifted_idle(
         .get(crate::sandbox::TEMPLATE_HASH_KEY)
         .filter(|v| !v.is_empty())
         .cloned()?;
-    let new = match state.store.get_template(&state.config.base_template).await {
+    // Compare against the template THIS sandbox was created from: recycling a
+    // custom-template sandbox into the base template would silently change its
+    // spec. Legacy sandboxes (no template-name stamp) are never recycled.
+    // Legacy sandboxes carry only the hash; resolve created them from the base
+    // template, so they are compared against it (keeps self-healing working for
+    // sandboxes created before the name stamp existed).
+    let template_name = sbx
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|a| a.get(crate::sandbox::TEMPLATE_NAME_KEY))
+        .filter(|v| !v.is_empty())
+        .cloned()
+        .unwrap_or_else(|| state.config.base_template.clone());
+    let new = match state.store.get_template(&template_name).await {
         Ok(Some(t)) => template_hash(&t),
         Ok(None) => {
             tracing::debug!(
                 sandbox = %name,
-                template = %state.config.base_template,
-                "template drift check: base template not found; keeping sandbox"
+                template = %template_name,
+                "template drift check: template not found; keeping sandbox"
             );
             None
         }

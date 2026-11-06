@@ -53,6 +53,11 @@ pub const MANAGED_BY_SELECTOR: &str = "app.kubernetes.io/managed-by=owui-broker"
 /// the recycle) must not turn a drift into a delete/create loop.
 pub(crate) const RECYCLE_GRACE_SECS: i64 = 120;
 
+/// Burst cap for template-drift recycles per reaper tick. A single template edit
+/// makes every idle sandbox stale at once; recycling them all in one tick would
+/// storm the apiserver and the S3 offloads. The remainder goes in later ticks.
+pub const RECYCLE_PER_TICK: u64 = 2;
+
 /// What the reaper decided to do with one sandbox this tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReaperAction {
@@ -566,7 +571,12 @@ pub async fn reap_once(
     // Live template hash for the drift recycle — ONE read per tick. Unreadable
     // (missing template, apiserver error, no podTemplate) ⇒ no recycling this
     // tick: the sandboxes keep serving and the next tick retries.
-    let live_hash: Option<String> = match store.get_template(&cfg.base_template).await {
+    // Per-sandbox live hash: drift is compared against the template each
+    // sandbox was created from (annotation), not against the base template —
+    // a custom-template sandbox must not be recycled into the base one.
+    let mut live_hashes: std::collections::BTreeMap<String, Option<String>> =
+        std::collections::BTreeMap::new();
+    let base_live_hash: Option<String> = match store.get_template(&cfg.base_template).await {
         Ok(Some(t)) => template_hash(&t),
         Ok(None) => {
             tracing::debug!(
@@ -612,12 +622,51 @@ pub async fn reap_once(
         // path. Not idle (or parked / in grace): leave alone — the next
         // resolve logs the drift at debug and this branch fires once the
         // sandbox goes idle.
-        if let (Some(old), Some(new)) = (template_hash_of(sbx), live_hash.as_ref()) {
-            if old != *new
-                && recycle_eligible(sbx, cfg, now)
-                && recycle_sandbox(store, offload, cfg, sbx, profile, &old, new, &mut stats).await
-            {
-                continue;
+        // Per-tick recycle cap: one template edit drifts every idle sandbox at
+        // once; recycling them all in a single tick storms the apiserver and the
+        // S3 offloads. The remainder is picked up by the next ticks.
+        if stats.recycled < RECYCLE_PER_TICK {
+            let tmpl_name = sbx
+                .metadata
+                .annotations
+                .as_ref()
+                .and_then(|a| a.get(crate::sandbox::TEMPLATE_NAME_KEY))
+                .filter(|v| !v.is_empty())
+                .cloned();
+            // Legacy sandboxes (hash stamped, name not) were created before the
+            // name stamp existed; they were built from the base template by
+            // resolve, so compare them against it (self-healing preserved).
+            let effective = tmpl_name.as_deref().unwrap_or(cfg.base_template.as_str());
+            let live = match Some(effective) {
+                Some(t) => {
+                    if t == cfg.base_template {
+                        base_live_hash.clone()
+                    } else if let Some(h) = live_hashes.get(t) {
+                        h.clone()
+                    } else {
+                        let h = match store.get_template(t).await {
+                            Ok(Some(tpl)) => template_hash(&tpl),
+                            Ok(None) => None,
+                            Err(e) => {
+                                tracing::warn!(template = %t, error = %e,
+                                    "drift recycle: template read failed; skipping");
+                                None
+                            }
+                        };
+                        live_hashes.insert(t.to_string(), h.clone());
+                        h
+                    }
+                }
+                None => None,
+            };
+            if let (Some(old), Some(new)) = (template_hash_of(sbx), live.as_ref()) {
+                if old != *new
+                    && recycle_eligible(sbx, cfg, now)
+                    && recycle_sandbox(store, offload, cfg, sbx, profile, &old, new, &mut stats)
+                        .await
+                {
+                    continue;
+                }
             }
         }
         let action = decide(profile, idle, mode, cfg);

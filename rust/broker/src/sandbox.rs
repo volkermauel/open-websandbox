@@ -63,6 +63,11 @@ pub const POOL_KEY_SECRET: &str = "owui-pool-key";
 /// legacy sandboxes (pre-stamping) and controller-built (claim-path)
 /// sandboxes; both are never recycled.
 pub const TEMPLATE_HASH_KEY: &str = "owui.io/template-hash";
+/// Annotation naming the template the sandbox was created from
+/// (`owui.io/template-name`). Drift is compared against THIS template: a
+/// sandbox created from a non-base template must never be recycled into the
+/// base one.
+pub const TEMPLATE_NAME_KEY: &str = "owui.io/template-name";
 /// Annotation stamped with the epoch seconds of the most recent
 /// template-drift recycle of the (deterministically named) sandbox. Gates a
 /// short anti-loop grace window: a freshly recycled sandbox is never
@@ -199,6 +204,7 @@ pub fn build_sandbox(
     mut pod_template: serde_json::Value,
     namespace: &str,
     now: i64,
+    template_name: Option<&str>,
     template_hash: Option<&str>,
 ) -> Sandbox {
     // Stamp the profile label onto the pod blueprint's metadata
@@ -234,6 +240,9 @@ pub fn build_sandbox(
     }
     if let Some(session) = session_id {
         annotations.insert(SESSION_KEY.to_string(), session.to_string());
+    }
+    if let Some(name) = template_name {
+        annotations.insert(TEMPLATE_NAME_KEY.to_string(), name.to_string());
     }
     if let Some(hash) = template_hash {
         annotations.insert(TEMPLATE_HASH_KEY.to_string(), hash.to_string());
@@ -289,6 +298,7 @@ mod tests {
             pod,
             "agent-sandbox-runtime",
             1_700_000_000,
+            Some("code-standard-v1"),
             Some("abc123"),
         );
 
@@ -324,7 +334,17 @@ mod tests {
     fn build_sandbox_omits_user_session_when_absent() {
         let tmpl = template_with_pod();
         let pod = extract_pod_template(&tmpl).unwrap();
-        let sbx = build_sandbox("noid", None, None, Profile::Ephemeral, pod, "ns", 0, None);
+        let sbx = build_sandbox(
+            "noid",
+            None,
+            None,
+            Profile::Ephemeral,
+            pod,
+            "ns",
+            0,
+            None,
+            None,
+        );
         let annots = sbx.metadata.annotations.as_ref().unwrap();
         assert!(!annots.contains_key(USER_KEY));
         assert!(!annots.contains_key(SESSION_KEY));
@@ -357,7 +377,17 @@ mod tests {
     fn build_sandbox_stamps_profile_label_onto_metadataless_template() {
         // A podTemplate with no metadata must still get the profile label.
         let pod = serde_json::json!({"spec": {"containers": []}});
-        let sbx = build_sandbox("x", None, None, Profile::Ephemeral, pod, "ns", 1, None);
+        let sbx = build_sandbox(
+            "x",
+            None,
+            None,
+            Profile::Ephemeral,
+            pod,
+            "ns",
+            1,
+            None,
+            None,
+        );
         assert_eq!(
             sbx.spec.pod_template.as_ref().unwrap()["metadata"]["labels"]["profile"],
             "ephemeral"
