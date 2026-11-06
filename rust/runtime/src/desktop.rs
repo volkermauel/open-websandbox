@@ -29,10 +29,14 @@
 //! and `/api/config` serves the runtime flags unchanged.
 //!
 //! Auth posture: the sidecar hop is inside the sandbox pod (localhost), so it
-//! does NOT require the per-session Bearer — `Authed` still guards every
-//! pre-existing route individually; the fallback/WS routes are unauthenticated
-//! like `GET /` and `/metrics`, reachable only through the broker relay inside
-//! the cluster (broker auth applies there, as with `/api/config`).
+//! never sees caller credentials. The desktop/browser-facing SURFACES are
+//! broker-relay-only, so — like every other runtime route — they require the
+//! per-session runtime key via `Authed`: `/desktop/stream`, `/desktop/audio`,
+//! `/events`, `/browser/view/{sid}/{token}/{channel}` and every non-`/api/config`
+//! fallback request. The broker's runtime hop already sends
+//! `Authorization: Bearer <per-session runtime key>`. Only `GET /api/config`
+//! stays unauthenticated (OWUI reads it before any session exists, like
+//! upstream's feature discovery).
 
 #![forbid(unsafe_code)]
 
@@ -50,6 +54,7 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode as TungCl
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame as TungCloseFrame, WebSocketConfig};
 use tokio_tungstenite::tungstenite::Message as TungMsg;
 
+use crate::auth::Authed;
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -84,8 +89,14 @@ pub struct DesktopConfigCache {
 /// sidecar. Method, path, query, body and headers are preserved; hop-by-hop
 /// headers are stripped and the inbound `Authorization` is replaced by the
 /// configured sidecar Bearer. When the desktop lane is inactive this returns
-/// axum's default empty 404 — byte-for-byte the pre-desktop behaviour.
-pub async fn desktop_fallback(State(state): State<AppState>, req: AxumRequest<Body>) -> Response {
+/// axum's default empty 404 for an authenticated caller — the pre-desktop
+/// behaviour (the `Authed` guard runs first: an unauthenticated caller is a
+/// 401 even with the lane off, never an open probe surface).
+pub async fn desktop_fallback(
+    _: Authed,
+    State(state): State<AppState>,
+    req: AxumRequest<Body>,
+) -> Response {
     if !state.config.desktop_lane_active() {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -191,7 +202,11 @@ fn desktop_base_url(state: &AppState) -> String {
 /// relayed to the sidecar socket; a plain HTTP request to the same path keeps
 /// the fallback semantics (forwarded to the sidecar over plain HTTP), so the
 /// explicit route never changes behaviour for non-WS clients.
+#[allow(clippy::too_many_arguments)] // axum extractor signature: guard, state, path, upgrade, query, method, headers, body
 async fn desktop_ws_route(
+    // Extracted by the route handlers below (first extractor): the per-session
+    // runtime key guard, identical to every other gated runtime route.
+    _auth: Authed,
     state: AppState,
     path: String,
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
@@ -221,6 +236,7 @@ async fn desktop_ws_route(
 
 /// `GET /desktop/stream` — the desktop video stream (VNC/websocket).
 pub async fn desktop_stream_ws(
+    auth: Authed,
     State(state): State<AppState>,
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
     query: RawQuery,
@@ -229,6 +245,7 @@ pub async fn desktop_stream_ws(
     body: Bytes,
 ) -> Response {
     desktop_ws_route(
+        auth,
         state,
         "/desktop/stream".to_owned(),
         ws,
@@ -242,6 +259,7 @@ pub async fn desktop_stream_ws(
 
 /// `GET /desktop/audio` — the desktop audio stream.
 pub async fn desktop_audio_ws(
+    auth: Authed,
     State(state): State<AppState>,
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
     query: RawQuery,
@@ -250,6 +268,7 @@ pub async fn desktop_audio_ws(
     body: Bytes,
 ) -> Response {
     desktop_ws_route(
+        auth,
         state,
         "/desktop/audio".to_owned(),
         ws,
@@ -263,6 +282,7 @@ pub async fn desktop_audio_ws(
 
 /// `GET /events` — the sidecar's event stream.
 pub async fn desktop_events_ws(
+    auth: Authed,
     State(state): State<AppState>,
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
     query: RawQuery,
@@ -271,6 +291,7 @@ pub async fn desktop_events_ws(
     body: Bytes,
 ) -> Response {
     desktop_ws_route(
+        auth,
         state,
         "/events".to_owned(),
         ws,
@@ -285,7 +306,9 @@ pub async fn desktop_events_ws(
 /// `GET /browser/view/{sid}/{token}/{channel}` — the sidecar's browser-view
 /// signalling/stream surface (`channel` is passed through verbatim; the
 /// sidecar is the authority on which channels exist).
+#[allow(clippy::too_many_arguments)] // axum extractor signature: guard, state, path, upgrade, query, method, headers, body
 pub async fn desktop_browser_view(
+    auth: Authed,
     State(state): State<AppState>,
     axum::extract::Path((sid, token, channel)): axum::extract::Path<(String, String, String)>,
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
@@ -295,7 +318,7 @@ pub async fn desktop_browser_view(
     body: Bytes,
 ) -> Response {
     let path = format!("/browser/view/{sid}/{token}/{channel}");
-    desktop_ws_route(state, path, ws, query, method, headers, body).await
+    desktop_ws_route(auth, state, path, ws, query, method, headers, body).await
 }
 
 /// Bidirectional client↔sidecar WS relay (the runtime-side sibling of the

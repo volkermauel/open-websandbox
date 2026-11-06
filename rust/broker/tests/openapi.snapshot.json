@@ -1083,6 +1083,7 @@
   "paths": {
     "/api/config": {
       "get": {
+        "description": "Serves the RUNTIME's merged `/api/config` (runtime flags + the desktop\nsidecar's `desktop`/`browser`/`git`/`events` flags, see\n`runtime/src/desktop.rs`), fetched through the same resolve+auth path the\ncatch-all proxy uses: OWUI identity → [`resolve_sandbox`] → mandatory\nper-session runtime key → authenticated hop to `http://<pod-ip>:8888`.\n\nDegrade contract: ANY failure on that path — no identity headers (OWUI's\npre-session config probe), resolve/key errors, an unreachable or erroring\nruntime — falls back to the broker's local flags with `200`, never a 5xx:\nthis endpoint is the connection-test gate and must stay available. Only the\nresponse shape (`{\"features\": {...}}`) and the shared-Bearer auth (401\nwithout a valid token) are the broker's contract here.",
         "operationId": "api_config",
         "responses": {
           "200": {
@@ -1093,7 +1094,7 @@
                 }
               }
             },
-            "description": "Feature discovery flags"
+            "description": "Feature discovery flags (runtime-merged, or the broker's local flags on degrade)"
           },
           "401": {
             "content": {

@@ -590,7 +590,7 @@
         },
         "apiKey": {
           "type": "string",
-          "description": "Bearer token shared between the runtime (DESKTOP_API_KEY) and the sidecar (OPEN_TERMINAL_API_KEY), loopback only. Empty => auto-generated per render; both containers always receive the same value (one Helm pass)."
+          "description": "Bearer token shared between the runtime (DESKTOP_API_KEY) and the sidecar (OPEN_TERMINAL_API_KEY), loopback only. Empty => derived deterministically from the broker shared secret (sha256 with a fixed prefix), so repeated renders/upgrades are byte-identical; both containers always receive the same value (one Helm pass)."
         },
         "url": {
           "type": "string",

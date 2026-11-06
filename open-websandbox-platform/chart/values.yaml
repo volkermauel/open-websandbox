@@ -218,13 +218,18 @@ desktop:
   enabled: true
   # Full image reference (external image — deliberately NOT the
   # imageRegistry/imageOwner/imageTag trio used by the platform's own images).
-  # Pin by digest in production:
-  #   ghcr.io/volkermauel/open-terminal@sha256:<digest>
+  # Must be the -sandbox variant (plain-python3 entrypoint; the stock launcher's
+  # setcap indirection breaks under capabilities drop ALL).
+  # Pinned by TAG only for now: the 0.16.1-desktop-sandbox digest was not yet
+  # readable from ghcr (anonymous manifest HEAD → 404; the -sandbox tag was
+  # still building when this was written). Pin by digest once published:
+  #   ghcr.io/volkermauel/open-terminal:0.16.1-desktop-sandbox@sha256:<digest>
   image: ghcr.io/volkermauel/open-terminal:0.16.1-desktop-sandbox
   # Bearer token shared between the runtime and the sidecar (loopback only).
-  # Empty => auto-generate per render; both containers always get the SAME
-  # value (they are rendered from one Helm pass). Set explicitly for
-  # reproducible renders.
+  # Empty => derived deterministically from the broker shared secret (see the
+  # template comment) so repeated renders are byte-identical; both containers
+  # always get the SAME value (one Helm pass). Set explicitly to decouple the
+  # sidecar key from the broker secret.
   apiKey: ""
   # runtime -> sidecar base URL (loopback; the sidecar binds 127.0.0.1:8000).
   url: http://127.0.0.1:8000

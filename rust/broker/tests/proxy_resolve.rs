@@ -367,11 +367,13 @@ async fn rate_limit_returns_429_per_user_when_burst_exhausted() {
     let state = state(store_with_template(), cfg);
     let app = build_router(state);
 
-    // Two requests from user-1 within the burst window.
+    // Two requests from user-1 within the burst window. (`/api/status` — a
+    // broker-served gated route, so the test stays free of config-forwarding
+    // resolve semantics.)
     for i in 0..2u32 {
         let resp = app
             .clone()
-            .oneshot(authed_req("GET", "/api/config", b""))
+            .oneshot(authed_req("GET", "/api/status", b""))
             .await
             .expect("router");
         assert_eq!(
@@ -383,7 +385,7 @@ async fn rate_limit_returns_429_per_user_when_burst_exhausted() {
     // Third from the same user, same instant → 429.
     let over = app
         .clone()
-        .oneshot(authed_req("GET", "/api/config", b""))
+        .oneshot(authed_req("GET", "/api/status", b""))
         .await
         .expect("router");
     assert_eq!(over.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -401,7 +403,7 @@ async fn rate_limit_returns_429_per_user_when_burst_exhausted() {
     );
 
     // A different user's bucket is independent.
-    let mut other = authed_req("GET", "/api/config", b"");
+    let mut other = authed_req("GET", "/api/status", b"");
     other
         .headers_mut()
         .insert("x-user-id", "user-2".parse().expect("header"));

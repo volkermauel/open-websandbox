@@ -16,11 +16,12 @@
 
 #![forbid(unsafe_code)]
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::header;
-use axum::http::StatusCode;
+use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,8 @@ use shared::{Profile, Sandbox};
 use crate::auth::Authed;
 use crate::error::ApiError;
 use crate::metrics::{SANDBOXES_CREATED_TOTAL, SANDBOXES_DELETED_TOTAL};
+use crate::proxy::{build_forward_headers, forward_identity, forward_response, upstream_url};
+use crate::resolve::resolve_sandbox;
 use crate::sandbox::{build_sandbox, extract_pod_template};
 use crate::state::AppState;
 use crate::store::{
@@ -59,6 +62,11 @@ pub struct Features {
     notebooks: bool,
     system: bool,
 }
+
+/// Total timeout for the runtime `/api/config` hop. The resolve path already
+/// guarantees a Ready pod; this only bounds a hung runtime so OWUI's feature
+/// discovery degrades quickly instead of stalling on the connection-test gate.
+const CONFIG_FORWARD_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// `GET /api/status` body: static operator telemetry.
 #[derive(Serialize, ToSchema)]
@@ -233,26 +241,108 @@ pub async fn docs() -> Response {
 // --- gated: broker-served (OpenAPI parity) ---------------------------------
 
 /// `GET /api/config` — feature discovery (terminal UI connection gate).
+///
+/// Serves the RUNTIME's merged `/api/config` (runtime flags + the desktop
+/// sidecar's `desktop`/`browser`/`git`/`events` flags, see
+/// `runtime/src/desktop.rs`), fetched through the same resolve+auth path the
+/// catch-all proxy uses: OWUI identity → [`resolve_sandbox`] → mandatory
+/// per-session runtime key → authenticated hop to `http://<pod-ip>:8888`.
+///
+/// Degrade contract: ANY failure on that path — no identity headers (OWUI's
+/// pre-session config probe), resolve/key errors, an unreachable or erroring
+/// runtime — falls back to the broker's local flags with `200`, never a 5xx:
+/// this endpoint is the connection-test gate and must stay available. Only the
+/// response shape (`{"features": {...}}`) and the shared-Bearer auth (401
+/// without a valid token) are the broker's contract here.
 #[utoipa::path(
     get,
     path = "/api/config",
     tag = "broker",
     security(("brokerBearer" = [])),
     responses(
-        (status = 200, description = "Feature discovery flags", body = ConfigResponse),
+        (status = 200, description = "Feature discovery flags (runtime-merged, or the broker's local flags on degrade)", body = ConfigResponse),
         (status = 401, description = "Missing/invalid shared Bearer", body = shared::ErrorResponse),
         (status = 503, description = "Shared secret not configured (fail-closed)", body = shared::ErrorResponse)
     )
 )]
-pub async fn api_config(_: Authed) -> Json<ConfigResponse> {
-    Json(ConfigResponse {
+pub async fn api_config(_: Authed, State(state): State<AppState>, req: Request<Body>) -> Response {
+    let local = || Json(local_config()).into_response();
+    let headers = req.headers().clone();
+
+    // Same resolve+auth path as `proxy_catch_all` — but every failure degrades
+    // to the local flags instead of erroring (see the doc comment above).
+    let Ok(identity) = forward_identity(&headers, state.config.default_profile) else {
+        return local();
+    };
+    let resolved = match resolve_sandbox(
+        &state,
+        &identity.user_id,
+        &identity.session_id,
+        identity.profile,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "config hop resolve failed; serving local flags");
+            return local();
+        }
+    };
+    let runtime_api_key = match state.store.read_runtime_key(&resolved.name).await {
+        Ok(Some(k)) => k,
+        Ok(None) => {
+            tracing::warn!(sandbox = %resolved.name, "config hop: no per-session runtime key; serving local flags");
+            return local();
+        }
+        Err(e) => {
+            tracing::warn!(sandbox = %resolved.name, error = %e, "config hop: read runtime key failed; serving local flags");
+            return local();
+        }
+    };
+    let fwd = build_forward_headers(
+        &headers,
+        &resolved,
+        &state.config.runtime_ns,
+        &identity.session_id,
+        &runtime_api_key,
+    );
+    let upstream = state
+        .http
+        .get(upstream_url(&state, &resolved, "/api/config"))
+        .headers(fwd)
+        .timeout(CONFIG_FORWARD_TIMEOUT)
+        .send()
+        .await;
+    match upstream {
+        Ok(u) if u.status().is_success() => match forward_response(u).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                tracing::warn!(error = %e, "config hop response build failed; serving local flags");
+                local()
+            }
+        },
+        Ok(u) => {
+            tracing::warn!(status = %u.status(), "runtime /api/config errored; serving local flags");
+            local()
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "runtime /api/config hop failed; serving local flags");
+            local()
+        }
+    }
+}
+
+/// The broker's LOCAL feature flags — the pre-desktop `/api/config` body,
+/// served verbatim whenever the runtime's merged config is unreachable.
+fn local_config() -> ConfigResponse {
+    ConfigResponse {
         features: Features {
             terminal: true,
             notebooks: false,
             // Stage 2 (#169): GET /system is now served by the runtime.
             system: true,
         },
-    })
+    }
 }
 
 /// `GET /api/status` — operator telemetry (static until C-2/C-4 make it real).

@@ -286,9 +286,10 @@ pub async fn proxy_catch_all(
 }
 
 /// Stream an upstream reqwest response back as an axum response: copy status +
-/// non-hop headers, rewrite a 3xx `Location`, and stream the body.
+/// non-hop headers, rewrite a 3xx `Location`, and stream the body. Shared by
+/// the catch-all proxy and the `/api/config` runtime fetch.
 #[allow(clippy::unused_async)] // kept async: every caller `.await`s it; going sync churns call sites for no gain
-async fn forward_response(upstream: reqwest::Response) -> Result<Response, ApiError> {
+pub(crate) async fn forward_response(upstream: reqwest::Response) -> Result<Response, ApiError> {
     let status = upstream.status();
     let upstream_headers = upstream.headers().clone();
 

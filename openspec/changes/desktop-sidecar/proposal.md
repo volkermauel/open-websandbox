@@ -28,7 +28,8 @@ entrypoint is the long-term image.
   byte-identical to the pre-sidecar template.
 - `desktop.image` is a full image reference (external image — NOT the
   `imageRegistry`/`imageOwner`/`imageTag` platform trio), digest-pinnable.
-- `desktop.apiKey` ("": auto-generated per render) is the shared
+- `desktop.apiKey` ("": derived deterministically from the broker shared
+  secret, stable across renders/upgrades) is the shared
   runtime↔sidecar bearer token, rendered into both containers from one Helm
   pass so they always agree.
 - KIND e2e profiles (`values-kind*.yaml`) set `desktop.enabled: false` — the

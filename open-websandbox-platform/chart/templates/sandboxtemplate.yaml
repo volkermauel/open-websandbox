@@ -18,7 +18,17 @@
 {{- $poolOn := gt ($.Values.warmPool.replicas | int) 0 }}
 {{- $recordOn := and ($.Values.warmPool.record.enabled) (gt ($.Values.warmPool.record.replicas | int) 0) }}
 {{- $desktopKey := $.Values.desktop.apiKey -}}
-{{- if not $desktopKey -}}{{- $desktopKey = randAlphaNum 48 -}}{{- end -}}
+{{- if not $desktopKey -}}
+{{/* Deterministic default: sha256("desktop-sidecar:" + broker shared secret),
+     truncated to 48 hex chars. Uses the brokerSharedSecret helper, so the
+     value is stable across `helm upgrade` (the helper reads back the deployed
+     owui-broker-secret) and renders byte-identically whenever
+     broker.sharedSecret is pinned. Never random-per-render, so the
+     SandboxTemplate does not diff on every upgrade. The broker shared secret is
+     an acceptable derivation input: the sidecar key only guards a loopback-only
+     hop INSIDE the sandbox pod, reachable only through the runtime. */}}
+{{- $desktopKey = printf "desktop-sidecar:%s" (include "open-websandbox.brokerSharedSecret" $) | sha256sum | trunc 48 -}}
+{{- end -}}
 {{- $templates := list (dict "name" $.Values.sandboxTemplate.name "poolKey" "" "vct" false) }}
 {{- if $poolOn -}}
 {{- $templates = append $templates (dict "name" $.Values.warmPool.templateName "poolKey" $.Values.broker.poolRuntimeKey "vct" false) -}}

@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use axum::body::{Body, Bytes};
 use axum::extract::State;
-use axum::http::{HeaderMap, Method, Request, Response, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
@@ -30,6 +30,7 @@ use runtime::{build_router, AppState, RuntimeConfig, SessionKeyStore};
 
 mod common;
 use tokio::net::TcpListener;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::handshake::server::{
     ErrorResponse, Request as WsRequest, Response as WsResponse,
 };
@@ -268,7 +269,7 @@ async fn fallback_relays_upstream_status_content_type_and_body() {
         .send_raw(
             Method::GET,
             "/assets/app.css",
-            common::Bearer::None,
+            common::Bearer::Default,
             None,
             None,
         )
@@ -282,8 +283,8 @@ async fn fallback_relays_upstream_status_content_type_and_body() {
         "sidecar content-type relayed"
     );
     assert_eq!(body_text(resp).await, SIDECAR_FALLBACK_BODY);
-    // Unauthenticated caller: no Authorization reached the sidecar (lane adds
-    // the sidecar Bearer, so assert its value — the runtime key never leaks).
+    // Authenticated caller: the inbound runtime Bearer is REPLACED by the
+    // sidecar Bearer (the runtime key never leaks to the sidecar).
     let r = &mock.requests()[0];
     assert_eq!(r.authorization.as_deref(), Some("Bearer sidecar-key-123"));
 }
@@ -295,7 +296,7 @@ async fn unmatched_path_is_default_404_when_desktop_unconfigured() {
         .send(
             Method::GET,
             "/definitely/not/here",
-            common::Bearer::None,
+            common::Bearer::Default,
             None,
             None,
         )
@@ -318,7 +319,13 @@ async fn desktop_enabled_false_is_a_hard_kill_switch() {
     });
 
     let resp = env
-        .send(Method::GET, "/whatever", common::Bearer::None, None, None)
+        .send(
+            Method::GET,
+            "/whatever",
+            common::Bearer::Default,
+            None,
+            None,
+        )
         .await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     assert!(mock.requests().is_empty(), "sidecar must never be hit");
@@ -475,6 +482,112 @@ async fn api_config_fetches_are_cached_for_a_few_seconds() {
 }
 
 // ---------------------------------------------------------------------------
+// Per-session runtime-key auth on the desktop lane (same guard as every other
+// runtime route; only /api/config stays open)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn fallback_requires_the_runtime_key() {
+    let mock = MockSidecar::start(serde_json::json!({}), StatusCode::OK);
+    let env = desktop_env(&mock);
+
+    for (label, bearer) in [
+        ("no key", common::Bearer::None),
+        ("wrong key", common::Bearer::Explicit("wrong-key")),
+    ] {
+        let resp = env
+            .send_raw(Method::GET, "/whatever/path", bearer, None, None)
+            .await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "{label} must be rejected"
+        );
+    }
+    assert!(
+        mock.requests().is_empty(),
+        "rejected requests must never reach the sidecar"
+    );
+
+    let ok = env
+        .send_raw(
+            Method::GET,
+            "/whatever/path",
+            common::Bearer::Default,
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(ok.status(), StatusCode::OK, "the right key forwards");
+    assert_eq!(body_text(ok).await, SIDECAR_FALLBACK_BODY);
+}
+
+#[tokio::test]
+async fn ws_routes_require_the_runtime_key_for_plain_requests() {
+    let mock = MockSidecar::start(serde_json::json!({}), StatusCode::OK);
+    let env = desktop_env(&mock);
+
+    for path in [
+        "/desktop/stream",
+        "/desktop/audio",
+        "/events",
+        "/browser/view/s-1/tok/ws",
+    ] {
+        for (label, bearer) in [
+            ("no key", common::Bearer::None),
+            ("wrong key", common::Bearer::Explicit("wrong-key")),
+        ] {
+            let resp = env.send_raw(Method::GET, path, bearer, None, None).await;
+            assert_eq!(
+                resp.status(),
+                StatusCode::UNAUTHORIZED,
+                "{path} with {label} must be rejected"
+            );
+        }
+    }
+    assert!(
+        mock.requests().is_empty(),
+        "rejected requests must never reach the sidecar"
+    );
+
+    let ok = env
+        .send_raw(Method::GET, "/events", common::Bearer::Default, None, None)
+        .await;
+    assert_eq!(
+        ok.status(),
+        StatusCode::OK,
+        "the right key keeps the fallback semantics"
+    );
+}
+
+#[tokio::test]
+async fn api_config_stays_open_without_a_key() {
+    let mock = MockSidecar::start(sidecar_config_json(), StatusCode::OK);
+    let env = desktop_env(&mock);
+    let resp = env
+        .send(Method::GET, "/api/config", common::Bearer::None, None, None)
+        .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "/api/config is feature discovery: read before any session exists"
+    );
+    assert!(body_text(resp).await.contains("\"desktop\":true"));
+}
+
+#[tokio::test]
+async fn inactive_lane_fallback_is_fail_closed_without_a_key() {
+    // Lane off: a VALID key keeps the pre-desktop empty 404, but an absent key
+    // is a 401 — the auth guard runs before the lane check, so the fallback is
+    // never an unauthenticated probe surface.
+    let env = Env::new();
+    let resp = env
+        .send(Method::GET, "/whatever", common::Bearer::None, None, None)
+        .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ---------------------------------------------------------------------------
 // WS relays (env-gated: real loopback listeners)
 // ---------------------------------------------------------------------------
 
@@ -534,12 +647,15 @@ async fn spawn_runtime_server(sidecar_url: String) -> (String, tempfile::TempDir
     std::fs::write(&key_path, common::STRONG_KEY).expect("write key");
     let config = RuntimeConfig {
         workdir: tmp.path().join("workspace"),
-        runtime_key_file: key_path,
+        runtime_key_file: key_path.clone(),
         desktop_url: Some(sidecar_url),
         desktop_api_key: Some(SIDECAR_KEY.to_string()),
         ..RuntimeConfig::default()
     };
-    let state = AppState::new(config, SessionKeyStore::new(common::STRONG_KEY));
+    // The store reads the PROJECTED KEY FILE (same contract as production) —
+    // not the value; a store pointed at a non-existent path would fail closed
+    // with 503 on the first Authed extraction.
+    let state = AppState::new(config, SessionKeyStore::new(&key_path));
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind runtime");
@@ -554,6 +670,63 @@ async fn spawn_runtime_server(sidecar_url: String) -> (String, tempfile::TempDir
 
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Connect a WS client to `url`, optionally authenticating with the per-session
+/// runtime key (the desktop lane requires it, like every gated runtime route).
+async fn connect_ws(
+    url: &str,
+    key: Option<&str>,
+) -> Result<WsStream, tokio_tungstenite::tungstenite::Error> {
+    let mut req = url.into_client_request().expect("client request");
+    if let Some(k) = key {
+        req.headers_mut().insert(
+            "authorization",
+            HeaderValue::from_str(&format!("Bearer {k}")).expect("header value"),
+        );
+    }
+    tokio_tungstenite::connect_async(req).await.map(|(s, _)| s)
+}
+
+#[tokio::test]
+async fn ws_upgrade_requires_the_runtime_key() {
+    if !gated() {
+        return;
+    }
+    let echo = TcpListener::bind("127.0.0.1:0").await.expect("bind echo");
+    let echo_port = echo.local_addr().expect("echo addr").port();
+    tokio::spawn(ws_echo_server(
+        echo,
+        Arc::new(Mutex::new(Vec::new())),
+        Arc::new(Mutex::new(Vec::new())),
+    ));
+    let (runtime_ws, _tmp) = spawn_runtime_server(format!("http://127.0.0.1:{echo_port}")).await;
+
+    // Missing / wrong key: the upgrade is refused with 401, pre-upgrade.
+    for key in [None, Some("wrong-key")] {
+        let err = connect_ws(&format!("{runtime_ws}/events"), key)
+            .await
+            .expect_err("unauthenticated upgrade must be refused");
+        match err {
+            tokio_tungstenite::tungstenite::error::Error::Http(resp) => {
+                assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "key {key:?}");
+            }
+            other => panic!("expected an HTTP 401 rejection, got {other:?}"),
+        }
+    }
+
+    // The correct key upgrades and relays.
+    let socket = connect_ws(&format!("{runtime_ws}/events"), Some(common::STRONG_KEY))
+        .await
+        .expect("correct key upgrades");
+    let (mut sink, mut stream) = socket.split();
+    expect_echo(
+        &mut sink,
+        &mut stream,
+        TungMsg::Text("hello-auth".into()),
+        "authed",
+    )
+    .await;
+}
 
 /// Send `frame` and expect the exact same frame back within 5s.
 async fn expect_echo(
@@ -585,9 +758,12 @@ async fn ws_relay_events_relays_frames_and_authenticates_upstream() {
 
     let (runtime_ws, _tmp) = spawn_runtime_server(format!("http://127.0.0.1:{echo_port}")).await;
 
-    let (socket, _) = tokio_tungstenite::connect_async(format!("{runtime_ws}/events?client=1"))
-        .await
-        .expect("connect runtime ws");
+    let socket = connect_ws(
+        &format!("{runtime_ws}/events?client=1"),
+        Some(common::STRONG_KEY),
+    )
+    .await
+    .expect("connect runtime ws");
     let (mut sink, mut stream) = socket.split();
 
     expect_echo(
@@ -627,10 +803,12 @@ async fn ws_relay_browser_view_path_relays_frames() {
 
     let (runtime_ws, _tmp) = spawn_runtime_server(format!("http://127.0.0.1:{echo_port}")).await;
 
-    let (socket, _) =
-        tokio_tungstenite::connect_async(format!("{runtime_ws}/browser/view/sid-1/tok/ws"))
-            .await
-            .expect("connect runtime ws");
+    let socket = connect_ws(
+        &format!("{runtime_ws}/browser/view/sid-1/tok/ws"),
+        Some(common::STRONG_KEY),
+    )
+    .await
+    .expect("connect runtime ws");
     let (mut sink, mut stream) = socket.split();
 
     expect_echo(
@@ -663,9 +841,12 @@ async fn ws_relay_forwards_client_close_frame_upstream() {
 
     let (runtime_ws, _tmp) = spawn_runtime_server(format!("http://127.0.0.1:{echo_port}")).await;
 
-    let (socket, _) = tokio_tungstenite::connect_async(format!("{runtime_ws}/desktop/stream"))
-        .await
-        .expect("connect runtime ws");
+    let socket = connect_ws(
+        &format!("{runtime_ws}/desktop/stream"),
+        Some(common::STRONG_KEY),
+    )
+    .await
+    .expect("connect runtime ws");
     let (mut sink, _stream) = socket.split();
 
     sink.send(TungMsg::Close(Some(
@@ -699,7 +880,7 @@ async fn ws_relay_sidecar_down_closes_with_1011() {
     let dead = format!("http://127.0.0.1:{}", refused_port());
     let (runtime_ws, _tmp) = spawn_runtime_server(dead).await;
 
-    let (mut ws, _) = tokio_tungstenite::connect_async(format!("{runtime_ws}/events"))
+    let mut ws = connect_ws(&format!("{runtime_ws}/events"), Some(common::STRONG_KEY))
         .await
         .expect("runtime accepts the upgrade");
 

@@ -11,7 +11,8 @@
 ## 2. Template
 
 - [x] 2.1 `templates/sandboxtemplate.yaml`: resolve `$desktopKey` once per
-      render (values or `randAlphaNum 48`).
+      render (values or deterministic sha256 of the broker shared secret + a
+      fixed prefix — never random-per-render, so upgrades don't diff).
 - [x] 2.2 Runtime container env `DESKTOP_URL`/`DESKTOP_API_KEY`, gated on
       `desktop.enabled`.
 - [x] 2.3 `desktop` sidecar container: restricted securityContext per the

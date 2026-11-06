@@ -280,7 +280,8 @@ value, rendered into both containers). The sidecar runs the restricted
 profile proven by the 2026-11-05 spike: `capabilities.drop: ["ALL"]`,
 `allowPrivilegeEscalation: false`, uid/gid 1000, RuntimeDefault seccomp, plus
 a memory-backed `/dev/shm` (`desktop.shmSize`, default 512Mi — browser shared
-memory). `desktop.apiKey` ("" = auto-generated per render) is the
+memory). `desktop.apiKey` ("" = derived deterministically from the broker
+shared secret, so renders/upgrades are byte-identical) is the
 runtime↔sidecar bearer token; loopback only. `desktop.enabled: false` omits
 the sidecar and both env vars — the pod is byte-identical to the
 pre-sidecar rendering. KIND e2e profiles (`values-kind*.yaml`) set it false:

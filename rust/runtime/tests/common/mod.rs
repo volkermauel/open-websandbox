@@ -266,6 +266,7 @@ impl Env {
 }
 
 /// Bearer control for [`Env::send`].
+#[derive(Debug)]
 pub enum Bearer<'a> {
     /// Inject the default (correct) key.
     Default,
