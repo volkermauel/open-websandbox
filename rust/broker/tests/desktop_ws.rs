@@ -117,21 +117,13 @@ async fn detail(resp: axum::http::Response<Body>) -> String {
 
 // --- in-process: identity / channel rejections ------------------------------
 
-/// Each new route must reject a missing identity EXACTLY like the terminal
-/// route's identity check: same 400, same detail (both call
-/// `terminal_identity`; the routes just surface it before the upgrade).
+/// A request with NO user at all must still be rejected with 400 on every new
+/// route (the desktop routes intentionally ACCEPT an empty session — that is
+/// the unsaved-chat case — so the old "same 400 detail as the terminal check"
+/// parity no longer holds for them; the user check is the remaining hard gate).
 #[tokio::test]
-async fn new_routes_reject_missing_identity_like_the_terminal_check() {
+async fn new_routes_reject_missing_user() {
     let env = router(store());
-    // The contract source: the terminal identity check on the same empty input.
-    let expected = broker::terminal::terminal_identity(
-        &broker::terminal::TerminalWsQuery::default(),
-        &axum::http::HeaderMap::new(),
-        "",
-        Profile::Persistent,
-    )
-    .unwrap_err()
-    .to_string();
 
     for path in [
         "/desktop/stream",
@@ -143,9 +135,28 @@ async fn new_routes_reject_missing_identity_like_the_terminal_check() {
         assert_eq!(
             resp.status(),
             StatusCode::BAD_REQUEST,
-            "{path} should reject a missing identity"
+            "{path} should reject a missing user"
         );
-        assert_eq!(detail(resp).await, expected, "{path} detail parity");
+    }
+}
+
+/// An empty session with a user present is the unsaved-chat case: the routes
+/// must NOT 400 on it (session falls back to the persistent session).
+#[tokio::test]
+async fn new_routes_accept_empty_session_with_user() {
+    let env = router(store());
+
+    for path in [
+        "/desktop/stream?user_id=u-1",
+        "/desktop/audio?user_id=u-1",
+        "/events?user_id=u-1",
+    ] {
+        let resp = send(&env, path, &[("x-user-id", "u-1"), ("x-session-id", "")]).await;
+        assert_ne!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "{path} must accept an empty session (got 400)"
+        );
     }
 }
 
@@ -433,4 +444,74 @@ async fn bad_token_closes_4001_identically_on_desktop_and_terminal() {
             "{path} must close 4001 with the terminal route's reason"
         );
     }
+}
+
+// --- unsaved chat (empty X-Session-Id) falls back to the persistent session --
+
+/// Open WebUI dials /desktop/stream with only user_id: X-Session-Id is empty for
+/// an unsaved chat. The route must not 400 — it attaches to the persistent
+/// session (session = user) and relays. Pre-upgrade 101 proves identity passed.
+#[tokio::test]
+async fn desktop_ws_still_rejects_missing_user() {
+    let env = router(store());
+
+    for path in [
+        "/desktop/stream",
+        "/desktop/audio",
+        "/events",
+        "/browser/view/bs-1/tok-2/ws",
+    ] {
+        let resp = send(&env, path, &[]).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "{path} should reject a missing user"
+        );
+    }
+}
+
+// --- identity semantics (pure fn, unit-tested here for parity) --------------
+
+#[test]
+fn identity_empty_session_falls_back_to_persistent_session() {
+    use broker::desktop::desktop_identity;
+
+    let query = broker::terminal::TerminalWsQuery {
+        user_id: Some("u-1".into()),
+        ..Default::default()
+    };
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("x-session-id", HeaderValue::from_static(""));
+
+    let id =
+        desktop_identity(&query, &headers, Profile::Persistent).expect("empty session is fine");
+    assert_eq!(id.session_id, "u-1", "session falls back to the user");
+    assert_eq!(id.user_id, "u-1");
+}
+
+#[test]
+fn identity_explicit_session_wins_over_the_fallback() {
+    use broker::desktop::desktop_identity;
+
+    let query = broker::terminal::TerminalWsQuery {
+        user_id: Some("u-1".into()),
+        session_id: Some("chat-42".into()),
+        chat_id: None,
+        persistence: None,
+    };
+    let headers = axum::http::HeaderMap::new();
+
+    let id = desktop_identity(&query, &headers, Profile::Persistent).expect("session present");
+    assert_eq!(id.session_id, "chat-42");
+    assert_eq!(id.user_id, "u-1");
+}
+
+#[test]
+fn identity_missing_user_is_rejected() {
+    use broker::desktop::desktop_identity;
+
+    let query = broker::terminal::TerminalWsQuery::default();
+    let headers = axum::http::HeaderMap::new();
+
+    assert!(desktop_identity(&query, &headers, Profile::Persistent).is_err());
 }

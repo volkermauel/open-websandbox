@@ -50,6 +50,7 @@ use crate::terminal::{
     authenticate_first_message, relay_to_upstream_with_headers, resolve_and_key, SessionTouch,
     TerminalIdentity, TerminalWsQuery,
 };
+use shared::Profile;
 
 /// Channels the `/browser/view/{sid}/{token}/{channel}` route relays.
 const BROWSER_CHANNELS: &[&str] = &["ws", "stream", "vnc"];
@@ -140,21 +141,55 @@ async fn desktop_ws(
 
 /// [`crate::terminal::terminal_identity`] with the canonical-400 mapping shared
 /// by all four routes (the terminal route returns the same error inline).
+/// Identity for the desktop/browser/event relays. Deliberately NOT
+/// [`crate::terminal::terminal_identity`]: that helper rejects a missing
+/// session, but the desktop is the user's sandbox desktop — when the caller has
+/// no session of its own (Open WebUI sends an empty `X-Session-Id` for an
+/// unsaved chat) we attach to the persistent session (`session = user`),
+/// mirroring how the terminal path resolves the persistent profile for the same
+/// chat.
+pub fn desktop_identity(
+    query: &TerminalWsQuery,
+    headers: &HeaderMap,
+    default_profile: Profile,
+) -> Result<TerminalIdentity, ApiError> {
+    let user_id = query
+        .user_id
+        .clone()
+        .or_else(|| header_value(headers, "x-user-id"))
+        .unwrap_or_default();
+    if user_id.is_empty() {
+        return Err(ApiError::BadRequest("user_id is required".to_string()));
+    }
+    let session_id = query
+        .session_id
+        .clone()
+        .or_else(|| query.chat_id.clone())
+        .or_else(|| header_value(headers, "x-session-id"))
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| user_id.clone());
+    Ok(TerminalIdentity {
+        user_id,
+        session_id,
+        profile: default_profile,
+    })
+}
+
 fn terminal_identity_or_reject(
     query: &TerminalWsQuery,
     headers: &HeaderMap,
     state: &AppState,
 ) -> Result<TerminalIdentity, ApiError> {
-    let mut identity =
-        crate::terminal::terminal_identity(query, headers, "", state.config.default_profile)?;
-    // The desktop is the user's sandbox desktop: when the caller has no session
-    // of its own (Open WebUI sends an empty X-Session-Id for an unsaved chat),
-    // attach to the persistent session instead of rejecting. This mirrors the
-    // terminal path, where the persistent profile uses session = user.
-    if identity.session_id.is_empty() {
-        identity.session_id = identity.user_id.clone();
-    }
-    Ok(identity)
+    let profile = state.config.default_profile;
+    desktop_identity(query, headers, profile)
+}
+
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned)
+        .filter(|v| !v.is_empty())
 }
 
 /// Path (+ query) of the inbound request, forwarded verbatim towards the
