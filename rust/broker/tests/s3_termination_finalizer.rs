@@ -17,7 +17,8 @@ use broker::test_fakes::StubSandboxStore;
 use broker::{resolve_sandbox, sandbox_name, AppState};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 use shared::{
-    BrokerConfig, OperatingMode, PersistentMode, Profile, Sandbox, SandboxSpec, ShutdownPolicy,
+    BrokerConfig, OperatingMode, PersistentMode, Profile, Sandbox, SandboxCondition, SandboxSpec,
+    SandboxStatus, ShutdownPolicy,
 };
 
 const FINALIZER: &str = shared::FINALIZER_S3_SNAPSHOT;
@@ -80,6 +81,24 @@ fn with_finalizer(sbx: &mut Sandbox) {
         .push(FINALIZER.to_string());
 }
 
+/// Ready status carrying a pod IP — the "a pod exists" side of the
+/// no-pod-vs-offload-failure distinction.
+fn ready_status(ip: &str) -> SandboxStatus {
+    SandboxStatus {
+        phase: Some("Running".into()),
+        pod_i_ps: Some(vec![ip.into()]),
+        conditions: Some(vec![SandboxCondition {
+            r#type: "Ready".into(),
+            status: "True".into(),
+            reason: None,
+            message: None,
+            last_transition_time: None,
+        }]),
+        ready: Some(true),
+        message: None,
+    }
+}
+
 /// Stamp the last-offloaded-key annotation the way `S3Offload` does after a
 /// fully-successful offload (the ts is embedded in the key).
 fn stamped(sbx: &mut Sandbox, ts: i64) {
@@ -140,6 +159,10 @@ async fn out_of_band_delete_archives_then_releases() {
     store.insert_sandbox(seed_with("owui-c-ood1", NOW - 10, |sbx| {
         with_finalizer(sbx);
         terminating(sbx);
+        // A serving pod existed when the out-of-band delete landed — without
+        // a pod IP there is nothing to offload and the no-pod release fires
+        // instead (see terminating_sandbox_without_a_pod_releases_the_finalizer).
+        sbx.status = Some(ready_status("10.1.1.1"));
     }));
     let offload = CountingOffload::new();
 
@@ -198,6 +221,9 @@ async fn stale_snapshot_stamp_offloads_anyway() {
         stamped(sbx, NOW - 5_000);
         with_finalizer(sbx);
         terminating(sbx);
+        // A serving pod: the stale stamp means the workspace may hold
+        // unarchived changes, so the offload still runs.
+        sbx.status = Some(ready_status("10.1.1.2"));
     }));
     let offload = CountingOffload::new();
 
@@ -214,6 +240,11 @@ async fn offload_failure_holds_the_finalizer() {
     store.insert_sandbox(seed_with("owui-c-fail1", NOW - 10, |sbx| {
         with_finalizer(sbx);
         terminating(sbx);
+        // A pod IP is present: the offload CAN run (a runtime could serve
+        // the snapshot), so a failure genuinely holds (D7). A sandbox with
+        // NO pod at all releases instead — see
+        // terminating_sandbox_without_a_pod_releases_the_finalizer.
+        sbx.status = Some(ready_status("10.1.1.3"));
     }));
 
     let stats = reap_once(&store, &FailingOffload, &cfg_s3_record(), NOW).await;
@@ -230,6 +261,137 @@ async fn offload_failure_holds_the_finalizer() {
     assert!(
         snap.contains_key("owui-c-fail1"),
         "the sandbox is kept for the next tick's retry"
+    );
+}
+
+/// 2026-11-06 incident: sandboxes pinned to a cordoned node never got a pod
+/// (FailedScheduling), were deleted, and then sat Terminating forever — the
+/// reaper retried the offload every tick and always failed with "no pod IP".
+/// No pod ⇒ nothing to offload ⇒ the finalizer must be released.
+#[tokio::test]
+async fn terminating_sandbox_without_a_pod_releases_the_finalizer() {
+    let store = StubSandboxStore::new();
+    // Running mode, NO status, NO pod object: never scheduled.
+    store.insert_sandbox(seed_with("owui-c-nopod1", NOW - 10, |sbx| {
+        with_finalizer(sbx);
+        terminating(sbx);
+    }));
+    let offload = CountingOffload::new();
+
+    let stats = reap_once(&store, &offload, &cfg_s3_record(), NOW).await;
+
+    assert_eq!(
+        offload.calls(),
+        0,
+        "no pod ⇒ the offload must not even be attempted"
+    );
+    assert_eq!(stats.termination_blocked, 0, "nothing is blocked");
+    assert_eq!(
+        stats.termination_released_no_offload, 1,
+        "the release-without-offload case is counted"
+    );
+    assert!(
+        !has_finalizer(&store.snapshot(), "owui-c-nopod1"),
+        "the finalizer is released so the apiserver can finish the delete"
+    );
+}
+
+/// The D7 distinction: a pod IP EXISTS (a runtime could serve the snapshot)
+/// but the offload call fails — THAT must keep holding, the no-pod release
+/// must not fire.
+#[tokio::test]
+async fn terminating_sandbox_with_a_pod_but_failing_offload_still_holds() {
+    let store = StubSandboxStore::new();
+    store.insert_sandbox(seed_with("owui-c-haspod1", NOW - 10, |sbx| {
+        with_finalizer(sbx);
+        terminating(sbx);
+        sbx.status = Some(ready_status("10.9.9.9"));
+    }));
+
+    let stats = reap_once(&store, &FailingOffload, &cfg_s3_record(), NOW).await;
+
+    assert_eq!(stats.termination_blocked, 1, "D7: a failing offload holds");
+    assert_eq!(stats.termination_released_no_offload, 0);
+    assert!(has_finalizer(&store.snapshot(), "owui-c-haspod1"));
+}
+
+/// #207 exemption: a SUSPENDED terminating sandbox may still be resumed by
+/// the offloader to take the snapshot, so the no-pod release must NOT fire
+/// for it even though it has no pod IP right now.
+#[tokio::test]
+async fn terminating_suspended_sandbox_keeps_the_resume_offload_contract() {
+    let store = StubSandboxStore::new();
+    store.insert_sandbox(seed_with("owui-c-susp1", NOW - 10, |sbx| {
+        with_finalizer(sbx);
+        terminating(sbx);
+        sbx.spec.operating_mode = Some(OperatingMode::Suspended);
+    }));
+
+    let stats = reap_once(&store, &FailingOffload, &cfg_s3_record(), NOW).await;
+
+    assert_eq!(
+        stats.termination_released_no_offload, 0,
+        "never the no-pod release"
+    );
+    assert_eq!(stats.termination_blocked, 1);
+    assert!(has_finalizer(&store.snapshot(), "owui-c-susp1"));
+}
+
+/// The WARN the on-call greps for: the release-without-offload log names the
+/// sandbox and says WHY the finalizer went away without a snapshot.
+#[tokio::test]
+async fn no_pod_release_logs_a_warn_naming_the_sandbox_and_reason() {
+    struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Sink {
+        type Writer = SinkWriter;
+        fn make_writer(&'a self) -> Self::Writer {
+            SinkWriter(self.0.clone())
+        }
+    }
+    struct SinkWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for SinkWriter {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>> = std::sync::Arc::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_ansi(false)
+        .without_time()
+        .with_writer(Sink(buf.clone()))
+        .finish();
+    // Scope the thread-local dispatcher over the WHOLE test body (guard held
+    // across the await — #[tokio::test] is current-thread, so every emit and
+    // the final read share one thread and one dispatcher).
+    let _dispatch = tracing::subscriber::set_default(subscriber);
+
+    let store = StubSandboxStore::new();
+    store.insert_sandbox(seed_with("owui-c-log1", NOW - 10, |sbx| {
+        with_finalizer(sbx);
+        terminating(sbx);
+    }));
+    let stats = reap_once(&store, &CountingOffload::new(), &cfg_s3_record(), NOW).await;
+    assert_eq!(stats.termination_released_no_offload, 1);
+
+    let out = String::from_utf8(buf.lock().unwrap().clone()).expect("utf8 log capture");
+    assert!(
+        out.contains("owui-c-log1"),
+        "the WARN names the sandbox: {out}"
+    );
+    assert!(
+        out.contains("releasing finalizer without a snapshot"),
+        "the WARN states the release and its reason: {out}"
+    );
+    assert!(out.contains("no pod IP"), "the WARN says why: {out}");
+    assert!(
+        !out.contains("finalizer held"),
+        "no misleading hold log: {out}"
     );
 }
 

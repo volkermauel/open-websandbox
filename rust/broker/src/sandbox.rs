@@ -61,13 +61,20 @@ pub const POOL_KEY_SECRET: &str = "owui-pool-key";
 /// the Sandbox at creation (`owui.io/template-hash`) — the template-drift
 /// self-heal compares it against the live [`SandboxTemplate`]. Absent on
 /// legacy sandboxes (pre-stamping) and controller-built (claim-path)
-/// sandboxes; both are never recycled.
+/// sandboxes; legacy sandboxes with a copied `spec.podTemplate` fall back to
+/// the podTemplate comparison in [`template_drifted`] instead.
 pub const TEMPLATE_HASH_KEY: &str = "owui.io/template-hash";
 /// Annotation naming the template the sandbox was created from
 /// (`owui.io/template-name`). Drift is compared against THIS template: a
 /// sandbox created from a non-base template must never be recycled into the
 /// base one.
 pub const TEMPLATE_NAME_KEY: &str = "owui.io/template-name";
+/// Annotation the upstream agent-sandbox controller stamps on Sandboxes it
+/// manages (`agents.x-k8s.io/sandbox-template-ref`), naming the template the
+/// Sandbox was created from. The drift check consults it when the broker's
+/// own [`TEMPLATE_NAME_KEY`] stamp is missing (sandboxes created before that
+/// stamp existed — v0.3.0 and earlier).
+pub const TEMPLATE_REF_ANNOTATION_KEY: &str = "agents.x-k8s.io/sandbox-template-ref";
 /// Annotation stamped with the epoch seconds of the most recent
 /// template-drift recycle of the (deterministically named) sandbox. Gates a
 /// short anti-loop grace window: a freshly recycled sandbox is never
@@ -106,6 +113,68 @@ pub fn template_hash(template: &SandboxTemplate) -> Option<String> {
     hasher.update(canonical_json(pod).to_string().as_bytes());
     let digest = hasher.finalize();
     Some(digest.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// The sandbox's `owui.io/template-hash` stamp (`None` when absent/empty —
+/// legacy sandboxes fall back to the podTemplate comparison in
+/// [`template_drifted`]).
+#[must_use]
+pub fn stamped_template_hash(sbx: &Sandbox) -> Option<String> {
+    sbx.metadata
+        .annotations
+        .as_ref()?
+        .get(TEMPLATE_HASH_KEY)
+        .filter(|v| !v.is_empty())
+        .cloned()
+}
+
+/// The template a sandbox was created from, resolved from its own metadata
+/// in priority order: the broker's [`TEMPLATE_NAME_KEY`] stamp, then the
+/// controller-stamped [`TEMPLATE_REF_ANNOTATION_KEY`] (present on sandboxes
+/// created before the broker stamped its own name), else `None` — callers
+/// fall back to the configured base template.
+#[must_use]
+pub fn template_name_of(sbx: &Sandbox) -> Option<&str> {
+    let annots = sbx.metadata.annotations.as_ref()?;
+    [TEMPLATE_NAME_KEY, TEMPLATE_REF_ANNOTATION_KEY]
+        .iter()
+        .find_map(|k| annots.get(*k).map(String::as_str).filter(|v| !v.is_empty()))
+}
+
+/// Whether `sbx` runs a stale copy of the LIVE template's pod blueprint —
+/// the drift predicate behind the template-drift self-heal.
+///
+/// Two comparands, in priority order:
+///
+/// 1. the sandbox's [`TEMPLATE_HASH_KEY`] stamp vs the live template's hash
+///    (the authoritative path for broker-created sandboxes);
+/// 2. legacy sandboxes (pre-stamping, no stamp): their ACTUAL
+///    `spec.podTemplate` vs the live template's `spec.podTemplate`, by
+///    canonical-JSON equality (key-order free). The actual copy is
+///    broker-mutated at creation (profile label, runtime-key volume, PVC
+///    surgery), so a broker-created legacy sandbox normally reads as
+///    drifted and is recycled once — the recreation carries the stamp and
+///    the hash path takes over.
+///
+/// Every "cannot compare" case — a live template without a podTemplate, or
+/// a sandbox without a copied podTemplate (controller-built/claim-bound,
+/// whose spec the controller manages) — returns `false`. Callers must treat
+/// `false` as "leave alone", never as "matches": recycling needs a positive
+/// drift signal, never an inference from missing data.
+#[must_use]
+pub fn template_drifted(sbx: &Sandbox, live: &SandboxTemplate) -> bool {
+    if let Some(old) = stamped_template_hash(sbx) {
+        // A podTemplate-less live template cannot be hashed, so the stamp
+        // cannot be compared — leave the sandbox alone.
+        return template_hash(live).is_some_and(|new| new != old);
+    }
+    match (
+        sbx.spec.pod_template.as_ref(),
+        live.spec.pod_template.as_ref(),
+    ) {
+        (Some(actual), Some(pristine)) => canonical_json(actual) != canonical_json(pristine),
+        _ => false,
+    }
 }
 
 /// Extract the template's `podTemplate` (opaque JSON) to clone into a Sandbox.

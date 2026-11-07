@@ -35,10 +35,14 @@ use kube::ResourceExt;
 use shared::{OperatingMode, Profile, Sandbox};
 
 use crate::leaser::LeaderGate;
-use crate::metrics::{ACTIVE_SANDBOXES, IDLE_REAPS_TOTAL, SANDBOXES_DELETED_TOTAL};
+use crate::metrics::{
+    ACTIVE_SANDBOXES, IDLE_REAPS_TOTAL, SANDBOXES_DELETED_TOTAL,
+    TERMINATION_RELEASED_WITHOUT_OFFLOAD_TOTAL,
+};
 use crate::s3::S3_LAST_KEY_ANNOTATION;
 use crate::sandbox::{
-    template_hash, LAST_USED_KEY, PROFILE_LABEL_KEY, RECYCLED_AT_KEY, TEMPLATE_HASH_KEY,
+    stamped_template_hash, template_drifted, template_hash, template_name_of, LAST_USED_KEY,
+    PROFILE_LABEL_KEY, RECYCLED_AT_KEY,
 };
 use crate::store::SandboxStore;
 
@@ -92,6 +96,14 @@ pub struct ReaperStats {
     /// Terminating sandboxes whose deletion stayed blocked this tick: the
     /// termination offload failed, or the finalizer release failed.
     pub termination_blocked: u64,
+    /// Terminating sandboxes whose s3-snapshot finalizer was released
+    /// WITHOUT an offload because there was nothing to offload: no pod IP
+    /// (never scheduled, or the pod is long gone) and not `Suspended`. The
+    /// offloader would fail with the same "no pod IP" error on every tick,
+    /// so holding the finalizer would block the deletion forever (the
+    /// 2026-11-06 incident: two unschedulable sandboxes stuck Terminating
+    /// for 11 h).
+    pub termination_released_no_offload: u64,
     /// Sandboxes recycled for template drift (deleted + recreated from the
     /// current template) this tick.
     pub recycled: u64,
@@ -227,20 +239,12 @@ pub(crate) fn recycle_eligible(sbx: &Sandbox, cfg: &shared::BrokerConfig, now: i
     decide(profile, idle, mode, cfg) != ReaperAction::Skip
 }
 
-/// The `owui.io/template-hash` stamp of a sandbox (`None` when absent/empty —
-/// legacy or controller-built sandboxes are never drift-recycled).
-fn template_hash_of(sbx: &Sandbox) -> Option<String> {
-    sbx.metadata
-        .annotations
-        .as_ref()?
-        .get(TEMPLATE_HASH_KEY)
-        .filter(|v| !v.is_empty())
-        .cloned()
-}
-
+/// The sandbox's `owui.io/template-hash` stamp lives in
+/// [`crate::sandbox::stamped_template_hash`] (shared with the resolve path).
 /// One template-drift recycle: offload (D7 — failure defers), delete, then
 /// recreate through the same cold-create path resolve uses. Returns whether
-/// the sandbox was recycled.
+/// the sandbox was recycled. `from`/`to` are display strings for the audit
+/// log (the hash pair, or `no-stamp` for a legacy sandbox without one).
 #[allow(clippy::too_many_arguments)]
 async fn recycle_sandbox(
     store: &dyn SandboxStore,
@@ -248,8 +252,8 @@ async fn recycle_sandbox(
     cfg: &shared::BrokerConfig,
     sbx: &Sandbox,
     profile: Profile,
-    old_hash: &str,
-    new_hash: &str,
+    from: &str,
+    to: &str,
     stats: &mut ReaperStats,
 ) -> bool {
     let name = sbx.name_any();
@@ -307,7 +311,7 @@ async fn recycle_sandbox(
                 tracing::debug!(%name, error = %e, "recycled-at stamp failed");
             }
             stats.recycled += 1;
-            tracing::info!("recycled sandbox {name}: template {old_hash} -> {new_hash}");
+            tracing::info!(%name, from, to, "recycled sandbox: template drift");
             true
         }
         Err(e) => {
@@ -390,6 +394,27 @@ async fn handle_terminating(
     }
     if fresh_snapshot(sbx) {
         tracing::debug!(%name, "fresh snapshot stamp; termination offload skipped");
+        release_finalizer(store, &name, stats).await;
+        return;
+    }
+    // No pod, no snapshot (2026-11-06 incident): a terminating sandbox
+    // without a pod IP — never scheduled, or its pod long gone — has no
+    // runtime endpoint to snapshot. The offloader would fail with the very
+    // same "no pod IP" error on every tick (this is exactly its first check,
+    // `S3Offload::ensure_running_pod`), so holding the finalizer blocks the
+    // deletion FOREVER while promising a snapshot that can never happen.
+    // Release instead: nothing can be lost, because there is nothing to
+    // offload. Suspended sandboxes are exempt: the offloader may still
+    // resume one to snapshot it, and that contract is unchanged.
+    let has_pod_ip = sbx.status.as_ref().and_then(|s| s.pod_ip()).is_some();
+    let suspended = sbx.spec.operating_mode == Some(OperatingMode::Suspended);
+    if !has_pod_ip && !suspended {
+        stats.termination_released_no_offload += 1;
+        metrics::counter!(TERMINATION_RELEASED_WITHOUT_OFFLOAD_TOTAL).increment(1);
+        tracing::warn!(
+            %name,
+            "no pod IP (never scheduled or pod gone); nothing to offload — releasing finalizer without a snapshot"
+        );
         release_finalizer(store, &name, stats).await;
         return;
     }
@@ -568,16 +593,18 @@ pub async fn reap_once(
     };
     stats.scanned = sandboxes.len() as u64;
 
-    // Live template hash for the drift recycle — ONE read per tick. Unreadable
-    // (missing template, apiserver error, no podTemplate) ⇒ no recycling this
-    // tick: the sandboxes keep serving and the next tick retries.
-    // Per-sandbox live hash: drift is compared against the template each
-    // sandbox was created from (annotation), not against the base template —
-    // a custom-template sandbox must not be recycled into the base one.
-    let mut live_hashes: std::collections::BTreeMap<String, Option<String>> =
+    // Live templates for the drift recycle — ONE read per DISTINCT template
+    // per tick. Unreadable (missing template, apiserver error, no
+    // podTemplate) ⇒ no recycling for the sandboxes naming it: they keep
+    // serving and the next tick retries. Drift is compared against the
+    // template each sandbox was created from (the broker's name stamp, the
+    // controller's sandbox-template-ref, or the base template as a last
+    // resort), never blindly against the base — a custom-template sandbox
+    // must not be recycled into the base one.
+    let mut live_templates: std::collections::BTreeMap<String, Option<shared::SandboxTemplate>> =
         std::collections::BTreeMap::new();
-    let base_live_hash: Option<String> = match store.get_template(&cfg.base_template).await {
-        Ok(Some(t)) => template_hash(&t),
+    let base_live = match store.get_template(&cfg.base_template).await {
+        Ok(Some(t)) => Some(t),
         Ok(None) => {
             tracing::debug!(
                 template = %cfg.base_template,
@@ -593,6 +620,7 @@ pub async fn reap_once(
             None
         }
     };
+    live_templates.insert(cfg.base_template.clone(), base_live);
 
     for sbx in &sandboxes {
         let name = sbx.name_any();
@@ -626,46 +654,31 @@ pub async fn reap_once(
         // once; recycling them all in a single tick storms the apiserver and the
         // S3 offloads. The remainder is picked up by the next ticks.
         if stats.recycled < RECYCLE_PER_TICK {
-            let tmpl_name = sbx
-                .metadata
-                .annotations
-                .as_ref()
-                .and_then(|a| a.get(crate::sandbox::TEMPLATE_NAME_KEY))
-                .filter(|v| !v.is_empty())
-                .cloned();
-            // Legacy sandboxes (hash stamped, name not) were created before the
-            // name stamp existed; they were built from the base template by
-            // resolve, so compare them against it (self-healing preserved).
-            let effective = tmpl_name.as_deref().unwrap_or(cfg.base_template.as_str());
-            let live = match Some(effective) {
-                Some(t) => {
-                    if t == cfg.base_template {
-                        base_live_hash.clone()
-                    } else if let Some(h) = live_hashes.get(t) {
-                        h.clone()
-                    } else {
-                        let h = match store.get_template(t).await {
-                            Ok(Some(tpl)) => template_hash(&tpl),
-                            Ok(None) => None,
-                            Err(e) => {
-                                tracing::warn!(template = %t, error = %e,
-                                    "drift recycle: template read failed; skipping");
-                                None
-                            }
-                        };
-                        live_hashes.insert(t.to_string(), h.clone());
-                        h
+            let effective = template_name_of(sbx).unwrap_or(cfg.base_template.as_str());
+            let live = if let Some(hit) = live_templates.get(effective) {
+                hit.clone()
+            } else {
+                let t = match store.get_template(effective).await {
+                    Ok(Some(tpl)) => Some(tpl),
+                    Ok(None) => None,
+                    Err(e) => {
+                        tracing::warn!(template = %effective, error = %e,
+                            "drift recycle: template read failed; skipping");
+                        None
                     }
-                }
-                None => None,
+                };
+                live_templates.insert(effective.to_string(), t.clone());
+                t
             };
-            if let (Some(old), Some(new)) = (template_hash_of(sbx), live.as_ref()) {
-                if old != *new
-                    && recycle_eligible(sbx, cfg, now)
-                    && recycle_sandbox(store, offload, cfg, sbx, profile, &old, new, &mut stats)
+            if let Some(live) = live.as_ref() {
+                if template_drifted(sbx, live) && recycle_eligible(sbx, cfg, now) {
+                    let from = stamped_template_hash(sbx).unwrap_or_else(|| "no-stamp".into());
+                    let to = template_hash(live).unwrap_or_default();
+                    if recycle_sandbox(store, offload, cfg, sbx, profile, &from, &to, &mut stats)
                         .await
-                {
-                    continue;
+                    {
+                        continue;
+                    }
                 }
             }
         }
@@ -793,6 +806,7 @@ pub async fn run_reaper_loop(
                 recycled = stats.recycled,
                 offload_failed = stats.offload_failed,
                 termination_blocked = stats.termination_blocked,
+                termination_released_no_offload = stats.termination_released_no_offload,
                 "reaper tick"
             );
         }

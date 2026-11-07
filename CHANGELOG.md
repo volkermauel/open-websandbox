@@ -14,6 +14,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Terminating sandboxes with no pod no longer block deletion forever
+  (2026-11-06/07 incident, production).** Sandboxes that never got a pod
+  (FailedScheduling on a cordoned node) and were then deleted sat in
+  `Terminating` for 11 h: the s3-snapshot finalizer is held while the reaper
+  retried the termination offload every tick, failing each time with
+  "no pod IP" — a hold that can never be satisfied. A terminating sandbox
+  with no pod IP AND not `Suspended` has no runtime endpoint, so there is
+  nothing to offload: the finalizer is now released with a WARN naming the
+  sandbox and the reason. A pod IP present but the offload call failing still
+  holds (D7), and the #207 suspended resume-offload contract is unchanged.
+  New counter
+  `open_websandbox_broker_termination_released_without_offload_total`
+  alerts on every such degraded release.
+- **Pre-stamp sandboxes now self-heal (2026-11-07, production).** v0.3.1's
+  drift detection skipped every sandbox without an `owui.io/template-hash`
+  annotation, so sandboxes created before the stamping existed kept their
+  stale copied podTemplate forever. Template resolution now falls back:
+  `owui.io/template-name` → the controller-stamped
+  `agents.x-k8s.io/sandbox-template-ref` → the configured base template.
+  Without a hash stamp the sandbox's ACTUAL `spec.podTemplate` is compared
+  against the live template's by canonical-JSON equality (equal ⇒ no drift,
+  different ⇒ drifted when idle); a template that cannot be read (missing,
+  apiserver error, no podTemplate) never recycles. Applied on both the
+  resolve path and the leader reaper path; the idle-only guard, 120 s
+  anti-loop grace and 2-per-tick cap are unchanged. Sandboxes without a
+  copied podTemplate (controller-built / claim-bound) are never recycled.
+
+## [0.3.1] - 2026-11-06
+
+### Fixed
+
 - **Terminal-unschedulability fast-fail (2026-11-06 incident).** Resolve's
   readiness poll now returns 503 immediately when the pod (or its
   Sandbox-status mirror) reports `PodScheduled=False reason=Unschedulable`,

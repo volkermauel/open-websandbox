@@ -257,7 +257,7 @@ pub async fn resolve_sandbox(
             {
                 tracing::debug!(sandbox = %name, error = %e, "recycled-at stamp failed");
             }
-            tracing::info!("recycled sandbox {name}: template {old} -> {new}");
+            tracing::info!(sandbox = %name, from = %old, to = %new, "recycled sandbox: template drift");
         }
     }
     // Resume a parked sandbox before the ready poll: flip a `Suspended`
@@ -500,48 +500,38 @@ pub(crate) async fn create_sandbox_from_template(
     Ok(draft_adoption)
 }
 
-/// Template-drift recycle guard (B, idle only): `Some((old, new))` when the
-/// sandbox runs an OLD template — its `owui.io/template-hash` stamp differs
-/// from the live base-template hash — AND the reaper's idle predicate says
-/// nothing is using it. The caller deletes the sandbox and falls into the
-/// cold-create path. `None` = keep serving: legacy/controller-built
-/// sandboxes (no stamp), unreadable template (log + keep serving), no drift,
-/// an active/parked/grace-window sandbox, or a failed pre-delete offload.
+/// Template-drift recycle guard (B, idle only): `Some((from, to))` when the
+/// sandbox runs an OLD template than the one it was created from — its
+/// `owui.io/template-hash` stamp differs from the live template's hash, or
+/// (legacy sandboxes without a stamp) its actual `spec.podTemplate` differs
+/// from the live template's — AND the reaper's idle predicate says nothing
+/// is using it. The caller deletes the sandbox and falls into the
+/// cold-create path. `None` = keep serving: no comparable basis (no stamp,
+/// no copied podTemplate, controller-built sandboxes), an unreadable
+/// template (log + keep serving), no drift, an active/parked/grace-window
+/// sandbox, or a failed pre-delete offload.
 async fn recycle_drifted_idle(
     state: &AppState,
     name: &str,
     sbx: &Sandbox,
 ) -> Option<(String, String)> {
-    let old = sbx
-        .metadata
-        .annotations
-        .as_ref()?
-        .get(crate::sandbox::TEMPLATE_HASH_KEY)
-        .filter(|v| !v.is_empty())
-        .cloned()?;
     // Compare against the template THIS sandbox was created from: recycling a
     // custom-template sandbox into the base template would silently change its
-    // spec. Legacy sandboxes (no template-name stamp) are never recycled.
-    // Legacy sandboxes carry only the hash; resolve created them from the base
-    // template, so they are compared against it (keeps self-healing working for
-    // sandboxes created before the name stamp existed).
-    let template_name = sbx
-        .metadata
-        .annotations
-        .as_ref()
-        .and_then(|a| a.get(crate::sandbox::TEMPLATE_NAME_KEY))
-        .filter(|v| !v.is_empty())
-        .cloned()
-        .unwrap_or_else(|| state.config.base_template.clone());
-    let new = match state.store.get_template(&template_name).await {
-        Ok(Some(t)) => template_hash(&t),
+    // spec. Resolution order: the broker's name stamp, then the
+    // controller-stamped sandbox-template-ref (what legacy pre-stamp
+    // sandboxes carry), else the configured base template.
+    let template_name = crate::sandbox::template_name_of(sbx)
+        .unwrap_or(&state.config.base_template)
+        .to_string();
+    let live = match state.store.get_template(&template_name).await {
+        Ok(Some(t)) => t,
         Ok(None) => {
             tracing::debug!(
                 sandbox = %name,
                 template = %template_name,
                 "template drift check: template not found; keeping sandbox"
             );
-            None
+            return None;
         }
         Err(e) => {
             tracing::warn!(
@@ -549,17 +539,23 @@ async fn recycle_drifted_idle(
                 error = %e,
                 "template drift check failed; keeping sandbox"
             );
-            None
+            return None;
         }
-    }?;
-    if old == new {
-        return None; // no drift — the common case
+    };
+    if !crate::sandbox::template_drifted(sbx, &live) {
+        return None; // no drift (or no basis to compare) — the common case
     }
+    let from = crate::sandbox::stamped_template_hash(sbx).unwrap_or_else(|| "no-stamp".into());
+    let Some(to) = template_hash(&live) else {
+        // Unreachable today: a drifted sandbox always implies a comparable
+        // podTemplate, which is exactly what the hash is computed over.
+        return None;
+    };
     if !crate::reaper::recycle_eligible(sbx, &state.config, now_unix()) {
         tracing::debug!(
             sandbox = %name,
-            from = %old,
-            to = %new,
+            from = %from,
+            to = %to,
             "template drift detected; sandbox active — the reaper recycles it once idle"
         );
         return None;
@@ -601,7 +597,7 @@ async fn recycle_drifted_idle(
         }
     }
     match state.store.delete_sandbox(name).await {
-        Ok(_) => Some((old, new)),
+        Ok(_) => Some((from, to)),
         Err(e) => {
             tracing::warn!(
                 sandbox = %name,

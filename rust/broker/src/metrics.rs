@@ -66,6 +66,13 @@ pub(crate) const WS_TOUCHES_TOTAL: &str = "open_websandbox_broker_ws_touches_tot
 pub(crate) const SANDBOX_NOT_READY_TOTAL: &str = "open_websandbox_broker_sandbox_not_ready_total";
 /// The fixed `reason` label values of [`SANDBOX_NOT_READY_TOTAL`].
 pub(crate) const SANDBOX_NOT_READY_REASONS: [&str; 3] = ["unschedulable", "timeout", "other"];
+/// Terminating sandboxes whose s3-snapshot finalizer was released WITHOUT an
+/// offload because there was nothing to offload (no pod IP and not
+/// `Suspended` — never scheduled, or the pod is long gone). Holding the
+/// finalizer in that state blocks the deletion forever (2026-11-06
+/// incident); this counter alerts on every such degraded release.
+pub(crate) const TERMINATION_RELEASED_WITHOUT_OFFLOAD_TOTAL: &str =
+    "open_websandbox_broker_termination_released_without_offload_total";
 
 /// Broker HTTP rate/latency holder + the install point for the global
 /// recorder.
@@ -161,6 +168,12 @@ impl BrokerMetrics {
         for reason in SANDBOX_NOT_READY_REASONS {
             metrics::counter!(SANDBOX_NOT_READY_TOTAL, "reason" => reason).increment(0);
         }
+        metrics::describe_counter!(
+            TERMINATION_RELEASED_WITHOUT_OFFLOAD_TOTAL,
+            "Terminating sandboxes whose s3-snapshot finalizer was released without an \
+             offload because there was nothing to offload (no pod IP, not Suspended)."
+        );
+        metrics::counter!(TERMINATION_RELEASED_WITHOUT_OFFLOAD_TOTAL).increment(0);
 
         Arc::new(Self {
             http: HttpMetrics::new(HTTP_REQUESTS_TOTAL, HTTP_REQUEST_DURATION),
@@ -345,6 +358,7 @@ mod tests {
             AUTH_FAILURES_TOTAL,
             IDLE_REAPS_TOTAL,
             SANDBOX_NOT_READY_TOTAL,
+            TERMINATION_RELEASED_WITHOUT_OFFLOAD_TOTAL,
         ] {
             assert!(out.contains(name), "missing frozen metric {name}:\n{out}");
         }

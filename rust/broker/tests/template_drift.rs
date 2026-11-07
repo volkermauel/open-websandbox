@@ -28,16 +28,22 @@ fn template(image: &str) -> SandboxTemplate {
         BASE_TEMPLATE,
         SandboxTemplateSpec {
             description: None,
-            pod_template: Some(serde_json::json!({
-                "spec": {
-                    "containers": [
-                        {"name": "sandbox", "image": image, "volumeMounts": [{"name": "workspace", "mountPath": "/workspace"}]}
-                    ],
-                    "volumes": [{"name": "workspace", "emptyDir": {}}]
-                }
-            })),
+            pod_template: Some(pod_json(image)),
         },
     )
+}
+
+/// The podTemplate JSON a template (and a copied-into-sandbox) blueprint is
+/// made of, keyed by image — the drift lever in these tests.
+fn pod_json(image: &str) -> serde_json::Value {
+    serde_json::json!({
+        "spec": {
+            "containers": [
+                {"name": "sandbox", "image": image, "volumeMounts": [{"name": "workspace", "mountPath": "/workspace"}]}
+            ],
+            "volumes": [{"name": "workspace", "emptyDir": {}}]
+        }
+    })
 }
 
 fn config(timeout_secs: u64) -> BrokerConfig {
@@ -102,6 +108,21 @@ fn ready_status(ip: &str) -> shared::SandboxStatus {
 
 fn annotation(sbx: &Sandbox, key: &str) -> Option<String> {
     sbx.metadata.annotations.as_ref()?.get(key).cloned()
+}
+
+/// A LEGACY sandbox (created before `owui.io/template-hash` stamping, v0.3.0
+/// and earlier): no hash annotation, but the copied `spec.podTemplate` is
+/// present — that stale copy is exactly what the legacy drift comparison
+/// judges.
+fn legacy_sandbox(name: &str, pod_template: serde_json::Value, age_secs: i64) -> Sandbox {
+    let mut sbx = drifted_sandbox(name, "unused", age_secs, OperatingMode::Running);
+    sbx.metadata
+        .annotations
+        .as_mut()
+        .unwrap()
+        .remove(OLD_HASH_KEY);
+    sbx.spec.pod_template = Some(pod_template);
+    sbx
 }
 
 #[tokio::test]
@@ -298,4 +319,140 @@ async fn drifted_idle_sandbox_with_unreadable_template_keeps_serving() {
         .expect("unreadable template keeps serving");
     assert_eq!(resolved.pod_ip, "10.0.0.9");
     assert!(store.snapshot().contains_key(&name), "sandbox not deleted");
+}
+
+// --- legacy sandboxes: drift WITHOUT the owui.io/template-hash stamp --------
+// (2026-11-07: pre-stamping sandboxes kept their stale copied podTemplate
+// forever because drift detection keyed solely on the hash annotation. The
+// controller stamps agents.x-k8s.io/sandbox-template-ref, so the template is
+// knowable; without a stamp the ACTUAL spec.podTemplate is compared.)
+
+#[tokio::test]
+async fn legacy_sandbox_with_current_pod_template_is_not_recycled() {
+    let store = Arc::new(StubSandboxStore::new());
+    store.insert_template(template("code-standard:FIXED"));
+    let name = sandbox_name("user-1", "chat-1", Profile::Persistent);
+    // Equal to the live template's podTemplate — keys built in a DIFFERENT
+    // order than pod_json() to prove the comparison is canonical (key-order
+    // free), not string equality.
+    let pod = serde_json::json!({
+        "spec": {
+            "volumes": [{"name": "workspace", "emptyDir": {}}],
+            "containers": [
+                {"volumeMounts": [{"mountPath": "/workspace", "name": "workspace"}],
+                 "image": "code-standard:FIXED", "name": "sandbox"}
+            ]
+        }
+    });
+    let mut sbx = legacy_sandbox(&name, pod, 3600);
+    sbx.status = Some(ready_status("10.0.0.9"));
+    store.insert_sandbox(sbx);
+    store.set_auto_ready_on_create(Some("10.0.0.9".into()));
+
+    let state = AppState::new(config(5), store.clone());
+    let resolved = resolve_sandbox(&state, "user-1", "chat-1", Profile::Persistent)
+        .await
+        .expect("legacy sandbox keeps serving");
+
+    assert_eq!(resolved.pod_ip, "10.0.0.9");
+    let snap = store.snapshot();
+    let kept = snap.get(&name).expect("sandbox kept");
+    assert!(
+        annotation(kept, RECYCLED_KEY).is_none(),
+        "equal ⇒ not recycled"
+    );
+}
+
+#[tokio::test]
+async fn legacy_sandbox_with_stale_pod_template_is_recycled_when_idle() {
+    let store = Arc::new(StubSandboxStore::new());
+    store.insert_template(template("code-standard:FIXED"));
+    let name = sandbox_name("user-1", "chat-1", Profile::Persistent);
+    store.insert_sandbox(legacy_sandbox(
+        &name,
+        pod_json("code-standard:BROKEN"), // the copied podTemplate predates the fix
+        3600,
+    ));
+    store.set_auto_ready_on_create(Some("10.0.0.7".into()));
+
+    let state = AppState::new(config(5), store.clone());
+    let resolved = resolve_sandbox(&state, "user-1", "chat-1", Profile::Persistent)
+        .await
+        .expect("recycled + ready");
+
+    let snap = store.snapshot();
+    assert_eq!(snap.len(), 1, "delete + recreate, not a second sandbox");
+    let recycled = snap.get(&name).expect("sandbox recreated");
+    assert_eq!(
+        resolved.pod_ip, "10.0.0.7",
+        "the resolve serves the FRESH sandbox"
+    );
+    assert_eq!(
+        annotation(recycled, OLD_HASH_KEY).as_deref(),
+        template_hash(&template("code-standard:FIXED")).as_deref(),
+        "recreated from the CURRENT template — and hash-stamped going forward"
+    );
+    assert!(annotation(recycled, RECYCLED_KEY).is_some());
+}
+
+#[tokio::test]
+async fn legacy_sandbox_with_unreadable_template_is_untouched() {
+    let store = Arc::new(StubSandboxStore::new());
+    // NO template in the store: the comparison basis is gone → never recycle.
+    let name = sandbox_name("user-1", "chat-1", Profile::Persistent);
+    let stale = pod_json("code-standard:BROKEN");
+    let mut sbx = legacy_sandbox(&name, stale.clone(), 3600);
+    sbx.status = Some(ready_status("10.0.0.9"));
+    store.insert_sandbox(sbx);
+    store.set_auto_ready_on_create(Some("10.0.0.9".into()));
+
+    let state = AppState::new(config(5), store.clone());
+    let resolved = resolve_sandbox(&state, "user-1", "chat-1", Profile::Persistent)
+        .await
+        .expect("keeps serving");
+
+    assert_eq!(resolved.pod_ip, "10.0.0.9");
+    let snap = store.snapshot();
+    let kept = snap.get(&name).expect("sandbox kept");
+    assert_eq!(
+        kept.spec.pod_template.as_ref(),
+        Some(&stale),
+        "never recycle when the template cannot be read"
+    );
+    assert!(annotation(kept, RECYCLED_KEY).is_none());
+}
+
+#[tokio::test]
+async fn legacy_sandbox_resolves_its_template_via_the_controller_ref() {
+    // No owui.io/template-name (pre-stamp), but the controller stamped
+    // agents.x-k8s.io/sandbox-template-ref → drift must be judged against
+    // THAT template, not the base one: a sandbox matching its own custom
+    // template is not drifted, even though the base template differs.
+    let store = Arc::new(StubSandboxStore::new());
+    store.insert_template(template("code-standard:BASE")); // base, differs
+    let mut custom = template("code-standard:CUSTOM");
+    custom.metadata.name = Some("code-standard-custom".into());
+    store.insert_template(custom);
+    let name = sandbox_name("user-1", "chat-1", Profile::Persistent);
+    let mut sbx = legacy_sandbox(&name, pod_json("code-standard:CUSTOM"), 3600);
+    sbx.metadata.annotations.as_mut().unwrap().insert(
+        "agents.x-k8s.io/sandbox-template-ref".to_string(),
+        "code-standard-custom".to_string(),
+    );
+    sbx.status = Some(ready_status("10.0.0.9"));
+    store.insert_sandbox(sbx);
+    store.set_auto_ready_on_create(Some("10.0.0.9".into()));
+
+    let state = AppState::new(config(5), store.clone());
+    let resolved = resolve_sandbox(&state, "user-1", "chat-1", Profile::Persistent)
+        .await
+        .expect("keeps serving");
+
+    assert_eq!(resolved.pod_ip, "10.0.0.9");
+    let snap = store.snapshot();
+    let kept = snap.get(&name).expect("sandbox kept");
+    assert!(
+        annotation(kept, RECYCLED_KEY).is_none(),
+        "matches its OWN template"
+    );
 }

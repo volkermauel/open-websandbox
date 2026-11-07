@@ -892,6 +892,88 @@ async fn reaper_recycles_idle_drifted_sandbox() {
     );
 }
 
+/// Legacy drift (2026-11-07): pre-stamping sandboxes carry NO hash stamp —
+/// v0.3.1 skipped them forever. Without a stamp the ACTUAL spec.podTemplate
+/// is compared against the live template.
+#[tokio::test]
+async fn reaper_recycles_legacy_sandbox_with_stale_pod_template() {
+    let old = drift_template("code-standard:BROKEN");
+    let new = drift_template("code-standard:FIXED");
+    let store = StubSandboxStore::new();
+    store.insert_template(new.clone()); // live template = the fix
+    let mut sbx = drifted_seed("owui-c-legacy-1", NOW - 1000, "unused");
+    sbx.metadata.annotations.as_mut().unwrap().remove(HASH_KEY); // pre-stamp
+                                                                 // ...but the copied podTemplate IS present, and stale.
+    sbx.spec.pod_template = Some(old.spec.pod_template.clone().expect("podTemplate"));
+    store.insert_sandbox(sbx);
+    let c = cfg(120, 300, 604_800);
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(
+        stats.recycled, 1,
+        "legacy drift is detected without the stamp"
+    );
+    let snap = store.snapshot();
+    let recreated = snap.get("owui-c-legacy-1").expect("sandbox recreated");
+    assert_eq!(
+        recreated
+            .metadata
+            .annotations
+            .as_ref()
+            .unwrap()
+            .get(HASH_KEY)
+            .map(String::as_str),
+        template_hash(&new).as_deref(),
+        "recreated from the CURRENT template, hash-stamped going forward"
+    );
+}
+
+#[tokio::test]
+async fn reaper_leaves_legacy_sandbox_matching_the_live_template_alone() {
+    let new = drift_template("code-standard:FIXED");
+    let store = StubSandboxStore::new();
+    store.insert_template(new.clone());
+    let mut sbx = drifted_seed("owui-c-legacy-2", NOW - 1000, "unused");
+    sbx.metadata.annotations.as_mut().unwrap().remove(HASH_KEY);
+    // The copied podTemplate matches the live template — no drift.
+    sbx.spec.pod_template = Some(new.spec.pod_template.clone().expect("podTemplate"));
+    store.insert_sandbox(sbx);
+    let c = cfg(120, 300, 604_800);
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(stats.recycled, 0, "equal podTemplate ⇒ not recycled");
+    assert!(store
+        .get_sandbox("owui-c-legacy-2")
+        .await
+        .unwrap()
+        .is_some());
+}
+
+#[tokio::test]
+async fn reaper_leaves_legacy_sandbox_without_a_pod_template_alone() {
+    // Controller-built / claim-bound sandboxes carry no copied podTemplate —
+    // no basis to compare, so they are never recycled.
+    let new = drift_template("code-standard:FIXED");
+    let store = StubSandboxStore::new();
+    store.insert_template(new);
+    let mut sbx = drifted_seed("owui-c-legacy-3", NOW - 1000, "unused");
+    sbx.metadata.annotations.as_mut().unwrap().remove(HASH_KEY);
+    // spec.podTemplate stays None (the seed default).
+    store.insert_sandbox(sbx);
+    let c = cfg(120, 300, 604_800);
+
+    let stats = reap_once(&store, &NoopOffload, &c, NOW).await;
+
+    assert_eq!(stats.recycled, 0, "no basis to compare ⇒ untouched");
+    assert!(store
+        .get_sandbox("owui-c-legacy-3")
+        .await
+        .unwrap()
+        .is_some());
+}
+
 #[tokio::test]
 async fn reaper_leaves_active_drifted_sandbox_alone() {
     let old = drift_template("code-standard:BROKEN");
