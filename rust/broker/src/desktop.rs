@@ -145,7 +145,16 @@ fn terminal_identity_or_reject(
     headers: &HeaderMap,
     state: &AppState,
 ) -> Result<TerminalIdentity, ApiError> {
-    crate::terminal::terminal_identity(query, headers, "", state.config.default_profile)
+    let mut identity =
+        crate::terminal::terminal_identity(query, headers, "", state.config.default_profile)?;
+    // The desktop is the user's sandbox desktop: when the caller has no session
+    // of its own (Open WebUI sends an empty X-Session-Id for an unsaved chat),
+    // attach to the persistent session instead of rejecting. This mirrors the
+    // terminal path, where the persistent profile uses session = user.
+    if identity.session_id.is_empty() {
+        identity.session_id = identity.user_id.clone();
+    }
+    Ok(identity)
 }
 
 /// Path (+ query) of the inbound request, forwarded verbatim towards the
