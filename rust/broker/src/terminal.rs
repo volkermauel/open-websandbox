@@ -575,6 +575,14 @@ async fn ensure_pty(state: &AppState, pod_ip: &str, session_id: &str, runtime_ap
     if let Ok(v) = session_id.parse() {
         headers.insert("x-session-id", v);
     }
+    // Resume marker: this call is the reconnect/probe path — the runtime should
+    // REUSE this session instead of spawning a fresh one. Open WebUI's own
+    // POST /api/terminals (one per Terminal tab) must NOT carry it, or a second
+    // tab in the same chat would resume the first tab's PTY and be closed with
+    // 4009 ("terminal already attached").
+    if let Ok(v) = "1".parse() {
+        headers.insert("x-terminal-resume", v);
+    }
     // Best-effort (errors swallowed): ensures an interactive PTY exists on the
     // resolved pod before the WS attaches. #147: authorized with the sandbox's
     // per-session runtime key (same fail-closed source as the proxy hop).

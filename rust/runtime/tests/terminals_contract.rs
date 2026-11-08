@@ -25,6 +25,7 @@ use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::Message as TungMsg;
 
 /// A live runtime: tmp workdir + projected key + a served axum app on an ephemeral
 /// port. `shell` and `max` are configurable so the cap-429 and spawn-fail-503 cases
@@ -249,10 +250,13 @@ async fn post_creates_session_with_expected_shape() {
     .await;
     assert_eq!(status, 200, "body={body}");
     let v = json(&body);
-    assert_eq!(v["id"], "abc");
+    // No resume marker ⇒ a fresh session id per POST (the Open WebUI multi-tab
+    // contract): the chat id must NOT become the session id.
+    assert!(v["id"].is_string() && v["id"] != "abc", "{v}");
     assert!(v["pid"].as_i64().unwrap_or(0) > 0, "{v}");
     assert!(v["created_at"].is_string(), "{v}");
-    let _ = delete(&srv, "abc").await;
+    let sid = v["id"].as_str().unwrap_or("x");
+    let _ = delete(&srv, sid).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -348,27 +352,97 @@ async fn post_reuses_live_session_until_dead() {
     let srv = Server::start().await;
     let pid1 = create_pid(&srv, "dup").await;
     // Issue #129: a reconnecting client (broker ensure_pty) must RESUME the
-    // live shell, not kill it — same id returns the same pid.
-    let pid2 = create_pid(&srv, "dup").await;
-    assert_eq!(pid1, pid2, "POST with a live id must reuse the session");
+    // live shell, not kill it — same id + the resume marker returns the same
+    // pid.
+    let pid2 = create_pid_resumed(&srv, "dup").await;
+    assert_eq!(pid1, pid2, "POST with a live id + resume marker must reuse");
     // Only once the session is gone does the same id get a fresh shell.
     let _ = delete(&srv, "dup").await;
-    let pid3 = create_pid(&srv, "dup").await;
+    let pid3 = create_pid_resumed(&srv, "dup").await;
     assert_ne!(pid1, pid3, "POST after DELETE must spawn a fresh shell");
     let _ = delete(&srv, "dup").await;
 }
 
-/// POST /api/terminals with `X-Session-Id` = `id`; returns the spawned pid.
+/// POST /api/terminals WITHOUT the resume marker (the Open WebUI shape:
+/// X-Session-Id = chat id, one POST per Terminal tab) must spawn a FRESH PTY
+/// per request even when the chat id repeats — otherwise a second Terminal tab
+/// in the same chat attaches to the first tab's PTY and is closed with 4009
+/// ("terminal already attached"). Returns (pid, session id).
+async fn create_tab(srv: &Server, chat: &str) -> (i64, String) {
+    let (_, body) = http(
+        srv.port,
+        "POST",
+        "/api/terminals",
+        &[("Authorization", &srv.auth()), ("X-Session-Id", chat)],
+        None,
+    )
+    .await;
+    let v = json(&body);
+    (
+        v["pid"].as_i64().unwrap(),
+        v["id"].as_str().unwrap().to_owned(),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_tabs_in_the_same_chat_get_two_live_pty_sessions() {
+    let srv = Server::start().await;
+    let (pid1, id1) = create_tab(&srv, "chat-1").await;
+    let (pid2, id2) = create_tab(&srv, "chat-1").await;
+
+    assert_ne!(pid1, pid2, "same chat must spawn two shells");
+    assert_ne!(id1, id2, "same chat must get two session ids");
+
+    // Both sessions are attachable (no 4009): open + close both WS.
+    let ws1 = ws_connect(srv.port, &format!("/api/terminals/{id1}"), Some(srv.key)).await;
+    let (mut s1sink, s1stream) = ws1.split();
+    // s1stream: tab 1's PTY output leg — left unread on purpose; the attach
+    // itself is the assertion (a 4009 would have closed it).
+    let _ = s1stream;
+    let ws2 = ws_connect(srv.port, &format!("/api/terminals/{id2}"), Some(srv.key)).await;
+    let (mut s2sink, mut s2stream) = ws2.split();
+    let _ = s2stream.next().await;
+
+    // Both sessions answer a resize text frame — a closed session would not.
+    s1sink
+        .send(TungMsg::Text(
+            serde_json::json!({"type": "resize", "cols": 80, "rows": 24})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    s2sink
+        .send(TungMsg::Text(
+            serde_json::json!({"type": "resize", "cols": 80, "rows": 24})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+}
+
+/// POST /api/terminals with `X-Session-Id` = `id` + the broker resume marker;
+/// returns the spawned pid.
 async fn create_pid(srv: &Server, id: &str) -> i64 {
     let (_, body) = http(
         srv.port,
         "POST",
         "/api/terminals",
-        &[("Authorization", &srv.auth()), ("X-Session-Id", id)],
+        &[
+            ("Authorization", &srv.auth()),
+            ("X-Session-Id", id),
+            ("X-Terminal-Resume", "1"),
+        ],
         None,
     )
     .await;
     json(&body)["pid"].as_i64().unwrap()
+}
+
+/// The broker resume probe variant of create_pid.
+async fn create_pid_resumed(srv: &Server, id: &str) -> i64 {
+    create_pid(srv, id).await
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -551,15 +625,26 @@ async fn ws_background_job_then_exit_cleans_up() {
 // --- tiny CRUD conveniences --------------------------------------------------
 
 async fn create(srv: &Server, id: &str) -> u16 {
-    http(
+    create_ret(srv, id).await.0
+}
+
+/// POST with X-Session-Id + the broker resume marker (tests the D12 resume
+/// contract the broker ensure_pty uses). Returns (status, session id).
+async fn create_ret(srv: &Server, id: &str) -> (u16, String) {
+    let (status, body) = http(
         srv.port,
         "POST",
         "/api/terminals",
-        &[("Authorization", &srv.auth()), ("X-Session-Id", id)],
+        &[
+            ("Authorization", &srv.auth()),
+            ("X-Session-Id", id),
+            ("X-Terminal-Resume", "1"),
+        ],
         None,
     )
-    .await
-    .0
+    .await;
+    let sid = json(&body)["id"].as_str().unwrap_or(id).to_owned();
+    (status, sid)
 }
 
 async fn delete(srv: &Server, id: &str) -> u16 {

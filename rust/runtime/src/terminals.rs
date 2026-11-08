@@ -274,6 +274,15 @@ pub async fn create_terminal(
 ) -> Result<Json<CreateResponse>, ApiError> {
     let subdir = header_str(&headers, "x-workspace-subdir");
     let session_id = header_str(&headers, "x-session-id").map(str::to_owned);
+    // Resume marker: only the broker's PTY-resume probe (ensure_pty) may reuse
+    // an existing session. Open WebUI creates one terminal per tab and sends
+    // X-Session-Id: <chat id> — keying the new PTY on that would make a second
+    // tab in the same chat attach to the first tab's PTY and be closed with
+    // 4009 ("terminal already attached"; upstream open-terminal 0.16.1 has the
+    // same one-attach policy). Upstream POST /api/terminals ignores
+    // x-session-id for identity and generates a fresh id per request; honour
+    // the same contract, with resume as an explicit opt-in.
+    let resume = header_str(&headers, "x-terminal-resume") == Some("1") && session_id.is_some();
     let base = request_base(&state.config.workdir, subdir)?;
 
     // Sessions torn down while holding the lock (dead reaping, recreate-existing)
@@ -298,7 +307,10 @@ pub async fn create_terminal(
             }
         }
 
-        let id = session_id.unwrap_or_else(random_id);
+        let id = match (resume, session_id.clone()) {
+            (true, Some(id)) => id,
+            _ => random_id(),
+        };
 
         // D12 resume (issue #129): REUSE a live session carrying this id — a
         // reconnecting client (the broker's `ensure_pty`) is resuming that
