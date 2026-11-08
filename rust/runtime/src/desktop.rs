@@ -342,6 +342,28 @@ async fn relay_ws(state: AppState, path_and_query: String, mut client: WebSocket
         }
     };
 
+    // The sidecar's /desktop/stream, /desktop/audio and /events expect a TEXT
+    // auth frame ({type:"auth", token: <OPEN_TERMINAL_API_KEY>}) as the FIRST
+    // message before any binary VNC data (open-terminal desktop.py stream():
+    // receive_json within 10 s). The runtime hop authenticates via the upgrade
+    // request's Authorization header, which the sidecar ignores — so inject the
+    // auth frame here, before relaying anything from the client. Without this,
+    // noVNC's first binary frame (RFB handshake) hits receive_json ->
+    // KeyError("text") -> close 1011 -> the Desktop tab reconnect-loops.
+    let mut upstream = upstream;
+    if let Some(key) = state.config.desktop_api_key.as_deref() {
+        let auth = TungMsg::Text(format!("{{\"type\":\"auth\",\"token\":\"{key}\"}}").into());
+        if upstream.send(auth).await.is_err() {
+            let _ = client
+                .send(AxumMsg::Close(Some(CloseFrame {
+                    code: 1011,
+                    reason: Utf8Bytes::from_static("desktop auth failed"),
+                })))
+                .await;
+            return;
+        }
+    }
+
     let (mut up_sink, mut up_stream) = upstream.split();
     let (mut client_sink, mut client_stream) = client.split();
 
