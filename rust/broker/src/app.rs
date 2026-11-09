@@ -18,7 +18,7 @@ use axum::extract::DefaultBodyLimit;
 use crate::proxy::{proxy_catch_all, MAX_FORWARD_BODY};
 use crate::rate_limit;
 use crate::state::AppState;
-use crate::terminal::terminal_ws;
+use crate::terminal::{terminal_delete, terminal_get_or_ws};
 
 /// Build the full broker router over `state`.
 ///
@@ -51,7 +51,10 @@ pub fn build_router(state: AppState) -> Router {
         )
         // Interactive terminal WebSocket relay (OWUI open-terminal contract).
         // POST /api/terminals (create) still flows through the catch-all proxy.
-        .route("/api/terminals/{id}", get(terminal_ws))
+        .route(
+            "/api/terminals/{id}",
+            get(terminal_get_or_ws).delete(terminal_delete),
+        )
         // Desktop/browser/event WebSocket relays (OWUI desktop-tab contract):
         // same identity + first-message auth + resolve path as the terminal
         // relay above. The catch-all below stays plain HTTP (strips Upgrade).

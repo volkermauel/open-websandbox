@@ -23,9 +23,10 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use axum::body::Body;
 use axum::extract::ws::{Message as AxumMsg, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, Request};
 use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -129,17 +130,37 @@ fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
-/// `GET /api/terminals/{id}` (WebSocket upgrade). Validates identity, then hands
-/// off to `relay` inside the upgrade future (post-accept auth + resolve + relay).
-pub async fn terminal_ws(
-    ws: WebSocketUpgrade,
+/// `GET /api/terminals/{id}` — WebSocket upgrade when the client asks for one
+/// (the PTY attach), plain proxy when it does not. Open WebUI 0.13.2's Terminal
+/// tab polls the session info with a PLAIN GET; routing that into the WS
+/// handler produced `400 Connection header did not include 'upgrade'` for every
+/// status poll (and `DELETE` 405s, since only `get` was registered).
+pub async fn terminal_get_or_ws(
+    // The WS extractor as a Result: an upgrade request relays the PTY, anything
+    // else (Open WebUI 0.13.2's plain-GET status poll) proxies to the runtime.
+    ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
     State(state): State<AppState>,
     Path(session_id): Path<String>,
     Query(query): Query<TerminalWsQuery>,
     headers: HeaderMap,
+    req: Request<Body>,
 ) -> Result<Response, ApiError> {
-    let identity = terminal_identity(&query, &headers, &session_id, state.config.default_profile)?;
-    Ok(ws.on_upgrade(move |socket| relay(socket, state, identity, session_id)))
+    if let Ok(upgrade) = ws {
+        let identity =
+            terminal_identity(&query, &headers, &session_id, state.config.default_profile)?;
+        return Ok(upgrade.on_upgrade(move |socket| relay(socket, state, identity, session_id)));
+    }
+    // Plain GET: session-info poll → the runtime (via the catch-all proxy).
+    crate::proxy::proxy_catch_all(crate::auth::Authed, State(state), req).await
+}
+
+/// `DELETE /api/terminals/{id}` — terminate a terminal session (proxied).
+pub async fn terminal_delete(
+    _: crate::auth::Authed,
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Result<Response, ApiError> {
+    crate::proxy::proxy_catch_all(crate::auth::Authed, State(state), req).await
 }
 
 /// Post-upgrade relay: auth first message → resolve → ensure PTY → connect
