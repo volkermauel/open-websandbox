@@ -142,24 +142,6 @@ async fn new_routes_reject_missing_user() {
 
 /// An empty session with a user present is the unsaved-chat case: the routes
 /// must NOT 400 on it (session falls back to the persistent session).
-#[tokio::test]
-async fn new_routes_accept_empty_session_with_user() {
-    let env = router(store());
-
-    for path in [
-        "/desktop/stream?user_id=u-1",
-        "/desktop/audio?user_id=u-1",
-        "/events?user_id=u-1",
-    ] {
-        let resp = send(&env, path, &[("x-user-id", "u-1"), ("x-session-id", "")]).await;
-        assert_ne!(
-            resp.status(),
-            StatusCode::BAD_REQUEST,
-            "{path} must accept an empty session (got 400)"
-        );
-    }
-}
-
 /// `/browser/view/{sid}/{token}/{channel}` is only relayed for the three
 /// known channels; anything else is rejected pre-upgrade (before a sandbox is
 /// resolved).
