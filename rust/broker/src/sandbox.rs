@@ -78,7 +78,7 @@ pub const TEMPLATE_REF_ANNOTATION_KEY: &str = "agents.x-k8s.io/sandbox-template-
 /// Annotation stamped with the epoch seconds of the most recent
 /// template-drift recycle of the (deterministically named) sandbox. Gates a
 /// short anti-loop grace window: a freshly recycled sandbox is never
-/// recycled again within [`crate::reaper::RECYCLE_GRACE_SECS`].
+/// recycled again within the reaper's anti-loop grace window.
 pub const RECYCLED_AT_KEY: &str = "broker-recycled-at";
 
 /// Canonical JSON: object keys sorted recursively, so the serialization is
