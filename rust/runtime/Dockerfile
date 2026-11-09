@@ -146,9 +146,9 @@ RUN set -eu \
  && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare yarn@stable --activate
 
 # PowerShell 7 stable — pinned tarball into /opt/powershell (on PATH).
-ARG PWSH_VERSION=v7.6.5
-ARG PWSH_SHA256_AMD64=b34ab3b19acac1d3d4d0d3cfdb02acf62f457b0b6a962ff008132033f7566844
-ARG PWSH_SHA256_ARM64=ed4084f215d8bce2edd23aa7cb1f1e7b0818e41363a635a22065d2701b6141df
+ARG PWSH_VERSION=v7.6.9
+ARG PWSH_SHA256_AMD64=bef140a1a96994029153dca8c00b1750b9a5a764fb9db2dc68d7bb40e8a29e8a
+ARG PWSH_SHA256_ARM64=02eb9991af447c7e7fe881acde195961afd397c40b8eb1c2b3856b84ec2d85f2
 RUN set -eu \
  && case "${TARGETARCH}" in \
       amd64) triple=linux-x64;   sha="${PWSH_SHA256_AMD64}" ;; \
