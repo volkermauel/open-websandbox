@@ -135,7 +135,7 @@ RUN set -eu \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
  && cd /tmp \
- && curl -fsSLO "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-${triple}.tar.xz" \
+ && curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -O "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-${triple}.tar.xz" \
  && echo "${sha}  node-${NODE_VERSION}-${triple}.tar.xz" | sha256sum -c - \
  && mkdir -p /opt/node \
  && tar -xJf "node-${NODE_VERSION}-${triple}.tar.xz" -C /opt/node --strip-components=1 \
@@ -156,7 +156,7 @@ RUN set -eu \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
  && cd /tmp \
- && curl -fsSLO "https://github.com/PowerShell/PowerShell/releases/download/${PWSH_VERSION}/powershell-${PWSH_VERSION#v}-${triple}.tar.gz" \
+ && curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -O "https://github.com/PowerShell/PowerShell/releases/download/${PWSH_VERSION}/powershell-${PWSH_VERSION#v}-${triple}.tar.gz" \
  && echo "${sha}  powershell-${PWSH_VERSION#v}-${triple}.tar.gz" | sha256sum -c - \
  && mkdir -p /opt/powershell \
  && tar -xzf "powershell-${PWSH_VERSION#v}-${triple}.tar.gz" -C /opt/powershell \
@@ -181,7 +181,7 @@ RUN set -eu \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
  && cd /tmp \
- && curl -fsSLO "https://builds.dotnet.microsoft.com/dotnet/Sdk/${DOTNET_VERSION}/dotnet-sdk-${DOTNET_VERSION}-${triple}.tar.gz" \
+ && curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -O "https://builds.dotnet.microsoft.com/dotnet/Sdk/${DOTNET_VERSION}/dotnet-sdk-${DOTNET_VERSION}-${triple}.tar.gz" \
  && echo "${sha}  dotnet-sdk-${DOTNET_VERSION}-${triple}.tar.gz" | sha256sum -c - \
  && mkdir -p /opt/dotnet /opt/dotnet-tools \
  && tar -xzf "dotnet-sdk-${DOTNET_VERSION}-${triple}.tar.gz" -C /opt/dotnet \
@@ -201,13 +201,13 @@ ARG DUCKDB_VERSION=v1.5.5
 ARG DUCKDB_SHA256_AMD64=08c0ca117111fcede14239d0093792352befdc174218c344d232c13279643d05
 ARG DUCKDB_SHA256_ARM64=02163197027a42149147364d31fa67cac82108517a4be43304a1cc226eaef07a
 RUN cd /tmp \
- && curl -fsSLO "https://github.com/PSAppDeployToolkit/PSAppDeployToolkit/releases/download/${PSADT_VERSION}/PSAppDeployToolkit_ModuleOnly.zip" \
+ && curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -O "https://github.com/PSAppDeployToolkit/PSAppDeployToolkit/releases/download/${PSADT_VERSION}/PSAppDeployToolkit_ModuleOnly.zip" \
  && echo "${PSADT_SHA256}  PSAppDeployToolkit_ModuleOnly.zip" | sha256sum -c - \
  && mkdir -p /opt/psmodules /opt/tools \
  && unzip -q PSAppDeployToolkit_ModuleOnly.zip -d /tmp/psadt \
  && mv /tmp/psadt/PSAppDeployToolkit /opt/psmodules/ \
  && rm -rf /tmp/psadt PSAppDeployToolkit_ModuleOnly.zip \
- && curl -fsSLO "https://github.com/leibnitz27/cfr/releases/download/${CFR_VERSION}/cfr-${CFR_VERSION}.jar" \
+ && curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -O "https://github.com/leibnitz27/cfr/releases/download/${CFR_VERSION}/cfr-${CFR_VERSION}.jar" \
  && echo "${CFR_SHA256}  cfr-${CFR_VERSION}.jar" | sha256sum -c - \
  && mv "cfr-${CFR_VERSION}.jar" /opt/tools/cfr.jar \
  && printf '#!/bin/sh\nexec java -jar /opt/tools/cfr.jar "$@"\n' > /usr/local/bin/cfr \
@@ -217,7 +217,7 @@ RUN cd /tmp \
       arm64) darch=arm64; dsha="${DUCKDB_SHA256_ARM64}" ;; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
- && curl -fsSLO "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb_cli-linux-${darch}.zip" \
+ && curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -O "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb_cli-linux-${darch}.zip" \
  && echo "${dsha}  duckdb_cli-linux-${darch}.zip" | sha256sum -c - \
  && unzip -j -o "duckdb_cli-linux-${darch}.zip" duckdb -d /opt/tools \
  && chmod 0755 /opt/tools/duckdb \
