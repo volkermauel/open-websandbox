@@ -13,6 +13,8 @@
 
 #![forbid(unsafe_code)]
 // rust-stable 1.99 asserts these should be assert_eq; intentional here.
+// (`unknown_lints` first: renamed `const_is_empty` in clippy 1.97 — see shared/src/crd.rs.)
+#![allow(unknown_lints)]
 #![allow(clippy::assert_is_empty)]
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
