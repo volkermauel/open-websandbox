@@ -12,6 +12,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **open-terminal v0.17.21 / Open Web UI 0.13.4 compatibility (stage 3).**
+  The reference sandbox server moved six minor versions and Open Web UI four;
+  the client contract they now expect is implemented end to end (gap analysis:
+  `openspec/changes/open-terminal-compat-stage3/`). New surfaces:
+  - **Background processes** — `POST /execute` returns the upstream log shape
+    (`{id, command, cwd, status, exit_code, output[], truncated, next_offset}`)
+    with `?wait=`/`tail`, plus the process list (`GET /execute`), incremental
+    status reads and live WS streams, stdin input and kill. This is what
+    OWUI 0.13's processes dock, git-clone flow and rich step cards parse.
+  - **Git panel + GitHub workbench** — the whole `/git/*` surface (status,
+    diff, log, show, branches, worktrees, stage/commit/branch/checkout/
+    uncommit/pull/push/stash and the `gh`-backed PR/issue workbench), served
+    from the sandbox's own git binary; `features.git` follows availability.
+  - **`WS /events`** — the fs/ports change stream behind OWUI's live Files
+    tab and ports list (`features.events`).
+  - **`GET /system/info`** — the machine snapshot (cgroup-scoped cpu/memory,
+    disk, network, top processes) behind the System-info modal.
+  - **Terminal WS protocol** — resume-from-cursor, flow control, foreground
+    process titles (`process` frames), chat binding and the user-shell tools
+    (`/api/terminals/user/*`).
+  - **File edit diffs** — `/files/write` and `/files/replace` return the
+    `patch` unified diff OWUI renders as per-edit cards; listings carry birth
+    times; `/system` serves the v0.17.21 prompt verbatim.
+  - **0.17.7 knobs** — `OPEN_TERMINAL_START_DIR` and
+    `OPEN_TERMINAL_SETUP_SCRIPT` (outcome visible in `/system/info`).
+  Compatibility tags move to `owui-v0.13.4` / `open-terminal-v0.17.21`; the
+  full matrix + divergences: `docs/compatibility.md`.
+
 ### Fixed
 
 - **Terminating sandboxes with no pod no longer block deletion forever
