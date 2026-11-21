@@ -633,8 +633,8 @@ pub async fn list_processes(
 }
 
 /// `GET /execute` WebSocket — the live process-list stream (same payload as
-/// the plain GET, pushed on every change). Upgrades branch to [`list_stream`];
-/// plain requests get [`list_processes`].
+/// the plain GET, pushed on every change). Upgrades branch to the `list_stream`
+/// pump; plain requests get [`list_processes`].
 pub async fn execute_get_or_ws(
     auth: Authed,
     State(state): State<AppState>,
