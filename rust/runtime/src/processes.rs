@@ -1238,4 +1238,30 @@ mod tests {
     fn status_str(process: &Process) -> &'static str {
         process.status.lock().unwrap().as_str()
     }
+
+    #[test]
+    fn expiry_drops_finished_entries_after_the_window() {
+        let registry = ProcessRegistry::new();
+        // A finished process anchored FAR in the past expires immediately.
+        let p = Arc::new(Process {
+            id: "old".into(),
+            command: "true".into(),
+            status: StdMutex::new(Status::Done),
+            exit_code: StdMutex::new(Some(0)),
+            finished_at: StdMutex::new(Some(
+                Instant::now()
+                    .checked_sub(Duration::from_secs(EXPIRY_SECONDS + 1))
+                    .expect("process expiry anchor is representable"),
+            )),
+            changed: Notify::new(),
+            registry_changed: Arc::new(Notify::new()),
+            log: StdMutex::new(BoundedLog::new()),
+            stdin: tokio::sync::Mutex::new(None),
+            pid: 1,
+        });
+        registry.register(p);
+        assert_eq!(registry.expire(), 1, "expired entry reaped");
+        assert!(registry.get("old").is_none());
+        assert_eq!(registry.expire(), 0, "second sweep is a no-op");
+    }
 }

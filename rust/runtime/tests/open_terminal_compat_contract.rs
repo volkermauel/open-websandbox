@@ -477,3 +477,45 @@ async fn matches_unifies_name_and_content_with_pagination() {
         .await;
     assert_eq!(status(&blank), StatusCode::BAD_REQUEST);
 }
+
+// --- GET /system/info (open-terminal 0.17.x) ---------------------------------
+
+#[tokio::test]
+async fn system_info_carries_the_upstream_snapshot_shape() {
+    let env = Env::new();
+    let resp = env
+        .send(Method::GET, "/system/info", Bearer::Default, None, None)
+        .await;
+    assert_eq!(status(&resp), StatusCode::OK);
+    let doc: Value = json(resp).await;
+    for key in [
+        "sampled_at",
+        "hostname",
+        "os",
+        "arch",
+        "environment",
+        "service_uptime_seconds",
+        "uptime_seconds",
+        "cpu",
+        "memory",
+        "disk",
+        "network",
+        "process_scope",
+        "processes",
+    ] {
+        assert!(doc.get(key).is_some(), "missing {key}: {doc}");
+    }
+    // One workspace per pod: processes are environment-scoped (upstream
+    // narrows by username only in multi-user mode).
+    assert_eq!(doc["process_scope"], "environment");
+    // cpu/memory report host-or-cgroup scope, never a hard-coded host.
+    assert!(
+        doc["cpu"]["scope"] == "host" || doc["cpu"]["scope"] == "cgroup",
+        "{doc}"
+    );
+    // Authenticated like every runtime route.
+    let unauth = env
+        .send(Method::GET, "/system/info", Bearer::None, None, None)
+        .await;
+    assert_eq!(status(&unauth), StatusCode::UNAUTHORIZED);
+}

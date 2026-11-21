@@ -660,3 +660,110 @@ async fn read_content(env: &common::Env, path: &str) -> String {
         .unwrap()
         .to_string()
 }
+
+// --- stage-3: edit-diff cards + birth times (open-terminal 0.17.x) ----------
+
+#[tokio::test]
+async fn write_carries_created_and_patch_semantics() {
+    let env = common::Env::new();
+    // First write CREATES: created=true, no patch (the diff of a new file is
+    // the content itself, which the caller already has).
+    let resp = env
+        .send(
+            Method::POST,
+            "/files/write",
+            Bearer::Default,
+            None,
+            Some(r#"{"path":"story.md","content":"line1\nline2\n"}"#.to_string()),
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = common::json(resp).await;
+    assert_eq!(body["created"], true, "{body}");
+    assert_eq!(body["size"], 12);
+    assert!(
+        body.get("patch").is_none(),
+        "new file carries no patch: {body}"
+    );
+
+    // Overwrite: created=false, patch carries the unified diff.
+    let resp = env
+        .send(
+            Method::POST,
+            "/files/write",
+            Bearer::Default,
+            None,
+            Some(r#"{"path":"story.md","content":"line1\nXX\nline2\n"}"#.to_string()),
+        )
+        .await;
+    let body: serde_json::Value = common::json(resp).await;
+    assert_eq!(body["created"], false);
+    let patch = body["patch"].as_str().expect("patch on overwrite");
+    assert!(patch.contains("---"), "unified diff header: {patch}");
+    assert!(patch.contains("+XX"), "shows the insertion: {patch}");
+
+    // Identical rewrite: patch present but EMPTY (difflib parity), not a
+    // header-only stub.
+    let resp = env
+        .send(
+            Method::POST,
+            "/files/write",
+            Bearer::Default,
+            None,
+            Some(r#"{"path":"story.md","content":"line1\nXX\nline2\n"}"#.to_string()),
+        )
+        .await;
+    let body: serde_json::Value = common::json(resp).await;
+    assert_eq!(body["patch"], "", "identical rewrite → empty patch: {body}");
+
+    // Overwriting a BINARY file: no patch (strict-UTF-8 read fails upstream).
+    std::fs::write(env.workdir.join("blob.bin"), [0u8, 159, 146, 150]).unwrap();
+    let resp = env
+        .send(
+            Method::POST,
+            "/files/write",
+            Bearer::Default,
+            None,
+            Some(r#"{"path":"blob.bin","content":"text now"}"#.to_string()),
+        )
+        .await;
+    let body: serde_json::Value = common::json(resp).await;
+    assert!(
+        body.get("patch").is_none(),
+        "binary previous → no patch: {body}"
+    );
+}
+
+#[tokio::test]
+async fn replace_carries_patch_and_list_carries_created() {
+    let env = common::Env::new();
+    std::fs::write(env.workdir.join("doc.md"), "alpha\nbeta\n").unwrap();
+    let resp = env
+        .send(
+            Method::POST,
+            "/files/replace",
+            Bearer::Default,
+            None,
+            Some(
+                r#"{"path":"doc.md","replacements":[{"target":"beta","replacement":"BETA"}]}"#
+                    .to_string(),
+            ),
+        )
+        .await;
+    let body: serde_json::Value = common::json(resp).await;
+    let patch = body["patch"].as_str().expect("replace carries a patch");
+    assert!(patch.contains("-beta\n+BETA"), "{patch}");
+
+    // The listing carries the birth-time key on every entry (null when the
+    // filesystem cannot report one).
+    let resp = env
+        .send(Method::GET, "/files/list", Bearer::Default, None, None)
+        .await;
+    let listing: serde_json::Value = common::json(resp).await;
+    for entry in listing["entries"].as_array().unwrap() {
+        assert!(
+            entry.get("created").is_some(),
+            "created key always present: {entry}"
+        );
+    }
+}

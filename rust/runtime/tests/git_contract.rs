@@ -265,3 +265,101 @@ async fn routes_require_the_runtime_key() {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{path}");
     }
 }
+
+#[tokio::test]
+async fn branches_and_worktrees_shapes() {
+    let srv = Server::start().await;
+    init_repo(&srv.workdir);
+    // refs/heads is empty until the first commit — `git branch` fails on an
+    // unborn HEAD, so seed one commit before branching.
+    std::fs::write(srv.workdir.join("seed.txt"), "seed\n").unwrap();
+    for args in [
+        vec!["add", "seed.txt"],
+        vec![
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-m",
+            "seed",
+        ],
+        vec!["branch", "feature/x"],
+    ] {
+        let out = std::process::Command::new("git")
+            .args(&args)
+            .current_dir(&srv.workdir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {:?}",
+            args,
+            out.stderr
+        );
+    }
+
+    let (_, branches) = srv.send(Method::GET, "/git/branches", None).await;
+    let list = branches.as_array().unwrap();
+    let main = list
+        .iter()
+        .find(|b| b["name"] == "main")
+        .expect("main listed");
+    assert_eq!(main["current"], true);
+    assert_eq!(main["is_local"], true);
+    assert!(list.iter().any(|b| b["name"] == "feature/x"));
+
+    // Worktrees: the main worktree, path confined to the workspace.
+    let (_, trees) = srv.send(Method::GET, "/git/worktrees", None).await;
+    let trees = trees.as_array().unwrap();
+    assert_eq!(trees.len(), 1);
+    assert_eq!(trees[0]["current"], true);
+    assert!(trees[0]["path"]
+        .as_str()
+        .unwrap()
+        .starts_with(srv.workdir.to_str().unwrap()));
+}
+
+#[tokio::test]
+async fn diff_and_show_contract() {
+    let srv = Server::start().await;
+    init_repo(&srv.workdir);
+    std::fs::write(srv.workdir.join("f.txt"), "one\n").unwrap();
+    let (_, out) = srv
+        .send(
+            Method::POST,
+            "/git/stage",
+            Some(r#"{"files":["f.txt"]}"#.into()),
+        )
+        .await;
+    assert_eq!(out["message"], "");
+    let _ = srv
+        .send(
+            Method::POST,
+            "/git/commit",
+            Some(r#"{"message":"c1"}"#.into()),
+        )
+        .await;
+
+    // Staged diff (empty after commit) vs a real second change.
+    std::fs::write(srv.workdir.join("f.txt"), "one\ntwo\n").unwrap();
+    let (_, diff) = srv.send(Method::GET, "/git/diff?file=f.txt", None).await;
+    assert!(diff["diff"].as_str().unwrap().contains("+two"));
+
+    // Staged flag reads the INDEX, not the worktree.
+    let (_, staged) = srv
+        .send(Method::GET, "/git/diff?file=f.txt&staged=true", None)
+        .await;
+    assert_eq!(staged["diff"], "");
+
+    // show requires a bare hash and returns that commit's diff.
+    let (_, log) = srv.send(Method::GET, "/git/log", None).await;
+    let hash = log[0]["hash"].as_str().unwrap().to_owned();
+    let (_, show) = srv
+        .send(Method::GET, &format!("/git/show?ref={hash}"), None)
+        .await;
+    assert!(
+        show["diff"].as_str().unwrap_or("").contains("+one"),
+        "{show}"
+    );
+}
