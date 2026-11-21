@@ -1035,8 +1035,9 @@ pub async fn kill_all_running(state: &AppState) {
         .processes
         .lock()
         .ok()
-        .map(|map| map.values().filter(|p| p.is_running()).cloned().collect())
-        .unwrap_or_default();
+        .map_or_else(Vec::default, |map| {
+            map.values().filter(|p| p.is_running()).cloned().collect()
+        });
     for p in running {
         p.kill_group(true);
         p.mark_killed().await;

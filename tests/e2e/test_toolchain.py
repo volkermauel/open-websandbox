@@ -21,10 +21,10 @@ from pathlib import Path
 import httpx
 import pytest
 from conftest import (
-    exec_out,  # noqa: E402
     BROKER_URL,
     TEST_USER,
     _claim_ready_session,
+    exec_out,  # noqa: E402
     headers_for,
 )
 

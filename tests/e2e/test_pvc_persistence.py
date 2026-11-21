@@ -30,10 +30,10 @@ import uuid
 import httpx
 import pytest
 from conftest import (
-    exec_out,
     BROKER_URL,
     CLAIM_TIMEOUT,
     _claim_ready_session,
+    exec_out,
     headers_for,
 )
 

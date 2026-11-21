@@ -798,8 +798,7 @@ where
     let read = |name: &str| {
         std::fs::read_to_string(format!("{dir}/{name}"))
             .ok()
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default()
+            .map_or_else(Default::default, |s| s.trim().to_string())
     };
     (read("access-key-id"), read("secret-access-key"))
 }

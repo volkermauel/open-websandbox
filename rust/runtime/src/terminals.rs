@@ -816,7 +816,9 @@ async fn relay(state: AppState, mut socket: WebSocket, id: String) {
         // Legacy replay: one raw binary frame with the retained tail.
         let replay = {
             let g = session.lock().await;
-            g.ring.lock().map(|r| r.snapshot()).unwrap_or_default()
+            g.ring
+                .lock()
+                .map_or_else(|_| Vec::default(), |r| r.snapshot())
         };
         if !replay.is_empty()
             && socket
@@ -1151,8 +1153,7 @@ pub async fn flush_scrollbacks(state: &AppState) -> usize {
             .await
             .ring
             .lock()
-            .map(|r| r.snapshot())
-            .unwrap_or_default();
+            .map_or_else(|_| Vec::default(), |r| r.snapshot());
         if bytes.is_empty() {
             continue;
         }
@@ -1363,10 +1364,10 @@ pub async fn read_user_terminal(
     };
     let output = {
         let g = session.lock().await;
-        g.ring
-            .lock()
-            .map(|r| String::from_utf8_lossy(&r.snapshot()).into_owned())
-            .unwrap_or_default()
+        g.ring.lock().map_or_else(
+            |_| String::default(),
+            |r| String::from_utf8_lossy(&r.snapshot()).into_owned(),
+        )
     };
     Ok(Json(serde_json::json!({ "output": output })))
 }

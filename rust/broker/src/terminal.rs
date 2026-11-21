@@ -647,8 +647,7 @@ async fn wait_auth(client: &mut WebSocket, secret: &str) -> AuthResult {
     let raw = match tokio::time::timeout(AUTH_TIMEOUT, client.recv()).await {
         Ok(Some(Ok(m))) => m
             .into_text()
-            .map(|t| t.as_str().to_owned())
-            .unwrap_or_default(),
+            .map_or_else(|_| String::new(), |t| t.as_str().to_owned()),
         _ => return AuthResult::Timeout,
     };
     let payload: serde_json::Value = match serde_json::from_str(&raw) {

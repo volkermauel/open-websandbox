@@ -345,8 +345,7 @@ fn fingerprint(dir: &Path) -> Fingerprint {
         }
         let rel = current
             .strip_prefix(dir)
-            .map(|p| p.display().to_string())
-            .unwrap_or_default();
+            .map_or_else(|_| String::new(), |p| p.display().to_string());
         map.insert(rel, stamp(&current));
         visited += 1;
         let Ok(read) = std::fs::read_dir(&current) else {
@@ -369,8 +368,7 @@ fn fingerprint(dir: &Path) -> Fingerprint {
                 }
                 let rel = path
                     .strip_prefix(dir)
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_default();
+                    .map_or_else(|_| String::new(), |p| p.display().to_string());
                 map.insert(rel, stamp(&path));
                 visited += 1;
             }

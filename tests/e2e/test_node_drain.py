@@ -35,7 +35,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 import pytest
-from conftest import BROKER_SECRET, BROKER_URL, TEST_USER, headers_for
+from conftest import BROKER_SECRET, BROKER_URL, TEST_USER, exec_out, headers_for
 
 pytest.importorskip("websockets")
 

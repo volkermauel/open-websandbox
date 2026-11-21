@@ -23,10 +23,10 @@ import uuid
 
 import httpx
 from conftest import (
-    exec_out,  # type: ignore[import-not-found]
     BROKER_URL,
     CLAIM_TIMEOUT,
     _claim_ready_session,
+    exec_out,  # type: ignore[import-not-found]
     headers_for,
 )
 from test_s3_tiered import (  # type: ignore[import-not-found]

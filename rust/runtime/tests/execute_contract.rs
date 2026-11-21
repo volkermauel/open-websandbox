@@ -157,27 +157,25 @@ async fn exec(env: &common::Env, command: &str, wait: Option<u64>, timeout: Opti
 fn stdout_of(snapshot: &Value) -> String {
     snapshot["output"]
         .as_array()
-        .map(|records| {
+        .map_or_else(String::new, |records| {
             records
                 .iter()
                 .filter(|r| r["type"] == "stdout")
                 .filter_map(|r| r["data"].as_str())
                 .collect::<String>()
         })
-        .unwrap_or_default()
 }
 
 fn stderr_of(snapshot: &Value) -> String {
     snapshot["output"]
         .as_array()
-        .map(|records| {
+        .map_or_else(String::new, |records| {
             records
                 .iter()
                 .filter(|r| r["type"] == "stderr")
                 .filter_map(|r| r["data"].as_str())
                 .collect::<String>()
         })
-        .unwrap_or_default()
 }
 
 /// Poll `GET /execute/{id}/status` until the process leaves `running`.

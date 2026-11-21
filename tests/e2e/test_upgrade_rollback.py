@@ -35,11 +35,11 @@ import pytest
 
 # Reuse the shared harness knobs + helpers (pytest puts the test dir on sys.path).
 from conftest import (  # noqa: E402
-    exec_out,
     BROKER_URL,
     RUN_ID,
     TEST_USER,
     _claim_ready_session,
+    exec_out,
     headers_for,
 )
 

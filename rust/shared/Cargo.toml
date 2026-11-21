@@ -23,7 +23,6 @@ telemetry-otlp = ["dep:opentelemetry-otlp"]
 # All dependency versions are pinned once in the root `[workspace.dependencies]`
 # (../Cargo.toml) so the whole tree stays single-version and auditable (D8).
 [dependencies]
-anyhow.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 opentelemetry.workspace = true

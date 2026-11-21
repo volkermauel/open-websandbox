@@ -1337,8 +1337,7 @@ fn pod_condition_summary(pod: &Pod) -> String {
         let reason = c
             .reason
             .as_deref()
-            .map(|r| format!(" reason={r}"))
-            .unwrap_or_default();
+            .map_or_else(String::new, |r| format!(" reason={r}"));
         parts.push(format!("{}={}{}", c.type_, c.status, reason));
     }
     parts.join("; ")

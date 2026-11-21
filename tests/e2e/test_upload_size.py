@@ -18,11 +18,11 @@ import os
 import httpx
 import pytest
 from conftest import (  # noqa: E402
-    exec_out,
     BROKER_URL,
     CLAIM_TIMEOUT,
     TEST_USER,
     _claim_ready_session,
+    exec_out,
     headers_for,
 )
 

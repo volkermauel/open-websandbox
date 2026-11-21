@@ -207,7 +207,10 @@ pub fn expand_template(template: &str, g: &Grounding) -> String {
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string()),
             Some("home") => g.home.clone(),
-            _ => c.get(0).map(|m| m.as_str()).unwrap_or_default().to_string(),
+            _ => c
+                .get(0)
+                .map_or_else(Default::default, |m| m.as_str())
+                .to_string(),
         }
     })
     .into_owned()
