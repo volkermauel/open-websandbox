@@ -22,6 +22,8 @@ pub mod safe_path;
 pub mod skills;
 pub mod snapshot;
 pub mod state;
+pub mod sysinfo;
+pub mod sysinfo_setup;
 pub mod system;
 pub mod terminals;
 

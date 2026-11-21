@@ -371,7 +371,13 @@ pub async fn execute(
     let base = request_base(&state.config.workdir, subdir)?;
     let cwd = match req.cwd.as_deref() {
         Some(c) if !c.trim().is_empty() => safe_path_rel(c, &base)?,
-        _ => base.clone(),
+        // 0.17.7 `OPEN_TERMINAL_START_DIR`: new commands open there (only
+        // honoured when it sits inside the effective base).
+        _ => state
+            .start_dir
+            .as_deref()
+            .filter(|d| d.starts_with(&base))
+            .map_or_else(|| base.clone(), Path::to_path_buf),
     };
     metrics::counter!(EXECUTE_COMMANDS_TOTAL).increment(1);
     let preview: String = req.command.chars().take(200).collect();

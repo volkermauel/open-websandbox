@@ -67,6 +67,7 @@ use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
         crate::files::archive::tool_upload,
         crate::ports::list_ports,
         crate::system::get_info,
+        crate::sysinfo::get_system_info,
         crate::snapshot::snapshot,
         crate::snapshot::restore,
         crate::terminals::create_terminal,

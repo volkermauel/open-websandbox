@@ -64,8 +64,15 @@ pub async fn get_cwd(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let base = base_of(&state, &headers)?;
+    // 0.17.7 start dir: the BROWSER cwd opens there while home/root stay the
+    // workspace base (upstream: start dir affects new sessions, not home).
+    let cwd = state
+        .start_dir
+        .as_deref()
+        .filter(|d| d.starts_with(&base))
+        .map_or_else(|| base.clone(), std::path::Path::to_path_buf);
     Ok(Json(serde_json::json!({
-        "cwd": base,
+        "cwd": cwd,
         "home": base,
         "root": base,
     })))

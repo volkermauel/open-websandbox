@@ -4242,6 +4242,41 @@
         ]
       }
     },
+    "/system/info": {
+      "get": {
+        "description": "# Errors\n\nNever fails on missing /proc fields — optional sections degrade to `null`\nexactly like upstream's psutil `except` paths. The `Result` keeps the\nhandler signature uniform.",
+        "operationId": "get_system_info",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Machine snapshot (2 s cached)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /system/info` — the machine snapshot (auth-protected like upstream).",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
     "/upload": {
       "post": {
         "description": "# Errors\n\nReturns [`ApiError::BadRequest`] on a multipart stream error, a disk\ncreate/read/write/sync failure, a path that escapes the workspace, or if no\n`file` part is present.",

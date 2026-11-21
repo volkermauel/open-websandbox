@@ -24,6 +24,10 @@ pub struct AppState {
     pub terminals: Arc<TerminalRegistry>,
     /// Tracked background processes (`/execute` family, stage 3).
     pub processes: Arc<crate::processes::ProcessRegistry>,
+    /// Resolved + created default working directory (0.17.7
+    /// `OPEN_TERMINAL_START_DIR`); `None` = the workspace root. `Some` only
+    /// when the knob resolves INSIDE the workspace.
+    pub start_dir: Option<std::path::PathBuf>,
     /// D9 Prometheus metrics catalogue + registry (one per process).
     pub metrics: Arc<RuntimeMetrics>,
     /// Shared localhost HTTP client for `/proxy/{port}` (upstream's reused
@@ -43,11 +47,16 @@ impl AppState {
     /// Build an `AppState` from its config and key store, wiring the metrics registry
     /// and an empty terminal registry.
     pub fn new(config: RuntimeConfig, key_store: SessionKeyStore) -> Self {
+        // 0.17.7: resolve + create the default working directory BEFORE the
+        // config moves into the Arc (state construction is the boot path).
+        let start_dir =
+            crate::sysinfo_setup::resolve_start_dir(&config.workdir, config.start_dir.as_deref());
         Self {
             config: Arc::new(config),
             key_store: Arc::new(key_store),
             terminals: Arc::new(TerminalRegistry::new()),
             processes: Arc::new(crate::processes::ProcessRegistry::new()),
+            start_dir,
             metrics: RuntimeMetrics::new(),
             proxy_client: reqwest_proxy_client(),
             desktop_client: desktop_proxy_client(),

@@ -339,6 +339,12 @@ pub async fn create_terminal(
     // the same contract, with resume as an explicit opt-in.
     let resume = header_str(&headers, "x-terminal-resume") == Some("1") && session_id.is_some();
     let base = request_base(&state.config.workdir, subdir)?;
+    // 0.17.7 start dir: new shells open there (inside the effective base only).
+    let base = state
+        .start_dir
+        .as_deref()
+        .filter(|d| d.starts_with(&base))
+        .map_or_else(|| base.clone(), std::path::Path::to_path_buf);
 
     // Sessions torn down while holding the lock (dead reaping, recreate-existing)
     // are collected and reaped AFTER releasing it, so no other handler blocks on a

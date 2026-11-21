@@ -10,7 +10,9 @@
 use std::net::SocketAddr;
 use std::process::ExitCode;
 
-use runtime::{build_router, processes, terminals, AppState, RuntimeConfig, SessionKeyStore};
+use runtime::{
+    build_router, processes, sysinfo_setup, terminals, AppState, RuntimeConfig, SessionKeyStore,
+};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -20,6 +22,15 @@ async fn main() -> ExitCode {
 
     let cfg = RuntimeConfig::from_env();
     tracing::info!(workdir = %cfg.workdir.display(), "runtime booting");
+
+    // 0.17.7 knobs: resolve + create the start dir, then run the setup script
+    // in it BEFORE serving (blocking, upstream parity). Failures never stop
+    // the server — `/system/info` reports the outcome instead.
+    let start_dir = sysinfo_setup::resolve_start_dir(&cfg.workdir, cfg.start_dir.as_deref())
+        .unwrap_or_else(|| cfg.workdir.clone());
+    if let Some(script) = cfg.setup_script.as_deref().filter(|s| !s.trim().is_empty()) {
+        sysinfo_setup::run_at_boot(script, &start_dir);
+    }
 
     // Best-effort per-sandbox process cap; inherited by every spawned child.
     apply_max_procs(cfg.max_procs);

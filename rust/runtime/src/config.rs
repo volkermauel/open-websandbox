@@ -119,6 +119,14 @@ pub struct RuntimeConfig {
     /// `true`/`false`, default `true`). `false` disables the fallback, the WS
     /// relays and the config merge even when `DESKTOP_URL` is set.
     pub desktop_enabled: bool,
+    /// Default working directory for new shells + the browser cwd (env
+    /// `OPEN_TERMINAL_START_DIR`, 0.17.7). Workspace-relative or absolute
+    /// inside the workspace; created at boot; `None` = the workspace root.
+    pub start_dir: Option<String>,
+    /// One-shot bootstrap script run in the start dir before serving (env
+    /// `OPEN_TERMINAL_SETUP_SCRIPT`, 0.17.7); its outcome surfaces via
+    /// `GET /system/info` → `setup`.
+    pub setup_script: Option<String>,
 }
 
 impl RuntimeConfig {
@@ -165,6 +173,8 @@ impl Default for RuntimeConfig {
             desktop_url: None,
             desktop_api_key: None,
             desktop_enabled: true,
+            start_dir: None,
+            setup_script: None,
         }
     }
 }
@@ -228,6 +238,12 @@ impl RuntimeConfig {
             cfg.desktop_api_key = Some(v);
         }
         cfg.desktop_enabled = env_t(&get, "DESKTOP_ENABLED", cfg.desktop_enabled);
+        if let Some(v) = get("OPEN_TERMINAL_START_DIR") {
+            cfg.start_dir = Some(v);
+        }
+        if let Some(v) = get("OPEN_TERMINAL_SETUP_SCRIPT") {
+            cfg.setup_script = Some(v);
+        }
         cfg
     }
 }

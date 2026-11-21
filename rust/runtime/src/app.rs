@@ -24,6 +24,7 @@ use crate::processes::{execute, execute_get_or_ws, kill_process, process_status,
 use crate::skills::{list_skills, read_skill, read_skill_by_name};
 use crate::snapshot::{restore, snapshot};
 use crate::state::AppState;
+use crate::sysinfo::get_system_info;
 use crate::system::{get_info, get_system};
 use crate::terminals::{
     create_terminal, kill_terminal, list_terminals, read_user_terminal, send_user_terminal_input,
@@ -228,6 +229,8 @@ pub fn build_router(state: AppState) -> Router {
         )
         // open-terminal 0.11.27 / 0.11.6: LLM grounding + operator info.
         .route("/system", get(get_system))
+        // open-terminal 0.17.x: machine snapshot (System-info modal, 2 s cache).
+        .route("/system/info", get(get_system_info))
         .route("/info", get(get_info))
         // S3-tiered workspace offload/restore (#52): stream native tar+zstd.
         .route("/snapshot", get(snapshot))
