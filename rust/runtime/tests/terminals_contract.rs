@@ -693,10 +693,18 @@ async fn ws_detach_resume_replays_scrollback() {
         "detach tore the session down"
     );
     // Reconnect (retrying briefly — the relay task needs a beat to detach).
+    // Stage-3 protocol: the client opens with the auth hello (the broker's
+    // forwarded shape — token blanked, auth ran at upgrade) and the FIRST
+    // frame after reattach is the `output{start,end,…}` header followed by the
+    // replayed scrollback tail.
     let mut ws2 = None;
     for _ in 0..40 {
         let mut c = ws_connect(srv.port, "/api/terminals/resume", Some(srv.key)).await;
-        // The FIRST frame after reattach is the replayed scrollback tail.
+        c.send(Message::Text(
+            r#"{"type":"auth","token":"","resume":true,"cursor":0,"flow_control":true}"#.into(),
+        ))
+        .await
+        .unwrap();
         let replayed = wait_for(&mut c, b"MARKER_A", 2.0).await;
         if replayed {
             ws2 = Some(c);
@@ -781,4 +789,133 @@ async fn sigterm_flush_replays_across_pod_recreate() {
     let _ = delete(&srv, "gen0").await;
     // DELETE must also clean the flushed file (a killed terminal never replays).
     assert!(!sb.exists(), "DELETE left the scrollback file behind");
+}
+
+// --- stage-3 protocol (0.17.x / OWUI 0.13.x XTerminal) ------------------
+
+/// Open a WS with the forwarded stage-3 hello (what the broker sends
+/// downstream after consuming OWUI's auth frame).
+async fn ws_connect_hello(srv: &Server, id: &str, hello: &str) -> WsStream {
+    let mut ws = ws_connect(srv.port, &format!("/api/terminals/{id}"), Some(srv.key)).await;
+    ws.send(Message::Text(hello.to_owned().into()))
+        .await
+        .unwrap();
+    ws
+}
+
+/// Wait for a TEXT control frame of the given type; return its JSON.
+async fn wait_control(
+    ws: &mut WsStream,
+    kind: &str,
+    timeout: std::time::Duration,
+) -> Option<serde_json::Value> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+        match tokio::time::timeout(remaining, ws.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if v.get("type").and_then(serde_json::Value::as_str) == Some(kind) {
+                        return Some(v);
+                    }
+                }
+            }
+            // Binary PTY output (the shell banner/prompt) arrives interleaved
+            // with control frames — skip it instead of bailing.
+            Ok(Some(Ok(Message::Binary(_)))) => {}
+            _ => return None,
+        }
+    }
+}
+
+#[tokio::test]
+async fn chat_rebind_to_another_chat_is_refused_with_upstream_error() {
+    let srv = Server::start().await;
+    // Created with X-Session-Id chat-a → bound to chat-a.
+    let _ = create_pid(&srv, "chatbind").await;
+    let mut ws = ws_connect_hello(
+        &srv,
+        "chatbind",
+        r#"{"type":"auth","token":"","chat_id":"chatbind"}"#,
+    )
+    .await;
+    // Same chat (the POST's X-Session-Id): echoed.
+    ws.send(Message::Text(
+        r#"{"type":"chat","chat_id":"chatbind"}"#.into(),
+    ))
+    .await
+    .unwrap();
+    let reply = wait_control(&mut ws, "chat", std::time::Duration::from_secs(5)).await;
+    assert_eq!(
+        reply.and_then(|v| v["chat_id"].as_str().map(str::to_owned)),
+        Some("chatbind".to_owned()),
+        "same-chat bind echoes"
+    );
+    // A DIFFERENT chat: refused with upstream's exact error string — a
+    // sandbox pod IS one chat's machine.
+    ws.send(Message::Text(
+        r#"{"type":"chat","chat_id":"chat-b"}"#.into(),
+    ))
+    .await
+    .unwrap();
+    let refusal = wait_control(&mut ws, "chat", std::time::Duration::from_secs(5)).await;
+    assert_eq!(
+        refusal.and_then(|v| v["error"].as_str().map(str::to_owned)),
+        Some("Terminal already belongs to another chat".to_owned()),
+    );
+}
+
+#[tokio::test]
+async fn process_info_frames_carry_the_foreground_program() {
+    let srv = Server::start().await;
+    let _ = create_pid(&srv, "ptitle").await;
+    let mut ws = ws_connect_hello(
+        &srv,
+        "ptitle",
+        r#"{"type":"auth","token":"","process_info":true}"#,
+    )
+    .await;
+    // Put a recognizable program in the foreground of the PTY.
+    ws.send(Message::Binary(Bytes::from_static(b"exec sleep 30\n")))
+        .await
+        .unwrap();
+    // The relay samples ≤2×/s and frames on change; the foreground
+    // process becomes `sleep` (name via /proc/<pgid>/comm).
+    let frame = wait_control(&mut ws, "process", std::time::Duration::from_secs(10)).await;
+    let Some(frame) = frame else {
+        panic!("no process frame within 10 s");
+    };
+    assert!(
+        frame["name"].as_str().is_some_and(|n| n.contains("sleep")),
+        "process frame names the foreground program: {frame}"
+    );
+    assert!(frame["pid"].as_u64().unwrap_or(0) > 0);
+}
+
+#[tokio::test]
+async fn flow_control_confirms_and_resumes_on_ack() {
+    let srv = Server::start().await;
+    let _ = create_pid(&srv, "flowctl").await;
+    let mut ws = ws_connect_hello(
+        &srv,
+        "flowctl",
+        r#"{"type":"auth","token":"","resume":true,"cursor":0,"flow_control":true}"#,
+    )
+    .await;
+    // The confirm frame arrives right after the (empty) replay.
+    let confirm = wait_control(&mut ws, "flow_control", std::time::Duration::from_secs(5)).await;
+    assert!(confirm.is_some(), "flow_control confirm frame missing");
+    // Chatty output streams through (ack-driven gating is exercised by
+    // the 128 KiB window only under >128 KiB of backlog — the replay +
+    // small writes here verify the happy path end to end).
+    ws.send(Message::Binary(Bytes::from_static(b"echo flow-ok\n")))
+        .await
+        .unwrap();
+    assert!(
+        wait_for(&mut ws, b"flow-ok", 5.0).await,
+        "output flowed under flow control"
+    );
 }

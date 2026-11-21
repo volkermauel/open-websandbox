@@ -1,10 +1,12 @@
 //! `GET /system` + `GET /info` — the open-terminal LLM-grounding surface
 //! (upstream 0.11.27 / 0.11.6, template variables since 0.11.35).
 //!
-//! The default prompt text is **upstream-verbatim @ v0.12.3
+//! The default prompt text is **upstream-verbatim @ v0.17.21
 //! (open_terminal/main.py `get_system_prompt`)** — copied byte-for-byte, not
-//! authored here. Grounding values (`uname`, `$USER`, shell, `$HOME`, probed
-//! python3) come from the live sandbox environment exactly like upstream's
+//! authored here (stage 3: upstream added the `display_file` delivery
+//! paragraph post-v0.12.3; the pinned unit test pins the CURRENT text).
+//! Grounding values (`uname`, `$USER`, shell, `$HOME`, probed python3) come
+//! from the live sandbox environment exactly like upstream's
 //! `_system_prompt_variables`. When upstream changes its prompt, the pinned
 //! unit test below forces the diff to be an explicit decision (update the
 //! literal + provenance comment together).
@@ -40,10 +42,14 @@ use crate::auth::Authed;
 use crate::error::ApiError;
 use crate::state::AppState;
 
-/// Tool-usage paragraph of the system prompt — upstream-verbatim @ v0.12.3
+/// Tool-usage paragraph of the system prompt — upstream-verbatim @ v0.17.21
 /// (open_terminal/main.py `get_system_prompt`, second f-string block; the
 /// U+2014 em dash is significant).
 const TOOL_TEXT: &str = "Use your tools to directly interact with the system \u{2014} run commands, read and write files, and search the filesystem. Prefer verifying the current state before making changes. When running commands, check the output to confirm success. If a command produces no output, that typically means it succeeded.";
+
+/// File-delivery paragraph — upstream-verbatim @ v0.17.21 (the post-v0.12.3
+/// addition that drives OWUI's inline file cards via `display_file`).
+const DELIVERY_TEXT: &str = "When delivering created or updated files to the user, call display_file for each deliverable before your final response. Do not invent download links or use sandbox: URLs. After displaying the files, briefly confirm completion without repeating links.";
 
 /// The grounding facts substituted into the prompt (upstream
 /// `_system_prompt_variables`, open_terminal/main.py:80-89).
@@ -153,9 +159,10 @@ async fn probe_python_version() -> Option<String> {
 /// Render the **upstream-verbatim** default prompt for the given grounding.
 ///
 /// Byte layout (with a probed Python) is exactly upstream
-/// `get_system_prompt()`: grounding sentence(s) `\n\n` tool-usage paragraph,
-/// plus `\n\n{info}` when operator info is set. Without a Python the
-/// `Python … is available.` sentence is dropped (documented divergence).
+/// `get_system_prompt()` @ v0.17.21: grounding sentence(s) `\n\n`
+/// tool-usage paragraph `\n\n` file-delivery paragraph, plus `\n\n{info}`
+/// when operator info is set. Without a Python the `Python … is available.`
+/// sentence is dropped (documented divergence).
 #[must_use]
 pub fn render_default_prompt(g: &Grounding, info: &str) -> String {
     let mut first = format!(
@@ -165,7 +172,7 @@ pub fn render_default_prompt(g: &Grounding, info: &str) -> String {
     if let Some(py) = &g.python_version {
         first.push_str(&format!(" Python {py} is available."));
     }
-    let mut prompt = format!("{first}\n\n{TOOL_TEXT}");
+    let mut prompt = format!("{first}\n\n{TOOL_TEXT}\n\n{DELIVERY_TEXT}");
     if !info.is_empty() {
         prompt.push_str("\n\n");
         prompt.push_str(info);
@@ -200,7 +207,10 @@ pub fn expand_template(template: &str, g: &Grounding) -> String {
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string()),
             Some("home") => g.home.clone(),
-            _ => c.get(0).map(|m| m.as_str()).unwrap_or_default().to_string(),
+            _ => c
+                .get(0)
+                .map_or_else(Default::default, |m| m.as_str())
+                .to_string(),
         }
     })
     .into_owned()
@@ -342,7 +352,7 @@ mod tests {
     }
 
     /// THE verbatim pin: this literal is upstream's text byte-for-byte
-    /// (open-terminal v0.12.3, open_terminal/main.py `get_system_prompt`).
+    /// (open-terminal v0.17.21, open_terminal/main.py `get_system_prompt`).
     /// If this fails, the prompt drifted from upstream — update BOTH the
     /// renderer and this literal as one conscious diff decision.
     #[test]
@@ -355,7 +365,11 @@ mod tests {
             "read and write files, and search the filesystem. ",
             "Prefer verifying the current state before making changes. ",
             "When running commands, check the output to confirm success. ",
-            "If a command produces no output, that typically means it succeeded."
+            "If a command produces no output, that typically means it succeeded.\n\n",
+            "When delivering created or updated files to the user, call display_file ",
+            "for each deliverable before your final response. Do not invent download ",
+            "links or use sandbox: URLs. After displaying the files, briefly confirm ",
+            "completion without repeating links."
         );
         assert_eq!(render_default_prompt(&synthetic(), ""), expected);
     }

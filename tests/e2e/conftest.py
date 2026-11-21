@@ -53,6 +53,21 @@ def headers(session: str) -> dict[str, str]:
     return headers_for(TEST_USER, session)
 
 
+def exec_out(body: dict) -> tuple[int, str]:
+    """(exit_code, stdout) from the stage-3 /execute snapshot (log shape).
+
+    Joins the ``stdout`` records (the old flat ``stdout`` field is gone);
+    ``exit_code`` is ``-1`` while the process is still running/unreadable.
+    """
+    out = "".join(
+        r.get("data", "")
+        for r in body.get("output") or []
+        if r.get("type") == "stdout"
+    )
+    code = body.get("exit_code")
+    return (code if isinstance(code, int) else -1), out
+
+
 def _claim_ready_session(probe: httpx.Client, user_id: str, session: str) -> str:
     """Poll /execute until the sandbox for (user, session) answers successfully."""
     deadline = time.time() + CLAIM_TIMEOUT
@@ -61,11 +76,11 @@ def _claim_ready_session(probe: httpx.Client, user_id: str, session: str) -> str
     while time.time() < deadline:
         try:
             r = probe.post(
-                "/execute",
+                "/execute?wait=5",
                 json={"command": "echo ready"},
                 headers=headers_for(user_id, session),
             )
-            if r.status_code == 200 and r.json().get("exit_code") == 0:
+            if r.status_code == 200 and exec_out(r.json())[0] == 0:
                 return session
             last = f"HTTP {r.status_code}: {r.text[:200]}"
             # Self-heal a scheduling-stalled sandbox exactly once: on a busy

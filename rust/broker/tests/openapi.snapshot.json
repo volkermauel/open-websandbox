@@ -307,6 +307,14 @@
       "Entry": {
         "description": "One entry in a directory listing (name, type, size, modified time, writability).",
         "properties": {
+          "created": {
+            "description": "Birth time in seconds since the epoch (open-terminal 0.17.x field;\n`null` when the filesystem cannot report one).",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "modified": {
             "format": "double",
             "type": "number"
@@ -349,15 +357,35 @@
         ],
         "type": "object"
       },
-      "ExecuteRequest": {
-        "description": "`POST /execute` request body. `timeout` is clamped into `[1, MAX_TIMEOUT]`,\ndefaulting to `DEFAULT_TIMEOUT` (seconds).",
+      "ExecRequest": {
+        "description": "Request body for `POST /execute` (upstream `ExecRequest` + the documented\nruntime-extension `timeout`).",
         "properties": {
           "command": {
-            "description": "Shell command line to execute.",
+            "description": "Shell command line to execute (chaining, pipes and redirections work).",
             "type": "string"
           },
+          "cwd": {
+            "description": "Working directory for the command (workspace-relative or absolute\ninside the workspace; defaults to the workspace base).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Extra environment variables merged into the subprocess environment.",
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "timeout": {
-            "description": "Optional wall-clock timeout in seconds (clamped into `[1, MAX_TIMEOUT]`).",
+            "description": "Runtime extension (NOT upstream): wall-clock deadline in seconds after\nwhich the command's process group is SIGKILLed (`status=\"killed\"`).\nUpstream never auto-kills; this keeps the pre-stage-3 e2e contract.",
             "format": "int64",
             "minimum": 0,
             "type": [
@@ -371,32 +399,49 @@
         ],
         "type": "object"
       },
-      "ExecuteResponse": {
-        "description": "`POST /execute` response body (HTTP 200 even on non-zero exit).",
+      "ExecResponse": {
+        "description": "The `POST /execute` response: the log snapshot plus the resolved `cwd`.",
         "properties": {
+          "command": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
           "exit_code": {
-            "description": "Process exit code (HTTP 200 even when non-zero; `124` on timeout).",
             "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "next_offset": {
+            "format": "int64",
+            "minimum": 0,
             "type": "integer"
           },
-          "stderr": {
-            "description": "Captured standard error.",
+          "output": {
+            "items": {},
+            "type": "array"
+          },
+          "status": {
             "type": "string"
           },
-          "stdout": {
-            "description": "Captured standard output.",
-            "type": "string"
-          },
-          "timed_out": {
-            "description": "Whether the command was killed for exceeding `timeout`.",
+          "truncated": {
             "type": "boolean"
           }
         },
         "required": [
-          "stdout",
-          "stderr",
-          "exit_code",
-          "timed_out"
+          "id",
+          "command",
+          "cwd",
+          "status",
+          "output",
+          "truncated",
+          "next_offset"
         ],
         "type": "object"
       },
@@ -443,6 +488,19 @@
         },
         "required": [
           "status"
+        ],
+        "type": "object"
+      },
+      "InputRequest": {
+        "description": "Request body for `POST /execute/{id}/input` (upstream `InputRequest`).",
+        "properties": {
+          "input": {
+            "description": "Text to write to stdin; include newlines to submit.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "input"
         ],
         "type": "object"
       },
@@ -1568,6 +1626,116 @@
         ]
       }
     },
+    "/api/terminals/user/input": {
+      "post": {
+        "description": "# Errors\n\n404 with no live session, 409 when the shell has disconnected.",
+        "operationId": "send_user_terminal_input",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Input written"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No live user shell"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "User shell has disconnected"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`POST /api/terminals/user/input` — send literal text to the user's active\nor last-used shell (LLM tool surface; newlines submit). Does not wait for\ncompletion and does not create a shell.",
+        "tags": [
+          "terminals"
+        ]
+      }
+    },
+    "/api/terminals/user/output": {
+      "get": {
+        "description": "# Errors\n\n404 when no live session exists.",
+        "operationId": "read_user_terminal",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Recent PTY output"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No live user shell"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /api/terminals/user/output` — recent output from the user's active or\nlast-used shell (LLM tool surface; OWUI probes this to gate the\n`read_user_terminal` tool). Does not create a shell.",
+        "tags": [
+          "terminals"
+        ]
+      }
+    },
     "/api/terminals/{id}": {
       "delete": {
         "operationId": "kill_terminal",
@@ -1756,14 +1924,69 @@
       }
     },
     "/execute": {
+      "get": {
+        "description": "# Errors\n\nAlways `Ok` (uniform handler signature).",
+        "operationId": "list_processes",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Tracked processes for this session"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /execute` — list tracked processes (running + finished-unexpired).",
+        "tags": [
+          "execute"
+        ]
+      },
       "post": {
-        "description": "`Authed` authenticates the per-session key; `HeaderMap` carries the optional\n`X-Workspace-Subdir`; `Json` parses the body (body-consuming extractor last).",
-        "operationId": "execute",
+        "description": "# Errors\n\nReturns [`ApiError`] for an invalid workspace subdir or a `cwd` escape.",
+        "operationId": "run_command",
+        "parameters": [
+          {
+            "description": "Seconds to wait for completion before returning (0–300). The finished\nsnapshot arrives inline when the command completes in time.",
+            "in": "query",
+            "name": "wait",
+            "required": false,
+            "schema": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          {
+            "description": "Return only the last N output entries.",
+            "in": "query",
+            "name": "tail",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ExecuteRequest"
+                "$ref": "#/components/schemas/ExecRequest"
               }
             }
           },
@@ -1774,11 +1997,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ExecuteResponse"
+                  "$ref": "#/components/schemas/ExecResponse"
                 }
               }
             },
-            "description": "Captured stdout/stderr + exit code (HTTP 200 even on non-zero exit; timeout → exit_code 124)"
+            "description": "Process registered; finished-inline when ?wait= covered the runtime"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
           },
           "401": {
             "content": {
@@ -1788,17 +2021,7 @@
                 }
               }
             },
-            "description": "Missing/invalid per-session Bearer"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Failed to reap the command"
+            "description": ""
           }
         },
         "security": [
@@ -1806,7 +2029,235 @@
             "brokerBearer": []
           }
         ],
-        "summary": "The `/execute` handler.",
+        "summary": "`POST /execute` — run a command as a tracked background process.",
+        "tags": [
+          "execute"
+        ]
+      }
+    },
+    "/execute/{id}": {
+      "delete": {
+        "description": "# Errors\n\n404 when the id is unknown or expired.",
+        "operationId": "kill_process",
+        "parameters": [
+          {
+            "description": "Process id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Send SIGKILL instead of SIGTERM.",
+            "in": "query",
+            "name": "force",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Kill signalled (idempotent)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Process not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`DELETE /execute/{id}` — terminate a running process (idempotent).",
+        "tags": [
+          "execute"
+        ]
+      }
+    },
+    "/execute/{id}/input": {
+      "post": {
+        "description": "# Errors\n\n404 unknown id, 400 when the process already exited or its stdin closed.",
+        "operationId": "send_process_input",
+        "parameters": [
+          {
+            "description": "Process id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Input written"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Process exited or stdin closed"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Process not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`POST /execute/{id}/input` — write text to a running process's stdin.",
+        "tags": [
+          "execute"
+        ]
+      }
+    },
+    "/execute/{id}/status": {
+      "get": {
+        "description": "# Errors\n\n404 when the id is unknown or expired.",
+        "operationId": "get_process_status",
+        "parameters": [
+          {
+            "description": "Process id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Return records after this absolute offset (per-reader cursor).",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Return only the last N output entries (1–1000, upstream bound).",
+            "in": "query",
+            "name": "tail",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Seconds to wait for completion before answering.",
+            "in": "query",
+            "name": "wait",
+            "required": false,
+            "schema": {
+              "format": "double",
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Process status + output window"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Process not found"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /execute/{id}/status` — process metadata + output window. WebSocket\nupgrades stream the same payload on every change until completion.",
         "tags": [
           "execute"
         ]
@@ -2318,7 +2769,7 @@
     "/files/grep": {
       "get": {
         "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace or the\nregex is invalid, and [`ApiError::NotFound`] if the search path is missing.",
-        "operationId": "grep",
+        "operationId": "grep_search",
         "parameters": [
           {
             "in": "query",
@@ -2424,7 +2875,7 @@
     "/files/list": {
       "get": {
         "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace,\n[`ApiError::NotFound`] if it is missing or not a directory, and\n[`ApiError::Internal`] if the directory cannot be read.",
-        "operationId": "list_dir",
+        "operationId": "list_files",
         "parameters": [
           {
             "description": "Optional workspace-relative directory to list (defaults to `.`).",
@@ -2839,7 +3290,7 @@
     "/files/replace": {
       "post": {
         "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace, the\nread/write fails, or a replacement target is missing/ambiguous, and\n[`ApiError::NotFound`] if the file is missing.",
-        "operationId": "replace",
+        "operationId": "replace_file_content",
         "requestBody": {
           "content": {
             "application/json": {
@@ -3070,7 +3521,7 @@
     "/files/upload": {
       "post": {
         "description": "# Errors\n\nReturns [`ApiError::BadRequest`] on a multipart stream error, a disk\ncreate/read/write/sync failure, a path that escapes the workspace, or if no\n`file` part is present.",
-        "operationId": "upload",
+        "operationId": "upload_file",
         "parameters": [
           {
             "description": "Optional subdirectory under the workspace root to upload into.",
@@ -3788,6 +4239,41 @@
         "summary": "`GET /snapshot` — stream the workspace as a zstd-compressed tar.",
         "tags": [
           "snapshot"
+        ]
+      }
+    },
+    "/system/info": {
+      "get": {
+        "description": "# Errors\n\nNever fails on missing /proc fields — optional sections degrade to `null`\nexactly like upstream's psutil `except` paths. The `Result` keeps the\nhandler signature uniform.",
+        "operationId": "get_system_info",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Machine snapshot (2 s cached)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /system/info` — the machine snapshot (auth-protected like upstream).",
+        "tags": [
+          "meta"
         ]
       }
     },

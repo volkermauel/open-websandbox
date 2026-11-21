@@ -291,6 +291,7 @@ async fn relay_desktop(
         &upstream_url,
         &runtime_api_key,
         extra,
+        None, // no hello forwarding — the desktop lane has no stage-3 protocol
         client_touch,
         upstream_touch,
     )

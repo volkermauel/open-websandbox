@@ -22,10 +22,11 @@ import time
 import uuid
 
 import httpx
-from conftest import (  # type: ignore[import-not-found]
+from conftest import (
     BROKER_URL,
     CLAIM_TIMEOUT,
     _claim_ready_session,
+    exec_out,  # type: ignore[import-not-found]
     headers_for,
 )
 from test_s3_tiered import (  # type: ignore[import-not-found]
@@ -44,10 +45,10 @@ def _kubectl(args: list[str]) -> subprocess.CompletedProcess:
 
 
 def _exec(c: httpx.Client, user: str, session: str, cmd: str) -> tuple[int, str]:
-    r = c.post("/execute", json={"command": cmd, "timeout": 120},
+    r = c.post("/execute?wait=120", json={"command": cmd, "timeout": 120},
                headers=headers_for(user, session), timeout=CLAIM_TIMEOUT)
     body = r.json() if r.status_code == 200 else {}
-    return body.get("exit_code", -1), body.get("stdout", "")
+    return exec_out(body)
 
 
 def _wait_sandbox_gone(name: str, timeout: int = OFFLOAD_TIMEOUT) -> None:

@@ -33,6 +33,7 @@ from conftest import (
     BROKER_URL,
     CLAIM_TIMEOUT,
     _claim_ready_session,
+    exec_out,
     headers_for,
 )
 
@@ -66,13 +67,13 @@ def _user_pvc_name(user: str) -> str:
 
 def _exec(c: httpx.Client, user: str, session: str, command: str) -> tuple[int, str]:
     r = c.post(
-        "/execute",
+        "/execute?wait=120",
         json={"command": command},
         headers={**headers_for(user, session), "X-Persistence": "persistent"},
     )
     assert r.status_code == 200, f"{r.status_code}: {r.text[:300]}"
     body = r.json()
-    return body.get("exit_code", -1), (body.get("stdout") or "")
+    return exec_out(body)
 
 
 def _claim(c: httpx.Client, user: str, session: str) -> None:

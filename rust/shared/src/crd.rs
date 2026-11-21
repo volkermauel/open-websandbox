@@ -23,6 +23,9 @@
 
 #![forbid(unsafe_code)]
 // rust-stable 1.99 asserts these should be assert_eq; intentional here.
+// (`unknown_lints` first: the lint was renamed `const_is_empty` in clippy 1.97,
+// so the old name is unknown there — the guard keeps both toolchains green.)
+#![allow(unknown_lints)]
 #![allow(clippy::assert_is_empty)]
 /// Finalizer the broker registers on Sandboxes it manages in `s3-record`
 /// mode: holds the object (and its pod) in Terminating until the chat

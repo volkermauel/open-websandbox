@@ -88,14 +88,17 @@ async fn serve_over_tcp() {
     assert_eq!(status, 401);
 
     // Gated route accepts with the per-session key and runs a command (200).
+    // Stage 3: `?wait=` covers the runtime so the finished snapshot (log
+    // shape) arrives inline.
+    let body = r#"{"command":"echo hi","timeout":5}"#;
     let req = format!(
-        "POST /execute HTTP/1.1\r\nHost: x\r\nConnection: close\r\nAuthorization: Bearer {key}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\n\r\n{body}",
+        "POST /execute?wait=5 HTTP/1.1\r\nHost: x\r\nConnection: close\r\nAuthorization: Bearer {key}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\n\r\n{body}",
         key = common::STRONG_KEY,
-        len = r#"{"command":"echo hi","timeout":5}"#.len(),
-        body = r#"{"command":"echo hi","timeout":5}"#
+        len = body.len(),
     );
     let (status, body) = http(port, req.as_bytes()).await;
     assert_eq!(status, 200);
-    assert!(body.contains(r#""stdout":"hi\n""#), "{body}");
+    assert!(body.contains(r#""status":"done""#), "{body}");
+    assert!(body.contains(r#""data":"hi\n""#), "{body}");
     assert!(body.contains(r#""exit_code":0"#), "{body}");
 }

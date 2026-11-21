@@ -35,7 +35,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 import pytest
-from conftest import BROKER_SECRET, BROKER_URL, TEST_USER, headers_for
+from conftest import BROKER_SECRET, BROKER_URL, TEST_USER, exec_out, headers_for
 
 pytest.importorskip("websockets")
 
@@ -89,9 +89,9 @@ async def _claim_persistent(client: httpx.AsyncClient, session: str) -> None:
     while time.monotonic() < deadline:
         try:
             r = await client.post(
-                "/execute", json={"command": "echo ready"}, headers=hdr
+                "/execute?wait=5", json={"command": "echo ready"}, headers=hdr
             )
-            if r.status_code == 200 and r.json().get("exit_code") == 0:
+            if r.status_code == 200 and exec_out(r.json())[0] == 0:
                 return
             last = f"HTTP {r.status_code}: {r.text[:120]}"
         except Exception as exc:  # noqa: BLE001 — transient broker/proxy unavailability
@@ -199,12 +199,12 @@ async def test_pod_eviction_resumes_terminal_files_and_scrollback(ws_session):
 
     async with httpx.AsyncClient(base_url=BROKER_URL, timeout=30) as client:
         r = await client.post(
-            "/execute",
+            "/execute?wait=60",
             json={"command": f"cat {marker_file}"},
             headers={**headers_for(TEST_USER, session), "X-Persistence": "persistent"},
         )
         body = r.json()
-    assert r.status_code == 200 and body.get("exit_code") == 0, r.text
-    assert "survive" in body.get("stdout", ""), "marker file lost across eviction"
+    assert r.status_code == 200 and exec_out(body)[0] == 0, r.text
+    assert "survive" in exec_out(body)[1], "marker file lost across eviction"
 
     await ws2.close()

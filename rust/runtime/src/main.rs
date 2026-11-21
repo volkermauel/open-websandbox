@@ -10,7 +10,9 @@
 use std::net::SocketAddr;
 use std::process::ExitCode;
 
-use runtime::{build_router, terminals, AppState, RuntimeConfig, SessionKeyStore};
+use runtime::{
+    build_router, processes, sysinfo_setup, terminals, AppState, RuntimeConfig, SessionKeyStore,
+};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -20,6 +22,15 @@ async fn main() -> ExitCode {
 
     let cfg = RuntimeConfig::from_env();
     tracing::info!(workdir = %cfg.workdir.display(), "runtime booting");
+
+    // 0.17.7 knobs: resolve + create the start dir, then run the setup script
+    // in it BEFORE serving (blocking, upstream parity). Failures never stop
+    // the server — `/system/info` reports the outcome instead.
+    let start_dir = sysinfo_setup::resolve_start_dir(&cfg.workdir, cfg.start_dir.as_deref())
+        .unwrap_or_else(|| cfg.workdir.clone());
+    if let Some(script) = cfg.setup_script.as_deref().filter(|s| !s.trim().is_empty()) {
+        sysinfo_setup::run_at_boot(script, &start_dir);
+    }
 
     // Best-effort per-sandbox process cap; inherited by every spawned child.
     apply_max_procs(cfg.max_procs);
@@ -37,6 +48,9 @@ async fn main() -> ExitCode {
     // been gone longer than TERMINAL_DETACH_TTL_SECS, so detached sessions never
     // leak up to MAX_TERMINAL_SESSIONS.
     let _sweep = terminals::spawn_detached_sweep(state.clone());
+    // Finished-process expiry sweep (stage 3, upstream `_maintenance_loop`
+    // parity): finished `/execute` entries leave the dock after 300 s.
+    let _process_sweep = processes::spawn_process_sweep(state.clone());
     let app = build_router(state.clone());
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
@@ -69,6 +83,9 @@ async fn main() -> ExitCode {
         _ = tokio::signal::ctrl_c() => {}
     }
     let flushed = terminals::flush_scrollbacks(&state).await;
+    // Stage 3: SIGKILL still-running `/execute` groups so nothing outlives the
+    // pod's control plane (bounded-tree kill, no orphaned children).
+    processes::kill_all_running(&state).await;
     tracing::info!(sessions = flushed, "terminal scrollback flushed; exiting");
     // D9 — best-effort flush of the OTLP batch processor on graceful exit.
     shared::shutdown_telemetry(otel_provider);

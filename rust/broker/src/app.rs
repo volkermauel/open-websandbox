@@ -12,6 +12,7 @@ use crate::api::{
     list_sandboxes, metrics, openapi_json, readyz,
 };
 use crate::desktop::{browser_view_ws, desktop_audio_ws, desktop_stream_ws, events_ws};
+use crate::execute_ws::{execute_get_or_ws, execute_status_get_or_ws};
 use crate::metrics::http_metrics_layer;
 use axum::extract::DefaultBodyLimit;
 
@@ -61,6 +62,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/desktop/stream", get(desktop_stream_ws))
         .route("/desktop/audio", get(desktop_audio_ws))
         .route("/events", get(events_ws))
+        // Stage 3: the processes-dock streams. GET branches WS relay | runtime
+        // JSON; POST /execute (and every other method/path) falls through to
+        // the catch-all — the explicit GET registration would otherwise 405
+        // the POST, so it is wired to the same proxy handler.
+        .route(
+            "/execute",
+            get(execute_get_or_ws).post(crate::proxy::proxy_catch_all),
+        )
+        .route("/execute/{id}/status", get(execute_status_get_or_ws))
         .route(
             "/browser/view/{sid}/{token}/{channel}",
             get(browser_view_ws),

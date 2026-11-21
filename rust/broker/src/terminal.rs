@@ -167,10 +167,14 @@ pub async fn terminal_delete(
 /// upstream → relay frames. Closes the client socket with a reason on any failure.
 async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, session_id: String) {
     // 1. first-message shared-secret auth (only when the secret is configured).
+    //    The raw payload is forwarded downstream (token stripped) so OWUI's
+    //    stage-3 protocol fields (resume/cursor/flow_control/process_info and
+    //    the chat id) reach the runtime's PTY relay.
     let mut client = socket;
     let secret = state.config.shared_secret.clone();
-    if !authenticate_first_message(&mut client, &secret).await {
-        return;
+    let hello = authenticate_first_message_with_payload(&mut client, &secret).await;
+    if hello.is_none() && !is_placeholder_secret(&secret) {
+        return; // auth failed — socket already closed
     }
 
     // 2. resolve the target sandbox + its mandatory per-session runtime key
@@ -225,10 +229,11 @@ async fn relay(socket: WebSocket, state: AppState, identity: TerminalIdentity, s
             )),
         )
     };
-    relay_to_upstream_with_touch(
+    relay_to_upstream_with_touch_and_hello(
         client,
         &upstream_url,
         &runtime_api_key,
+        hello,
         client_touch,
         upstream_touch,
     )
@@ -247,7 +252,7 @@ pub(crate) async fn authenticate_first_message(client: &mut WebSocket, secret: &
         return true;
     }
     match wait_auth(client, secret).await {
-        AuthResult::Ok => true,
+        AuthResult::Ok(_) => true,
         AuthResult::Deny => {
             metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "bad_token").increment(1);
             close_4001(client, "invalid api key").await;
@@ -257,6 +262,46 @@ pub(crate) async fn authenticate_first_message(client: &mut WebSocket, secret: &
             metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "auth_timeout").increment(1);
             close_4001(client, "auth timeout or invalid payload").await;
             false
+        }
+    }
+}
+
+/// [`authenticate_first_message`] plus the raw auth payload — the terminal
+/// relay forwards the client's protocol fields (`resume`, `cursor`,
+/// `flow_control`, `process_info`, `chat_id`) downstream with the token
+/// stripped (the runtime hop authenticates via the per-session Bearer).
+/// Returns `None` when there is no handshake to forward (placeholder secret,
+/// auth failure — the client socket is closed `4001` in that case) or nothing
+/// usable was parsed.
+pub(crate) async fn authenticate_first_message_with_payload(
+    client: &mut WebSocket,
+    secret: &str,
+) -> Option<String> {
+    if is_placeholder_secret(secret) {
+        return None; // no handshake ran — nothing to forward
+    }
+    match wait_auth(client, secret).await {
+        AuthResult::Ok(payload) => {
+            // Forward the client's protocol fields with the credential
+            // replaced by an empty string (the runtime hop authenticates via
+            // its own per-session Bearer at upgrade).
+            serde_json::from_str::<serde_json::Value>(&payload)
+                .ok()
+                .and_then(|mut v| {
+                    v.get("type").and_then(|t| t.as_str())?;
+                    v["token"] = serde_json::Value::String(String::new());
+                    Some(v.to_string())
+                })
+        }
+        AuthResult::Deny => {
+            metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "bad_token").increment(1);
+            close_4001(client, "invalid api key").await;
+            None
+        }
+        AuthResult::Timeout => {
+            metrics::counter!(AUTH_FAILURES_TOTAL, "outcome" => "auth_timeout").increment(1);
+            close_4001(client, "auth timeout or invalid payload").await;
+            None
         }
     }
 }
@@ -424,11 +469,35 @@ pub async fn relay_to_upstream_with_touch(
     client_touch: Option<SessionTouch>,
     upstream_touch: Option<SessionTouch>,
 ) {
+    relay_to_upstream_with_touch_and_hello(
+        client,
+        upstream_url,
+        runtime_api_key,
+        None,
+        client_touch,
+        upstream_touch,
+    )
+    .await;
+}
+
+/// [`relay_to_upstream_with_touch`] plus an optional FIRST frame sent upstream
+/// right after the connect — the terminal relay forwards OWUI's sanitized auth
+/// payload (protocol fields, blanked token) so the runtime's PTY relay sees the
+/// stage-3 hello.
+pub async fn relay_to_upstream_with_touch_and_hello(
+    client: WebSocket,
+    upstream_url: &str,
+    runtime_api_key: &str,
+    hello: Option<String>,
+    client_touch: Option<SessionTouch>,
+    upstream_touch: Option<SessionTouch>,
+) {
     relay_to_upstream_with_headers(
         client,
         upstream_url,
         runtime_api_key,
         HeaderMap::new(),
+        hello,
         client_touch,
         upstream_touch,
     )
@@ -444,6 +513,7 @@ pub async fn relay_to_upstream_with_headers(
     upstream_url: &str,
     runtime_api_key: &str,
     extra_headers: HeaderMap,
+    hello: Option<String>,
     client_touch: Option<SessionTouch>,
     upstream_touch: Option<SessionTouch>,
 ) {
@@ -488,6 +558,19 @@ pub async fn relay_to_upstream_with_headers(
 
     // Bidirectional relay until either side ends.
     let (mut up_sink, mut up_stream) = upstream.split();
+    // Forward the sanitized hello FIRST (when present), then start the pumps —
+    // the runtime's PTY relay reads it as the stage-3 protocol hello.
+    if let Some(hello) = hello {
+        if up_sink.send(TungMsg::Text(hello.into())).await.is_err() {
+            let _ = client
+                .send(AxumMsg::Close(Some(axum::extract::ws::CloseFrame {
+                    code: 1011,
+                    reason: "terminal unavailable".into(),
+                })))
+                .await;
+            return;
+        }
+    }
     let (mut client_sink, mut client_stream) = client.split();
 
     let mut c2u = tokio::spawn(async move {
@@ -550,21 +633,21 @@ pub async fn relay_to_upstream_with_headers(
     u2c.abort();
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 enum AuthResult {
-    Ok,
+    Ok(String),
     Deny,
     Timeout,
 }
 
 /// Read the first text message and validate `{"type":"auth","token":<secret>}`
-/// (constant-time compare), within [`AUTH_TIMEOUT`].
+/// (constant-time compare), within [`AUTH_TIMEOUT`]. Returns the raw payload on
+/// success (the terminal relay forwards its protocol fields downstream).
 async fn wait_auth(client: &mut WebSocket, secret: &str) -> AuthResult {
     let raw = match tokio::time::timeout(AUTH_TIMEOUT, client.recv()).await {
         Ok(Some(Ok(m))) => m
             .into_text()
-            .map(|t| t.as_str().to_owned())
-            .unwrap_or_default(),
+            .map_or_else(|_| String::new(), |t| t.as_str().to_owned()),
         _ => return AuthResult::Timeout,
     };
     let payload: serde_json::Value = match serde_json::from_str(&raw) {
@@ -577,7 +660,7 @@ async fn wait_auth(client: &mut WebSocket, secret: &str) -> AuthResult {
             .and_then(|v| v.as_str())
             .is_some_and(|t| constant_time_eq(t.as_bytes(), secret.as_bytes()))
     {
-        AuthResult::Ok
+        AuthResult::Ok(raw)
     } else {
         AuthResult::Deny
     }

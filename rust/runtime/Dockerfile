@@ -147,7 +147,10 @@ RUN set -eu \
 
 # PowerShell 7 stable — pinned tarball into /opt/powershell (on PATH).
 ARG PWSH_VERSION=v7.6.9
-ARG PWSH_SHA256_AMD64=bef140a1a96994029153dca8c00b1750b9a5a764fb9db2dc68d7bb40e8a29e8a
+# Verify against the release's own hashes.sha256 (UTF-16) — GitHub re-published
+# the v7.6.9 amd64 tarball on 2026-11-21 (the original pin stopped matching);
+# both hashes below are the ones PowerShell publishes for this release.
+ARG PWSH_SHA256_AMD64=1da6d6d6035d651f20e70ddee7c4c15ac6ab8b9fb40ee92240d91263f28a884b
 ARG PWSH_SHA256_ARM64=02eb9991af447c7e7fe881acde195961afd397c40b8eb1c2b3856b84ec2d85f2
 RUN set -eu \
  && case "${TARGETARCH}" in \

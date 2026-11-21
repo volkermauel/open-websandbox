@@ -35,6 +35,7 @@ pub struct GrepQuery {
 #[utoipa::path(
     get,
     path = "/files/grep",
+    operation_id = "grep_search",
     tag = "files",
     params(GrepQuery),
     security(("brokerBearer" = [])),

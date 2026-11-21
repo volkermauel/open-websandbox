@@ -49,7 +49,7 @@ mime_guess = "2"
 reqwest = { version = "0.12", default-features = false, features = ["stream"] }
 metrics.workspace = true
 regex = "1"
-nix = { version = "0.31", features = ["resource", "signal", "process", "fs", "user"] }
+nix = { version = "0.31", features = ["resource", "signal", "process", "fs", "user", "net", "socket"] }
 percent-encoding = "2"
 portable-pty = "0.9"
 serde.workspace = true
@@ -61,7 +61,6 @@ shared = { version = "0.1.0", path = "../shared", default-features = false }
 thiserror.workspace = true
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # `zip` builds the in-memory ZIP returned by `POST /files/archive` (the Python

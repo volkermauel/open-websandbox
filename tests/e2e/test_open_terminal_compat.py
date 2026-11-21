@@ -62,7 +62,8 @@ def test_serve_returns_inline_bytes_through_the_relay():
         assert unauth.status_code == 401
 
 
-def test_api_config_reports_v0_12_3_features():
+def test_api_config_reports_stage3_features():
+    """Stage-3 flag set: git/events served by the runtime, agents deferred."""
     session = f"ott-cfg-{hashlib.sha256(b'cfg').hexdigest()[:8]}"
     with httpx.Client(base_url=BROKER_URL, timeout=CLAIM_TIMEOUT) as client:
         _claim_ready_session(client, TEST_USER, session)
@@ -73,6 +74,11 @@ def test_api_config_reports_v0_12_3_features():
         assert features["notebooks"] is False
         # Flipped in stage 2 (#169): GET /system is now served.
         assert features["system"] is True
+        # Stage 3: events is runtime-owned (fs/ports change stream); git
+        # follows the sandbox's git binary; agents stay deferred.
+        assert features["events"] is True
+        assert features["git"] is True
+        assert features["agents"] is False
 
 
 def test_list_carries_writable_flags_and_read_slices_lines():

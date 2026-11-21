@@ -27,10 +27,11 @@ import uuid
 
 import httpx
 import pytest
-from conftest import (  # type: ignore[import-not-found]
+from conftest import (
     BROKER_URL,
     CLAIM_TIMEOUT,
     _claim_ready_session,
+    exec_out,  # type: ignore[import-not-found]
     headers_for,
     s3_list_objects,
 )
@@ -92,13 +93,13 @@ def _chat_path(user: str, session: str) -> str:
 
 def _exec(c: httpx.Client, user: str, session: str, command: str) -> tuple[int, str]:
     r = c.post(
-        "/execute",
+        "/execute?wait=120",
         json={"command": command},
         headers={**headers_for(user, session), "X-Persistence": "persistent"},
     )
     assert r.status_code == 200, f"{r.status_code}: {r.text[:300]}"
     body = r.json()
-    return body.get("exit_code", -1), (body.get("stdout") or "")
+    return exec_out(body)
 
 
 def _sandbox_gone(name: str) -> bool:

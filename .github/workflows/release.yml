@@ -36,8 +36,8 @@ env:
   #   OWUI_COMPAT_TAG:           newest Open Web UI version exercised end-to-end
   #   OPEN_TERMINAL_COMPAT_TAG:  open-terminal API surface implemented
   #                              (`-skills` = post-v0.12.3 skills/compare additions)
-  OWUI_COMPAT_TAG: owui-v0.11.4
-  OPEN_TERMINAL_COMPAT_TAG: open-terminal-v0.12.3-skills
+  OWUI_COMPAT_TAG: owui-v0.13.4
+  OPEN_TERMINAL_COMPAT_TAG: open-terminal-v0.17.21
 
 jobs:
   build-images:

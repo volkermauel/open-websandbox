@@ -13,6 +13,8 @@
 
 #![forbid(unsafe_code)]
 // rust-stable 1.99 asserts these should be assert_eq; intentional here.
+// (`unknown_lints` first: renamed `const_is_empty` in clippy 1.97 — see shared/src/crd.rs.)
+#![allow(unknown_lints)]
 #![allow(clippy::assert_is_empty)]
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -1335,8 +1337,7 @@ fn pod_condition_summary(pod: &Pod) -> String {
         let reason = c
             .reason
             .as_deref()
-            .map(|r| format!(" reason={r}"))
-            .unwrap_or_default();
+            .map_or_else(String::new, |r| format!(" reason={r}"));
         parts.push(format!("{}={}{}", c.type_, c.status, reason));
     }
     parts.join("; ")

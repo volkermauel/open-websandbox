@@ -22,6 +22,7 @@ from conftest import (  # noqa: E402
     CLAIM_TIMEOUT,
     TEST_USER,
     _claim_ready_session,
+    exec_out,
     headers_for,
 )
 
@@ -55,10 +56,10 @@ def test_upload_over_two_mebibytes_round_trips():
         # 2) Verify byte-exact content via sha256sum (our /files/read is
         # UTF-8-only — binary-aware read is tracked as an upstream gap).
         back = client.post(
-            "/execute",
+            "/execute?wait=120",
             json={"command": "sha256sum /workspace/big.bin"},
             headers=headers_for(TEST_USER, session),
         )
         assert back.status_code == 200, back.text[:200]
-        assert back.json()["exit_code"] == 0, back.text[:200]
-        assert digest in back.json()["stdout"], back.text[:200]
+        assert exec_out(back.json())[0] == 0, back.text[:200]
+        assert digest in exec_out(back.json())[1], back.text[:200]

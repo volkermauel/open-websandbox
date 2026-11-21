@@ -39,6 +39,7 @@ from conftest import (  # noqa: E402
     RUN_ID,
     TEST_USER,
     _claim_ready_session,
+    exec_out,
     headers_for,
 )
 
@@ -169,12 +170,12 @@ def test_pvc_survives_helm_upgrade(require_upgrade) -> None:
     # port-forward — the lane's original one died with the old broker.)
     with _fresh_port_forward(8890) as url, httpx.Client(base_url=url, timeout=60) as c:
         r = c.post(
-            "/execute",
+            "/execute?wait=60",
             json={"command": "cat /workspace/upgrade-marker.txt"},
             headers=headers_for(TEST_USER, session),
         )
         assert r.status_code == 200, r.text
-        assert marker in r.json()["stdout"], r.json()
+        assert marker in exec_out(r.json())[1], r.json()
     assert _tag_of(IMAGE_B) in _runtime_image(), "runtime image did not advance to IMAGE_B"
 
 
