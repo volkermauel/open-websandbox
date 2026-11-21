@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > [Quickstart](docs/quickstart.md)). Version comparison links will be added
 > once the canonical repository URL is fixed.
 
-## [Unreleased]
+## [v0.4.0] - 2026-11-21
 
 ### Added
 
@@ -587,7 +587,7 @@ and reverse-proxied by the broker:
 
 - **Rust control-plane test suite** — `cargo test --workspace` (real-filesystem + PTY
   integration tests), enforced in `rust.yml`; supersedes the original Python `pytest` suite
-  removed by the Rust rewrite (see [Unreleased]).
+  removed by the Rust rewrite (see [v0.4.0]).
 - **gVisor KIND end-to-end** suite under `tests/e2e/` (real `runsc` cluster in
   CI; `runc` fallback for local dev).
 

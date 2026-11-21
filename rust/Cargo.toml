@@ -14,7 +14,6 @@ edition = "2021"
 license = "AGPL-3.0-only"
 authors = ["the open-websandbox contributors"]
 repository = "https://github.com/volkermauel/open-websandbox"
-homepage = "https://github.com/volkermauel/open-websandbox"
 
 # Pinned once via `cargo add`; member crates reference these with
 # `dep.workspace = true`. Versions resolved against the installed stable
