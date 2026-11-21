@@ -87,7 +87,9 @@ fn init_repo(workdir: &Path) {
 
 #[tokio::test]
 async fn status_reports_not_a_repo_then_full_state() {
+    eprintln!("DBG test start");
     let srv = Server::start().await;
+    eprintln!("DBG server up on {}", srv.port);
     let (_, before) = srv.send(Method::GET, "/git/status", None).await;
     assert_eq!(before["is_repo"], false);
 
@@ -237,11 +239,17 @@ async fn actions_reject_bad_input_like_upstream() {
 async fn pr_capabilities_without_gh_degrade_to_unavailable() {
     let srv = Server::start().await;
     init_repo(&srv.workdir);
-    // Even with a repo, capabilities need `gh` — in the test environment gh
-    // may exist but is unauthenticated (repo view fails) → available:false.
+    // Capabilities NEVER 404 — upstream wraps the whole probe in
+    // try/except HTTPException → available:false: no `gh` binary, no auth,
+    // no remote — all degrade (review finding 6). Upstream still returns the
+    // full shape (defaults filled from the failed probe).
     let (_, caps) = srv.send(Method::GET, "/git/pr/capabilities", None).await;
-    // Whether gh is installed or not, the shape must hold.
-    assert!(caps.get("available").is_some(), "{caps}");
+    assert_eq!(
+        caps["available"], false,
+        "no authed gh → unavailable: {caps}"
+    );
+    assert!(caps.get("default_branch").is_some(), "{caps}");
+    assert!(caps.get("open_pull_requests").is_some(), "{caps}");
 }
 
 #[tokio::test]

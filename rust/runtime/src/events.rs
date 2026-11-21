@@ -58,7 +58,9 @@ const CLOSE_INVALID: u16 = 4000;
 /// Close code: watch path unavailable (escape or missing directory).
 const CLOSE_UNAVAILABLE: u16 = 4003;
 
-/// One entry in the fs fingerprint (relative name → size + mtime nanos).
+/// One entry in the fs fingerprint: relative path → `(size, mtime nanos)`.
+/// File SIZE makes content edits deterministic even on coarse-mtime
+/// filesystems (tmpfs); directories carry size 0 and are detected by mtime.
 type Fingerprint = BTreeMap<String, (u64, i64)>;
 
 /// `GET /events` — WebSocket upgrade for the change stream.
@@ -76,10 +78,6 @@ pub async fn events_ws(
 
 /// The stream loop: subscribe frames replace the watch/port tasks.
 async fn stream(state: AppState, headers: HeaderMap, mut socket: WebSocket) {
-    // The broker forwards OWUI's auth frame first — tolerate (auth already
-    // ran at upgrade via the per-session Bearer).
-    let _ = tokio::time::timeout(SUBSCRIBE_TIMEOUT, socket.recv()).await;
-
     let Ok(base) = base_of(&state, &headers) else {
         close(&mut socket, CLOSE_INVALID, "Invalid session").await;
         return;
@@ -93,39 +91,78 @@ async fn stream(state: AppState, headers: HeaderMap, mut socket: WebSocket) {
     let mut ports_tick = tokio::time::interval(PORTS_POLL);
     ports_tick.tick().await; // skip the immediate tick
 
+    // The FIRST subscribe must arrive within 10 s (upstream closes 4000).
+    // Auth frames (`{"type":"auth",…}`) are tolerated and skipped anywhere
+    // before it: through the broker the relay consumes OWUI's auth frame and
+    // forwards only what follows, but a direct client (or a relay change)
+    // may put the auth frame in front of the subscribe — treating the first
+    // frame unconditionally as the auth swallowed it (review finding 1).
+    let deadline = tokio::time::Instant::now() + SUBSCRIBE_TIMEOUT;
+    let first_subscribe = loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            close(&mut socket, CLOSE_INVALID, "Expected subscribe message").await;
+            return;
+        }
+        if let Ok(Some(Ok(Message::Text(text)))) =
+            tokio::time::timeout(remaining, socket.recv()).await
+        {
+            let parsed = serde_json::from_str::<Value>(&text).ok();
+            let is_auth = parsed
+                .as_ref()
+                .and_then(|v| v.get("type").and_then(Value::as_str))
+                == Some("auth");
+            if is_auth {
+                continue; // tolerated, keep waiting for the subscribe
+            }
+            if let Ok(sub) = parse_subscribe(&text) {
+                break sub;
+            }
+            close(&mut socket, CLOSE_INVALID, "Expected subscribe message").await;
+            return;
+        }
+        close(&mut socket, CLOSE_INVALID, "Expected subscribe message").await;
+        return;
+    };
+    if apply_subscribe(
+        &mut socket,
+        &base,
+        &mut fs_watch,
+        &mut ports_watch,
+        &mut last_ports,
+        first_subscribe,
+    )
+    .await
+    {
+        return; // closed with an error
+    }
+
     loop {
         tokio::select! {
             msg = socket.recv() => match msg {
                 Some(Ok(Message::Text(text))) => {
+                    // Auth frames mid-stream are tolerated (ignored).
+                    let is_auth = serde_json::from_str::<Value>(&text)
+                        .ok()
+                        .and_then(|v| v.get("type").and_then(Value::as_str).map(str::to_owned))
+                        .as_deref()
+                        == Some("auth");
+                    if is_auth {
+                        continue;
+                    }
                     match parse_subscribe(&text) {
                         Ok(sub) => {
-                            // A `path` subscribe REPLACES the fs watch (upstream
-                            // stops the previous watcher task first).
-                            if sub.path.is_some() {
-                                match resolve_watch_dir(&base, sub.path.as_deref()) {
-                                    Ok(dir) => {
-                                        let fingerprint = fingerprint(&dir);
-                                        fs_watch = Some((dir, fingerprint));
-                                        if socket.send(Message::Text(
-                                            json!({ "type": "fs:ready" }).to_string().into(),
-                                        ))
-                                        .await
-                                        .is_err()
-                                        {
-                                            return;
-                                        }
-                                    }
-                                    Err(e) => {
-                                        close(&mut socket, CLOSE_UNAVAILABLE, &e).await;
-                                        return;
-                                    }
-                                }
-                            } else {
-                                fs_watch = None;
-                            }
-                            ports_watch = sub.ports;
-                            if !ports_watch {
-                                last_ports = None;
+                            if apply_subscribe(
+                                &mut socket,
+                                &base,
+                                &mut fs_watch,
+                                &mut ports_watch,
+                                &mut last_ports,
+                                sub,
+                            )
+                            .await
+                            {
+                                return;
                             }
                         }
                         Err(reason) => {
@@ -182,9 +219,54 @@ struct Subscribe {
     ports: bool,
 }
 
+/// Apply one parsed subscribe: install/replace the fs watch (+ `fs:ready`)
+/// and/or the ports stream. Returns `true` when the socket was closed with an
+/// error.
+async fn apply_subscribe(
+    socket: &mut WebSocket,
+    base: &Path,
+    fs_watch: &mut Option<(PathBuf, Fingerprint)>,
+    ports_watch: &mut bool,
+    last_ports: &mut Option<String>,
+    sub: Subscribe,
+) -> bool {
+    // A `path` subscribe REPLACES the fs watch (upstream stops the previous
+    // watcher task first); an EMPTY subscribe unsubscribes everything —
+    // upstream accepts it as a no-op and keeps the socket open.
+    if sub.path.is_some() {
+        match resolve_watch_dir(base, sub.path.as_deref().unwrap_or(".")) {
+            Ok(dir) => {
+                let fingerprint = fingerprint(&dir);
+                *fs_watch = Some((dir, fingerprint));
+                if socket
+                    .send(Message::Text(
+                        json!({ "type": "fs:ready" }).to_string().into(),
+                    ))
+                    .await
+                    .is_err()
+                {
+                    return true;
+                }
+            }
+            Err(e) => {
+                close(socket, CLOSE_UNAVAILABLE, &e).await;
+                return true;
+            }
+        }
+    } else {
+        *fs_watch = None;
+    }
+    *ports_watch = sub.ports;
+    if !*ports_watch {
+        *last_ports = None;
+    }
+    false
+}
+
 /// Parse + validate a subscribe frame (upstream's exact validations: non-
 /// subscribe types close 4000; `path` must be a non-empty string ≤ 4096;
-/// `ports` must be a bool).
+/// `ports` must be a bool). An EMPTY subscribe is VALID — upstream treats it
+/// as "unsubscribe everything" and keeps the socket open.
 fn parse_subscribe(text: &str) -> Result<Subscribe, String> {
     let payload: Value =
         serde_json::from_str(text).map_err(|_| String::from("Invalid watch request"))?;
@@ -205,19 +287,13 @@ fn parse_subscribe(text: &str) -> Result<Subscribe, String> {
         Value::Bool(b) => *b,
         _ => return Err("Invalid subscription".into()),
     };
-    if path.is_none() && !ports {
-        return Err("Invalid subscription".into());
-    }
     Ok(Subscribe { path, ports })
 }
 
 /// Resolve the watch directory against the workspace base (absolute paths
 /// inside the base are honoured — `safe_path` semantics), 4003 on escape or
 /// when it is not a directory.
-fn resolve_watch_dir(base: &Path, path: Option<&str>) -> Result<PathBuf, String> {
-    let Some(raw) = path else {
-        return Err("Invalid subscription".into());
-    };
+fn resolve_watch_dir(base: &Path, raw: &str) -> Result<PathBuf, String> {
     let dir = safe_path(raw, base).map_err(|_| "Watch path unavailable".to_string())?;
     if !dir.is_dir() {
         return Err("Watch path unavailable".to_string());
@@ -231,12 +307,24 @@ fn resolve_watch_dir(base: &Path, path: Option<&str>) -> Result<PathBuf, String>
 /// commits and branch switches fire `fs:change` too (upstream watches the
 /// repo root recursively; our poll covers the observable signals without
 /// inotify).
+/// Entry cap for the recursive walk — a workspace larger than this degrades
+/// to the bounded prefix (documented divergence).
+const FINGERPRINT_CAP: usize = 10_000;
+
+/// The watched-tree fingerprint: a BOUNDED RECURSIVE walk of `path → mtime`
+/// (files + directories, `.git` trees skipped but re-added as explicit
+/// markers), so edits in subdirectories fire — the core live-Files behavior
+/// upstream's recursive native watcher provides. Git state is covered by
+/// explicit markers: `.git/HEAD`, the RESOLVED current-ref file
+/// (`.git/refs/heads/<branch>`, so commits fire — a commit moves the ref, not
+/// HEAD), `.git/index` and `.git/ORIG_HEAD`. For linked worktrees (`.git` is
+/// a `gitdir:` file) the resolved gitdir's markers are watched only when they
+/// sit inside the workspace (upstream skips out-of-workspace trees too).
 fn fingerprint(dir: &Path) -> Fingerprint {
-    let mut map = Fingerprint::new();
     let stamp = |p: &Path| -> (u64, i64) {
         match std::fs::metadata(p) {
             Ok(m) => {
-                let size = m.len();
+                let size = if m.is_dir() { 0 } else { m.len() };
                 let mtime = m
                     .modified()
                     .ok()
@@ -247,28 +335,90 @@ fn fingerprint(dir: &Path) -> Fingerprint {
             Err(_) => (0, 0),
         }
     };
-    map.insert("(dir)".into(), stamp(dir));
-    let Ok(read) = std::fs::read_dir(dir) else {
-        return map;
-    };
-    for entry in read.flatten() {
-        let Ok(name) = entry.file_name().into_string() else {
+    let mut map = Fingerprint::new();
+    // Bounded depth-first walk (relative paths as keys keep the map small).
+    let mut stack = vec![dir.to_path_buf()];
+    let mut visited = 0usize;
+    while let Some(current) = stack.pop() {
+        if visited >= FINGERPRINT_CAP {
+            break;
+        }
+        let rel = current
+            .strip_prefix(dir)
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        map.insert(rel, stamp(&current));
+        visited += 1;
+        let Ok(read) = std::fs::read_dir(&current) else {
             continue;
         };
-        map.insert(name, stamp(&entry.path()));
+        for entry in read.flatten() {
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            let path = entry.path();
+            if name == ".git" {
+                // Git internals are covered by the explicit markers below.
+                continue;
+            }
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                if visited >= FINGERPRINT_CAP {
+                    break;
+                }
+                let rel = path
+                    .strip_prefix(dir)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                map.insert(rel, stamp(&path));
+                visited += 1;
+            }
+        }
     }
     // Git markers: the nearest `.git` upwards (dir itself, then ancestors up
-    // to the workspace root).
+    // to the workspace root). `HEAD` alone misses commits (a commit moves the
+    // branch REF, not HEAD) — resolve the ref file and stamp it too.
     let mut cursor = Some(dir);
     while let Some(c) = cursor {
         let git = c.join(".git");
-        if git.exists() {
-            for marker in ["HEAD", "index"] {
+        if !git.exists() {
+            cursor = c.parent();
+            continue;
+        }
+        if git.is_dir() {
+            for marker in ["HEAD", "index", "ORIG_HEAD"] {
                 map.insert(format!("(git/{marker})"), stamp(&git.join(marker)));
             }
-            break;
+            // Resolve `ref: refs/heads/<branch>` → the ref file itself.
+            if let Ok(head) = std::fs::read_to_string(git.join("HEAD")) {
+                if let Some(branch) = head.trim().strip_prefix("ref: refs/heads/") {
+                    map.insert(
+                        "(git/ref)".into(),
+                        stamp(&git.join("refs/heads").join(branch.trim())),
+                    );
+                }
+            }
+        } else if let Ok(link) = std::fs::read_to_string(&git) {
+            // Linked worktree: `.git` is a `gitdir: <path>` file pointing at
+            // the real git dir (usually under the main repo's `.git/worktrees/`).
+            if let Some(target) = link.trim().strip_prefix("gitdir: ") {
+                let gitdir = PathBuf::from(target.trim());
+                let confined =
+                    gitdir.starts_with(dir) || gitdir.starts_with(dir.parent().unwrap_or(dir));
+                if confined {
+                    for marker in ["HEAD", "index", "ORIG_HEAD"] {
+                        map.insert(format!("(git/{marker})"), stamp(&gitdir.join(marker)));
+                    }
+                    if let Ok(head) = std::fs::read_to_string(gitdir.join("HEAD")) {
+                        if let Some(branch) = head.trim().strip_prefix("ref: ") {
+                            map.insert("(git/ref)".into(), stamp(&gitdir.join(branch.trim())));
+                        }
+                    }
+                }
+            }
         }
-        cursor = c.parent();
+        break;
     }
     map
 }
@@ -305,32 +455,46 @@ mod tests {
         assert!(parse_subscribe(r#"{"type":"subscribe","path":42}"#).is_err());
         assert!(parse_subscribe(r#"{"type":"subscribe","path":""}"#).is_err());
         assert!(parse_subscribe(r#"{"type":"subscribe","ports":"yes"}"#).is_err());
-        // Empty subscription (neither path nor ports) is invalid.
-        assert!(parse_subscribe(r#"{"type":"subscribe"}"#).is_err());
+        // An EMPTY subscribe is VALID — upstream treats it as
+        // "unsubscribe everything" and keeps the socket open.
+        let empty = parse_subscribe(r#"{"type":"subscribe"}"#).unwrap();
+        assert_eq!(empty.path, None);
+        assert!(!empty.ports);
     }
 
     #[test]
-    fn fingerprint_detects_changes_and_git_markers() {
+    fn fingerprint_detects_changes_nested_and_git_markers() {
         let dir = tempfile::TempDir::new().unwrap();
-        let a = dir.path().join("a.txt");
-        std::fs::write(&a, b"hello").unwrap();
+        let sub = dir.path().join("src");
+        std::fs::create_dir_all(&sub).unwrap();
+        let a = sub.join("a.rs");
+        std::fs::write(&a, "hello\n").unwrap();
         let f1 = fingerprint(dir.path());
-        assert!(f1.contains_key("a.txt"));
-        assert_eq!(f1.get("a.txt").map(|(s, _)| *s), Some(5));
+        // NESTED entries are in the fingerprint (mtime keys).
+        assert!(f1.contains_key("src/a.rs"), "{:?}", f1.keys());
+        assert_eq!(f1.get("src/a.rs").map(|(s, _)| *s), Some(6));
 
-        // Content change → different fingerprint.
-        std::fs::write(&a, b"hello world").unwrap();
+        // A nested edit changes the fingerprint (root mtime does NOT move).
+        std::fs::write(&a, "hello world\n").unwrap();
         let f2 = fingerprint(dir.path());
-        assert_ne!(f1, f2);
+        assert_ne!(f1, f2, "nested edit must fire");
 
-        // A git marker dir registers HEAD/index keys (missing files stamp 0).
-        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
-        std::fs::write(dir.path().join(".git/HEAD"), "ref: main\n").unwrap();
+        // A git repo registers HEAD + the RESOLVED ref marker.
+        std::fs::create_dir_all(dir.path().join(".git/refs/heads")).unwrap();
+        std::fs::write(dir.path().join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(dir.path().join(".git/refs/heads/main"), "abc123\n").unwrap();
         let f3 = fingerprint(dir.path());
         assert!(f3.contains_key("(git/HEAD)"));
         assert!(f3.contains_key("(git/index)"));
+        assert!(f3.contains_key("(git/ref)"));
 
-        // New file → different fingerprint.
+        // A COMMIT moves the branch ref → the fingerprint changes even though
+        // HEAD's own content/mtime is untouched. (A longer hash makes the
+        // size differ too — tmpfs mtime granularity is coarse.)
+        std::fs::write(dir.path().join(".git/refs/heads/main"), "def4567890abc\n").unwrap();
+        assert_ne!(f3, fingerprint(dir.path()), "commit (ref move) must fire");
+
+        // New top-level file → different fingerprint.
         std::fs::write(dir.path().join("b.txt"), b"x").unwrap();
         assert_ne!(f3, fingerprint(dir.path()));
     }

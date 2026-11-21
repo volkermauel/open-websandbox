@@ -45,6 +45,9 @@ use crate::auth::Authed;
 use crate::error::ApiError;
 use crate::files::base_of;
 use crate::state::AppState;
+use nix::sys::signal::{killpg, Signal};
+use nix::unistd::Pid;
+use tokio::io::AsyncReadExt;
 
 /// PR JSON field set (upstream `pull_requests`).
 const PR_FIELDS: &str =
@@ -98,6 +101,42 @@ struct RunOutcome {
     stderr: String,
 }
 
+/// The bounded-read failure modes of one [`GitRepo::run`].
+enum RunError {
+    /// Output exceeded the cap.
+    Cap,
+    Io(std::io::Error),
+}
+
+/// Drain one piped stream into a capped buffer (upstream's `read()` task:
+/// the cap is checked DURING the read and the process group is killed by the
+/// caller once exceeded).
+async fn read_bounded<R: tokio::io::AsyncRead + Unpin>(
+    stream: &mut Option<R>,
+    total: &mut usize,
+) -> Result<Vec<u8>, RunError> {
+    let Some(stream) = stream else {
+        return Ok(Vec::new());
+    };
+    let mut buf = Vec::new();
+    // Heap chunk: a stack array here lands in the async fn's FUTURE state,
+    // and the composed (nested-await) future overflowed the 2 MiB
+    // test-thread stack at first poll.
+    let mut chunk = vec![0u8; 65_536];
+    loop {
+        let n = stream.read(&mut chunk).await.map_err(RunError::Io)?;
+        if n == 0 {
+            break;
+        }
+        *total += n;
+        if *total > OUTPUT_CAP {
+            return Err(RunError::Cap);
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    Ok(buf)
+}
+
 impl GitRepo {
     /// Open the repo candidate: the `root` parameter resolved against the
     /// workspace (safe_path; upstream `fs.resolve_path(root, cwd=session_cwd)`
@@ -134,9 +173,15 @@ impl GitRepo {
             .current_dir(&self.root)
             .env_clear()
             .envs(std::env::vars().filter(|(k, _)| {
-                // Upstream `sanitized_environ` minus GIT_* inheritance.
+                // Upstream `sanitized_environ` minus GIT_* inheritance; plus
+                // our own hardening (SECRET/TOKEN/PASSWORD, review finding 5)
+                // and the runtime's own OPEN_TERMINAL_* knobs.
                 let k = k.to_ascii_uppercase();
-                !k.starts_with("GIT_") && !k.contains("SECRET") && !k.contains("TOKEN")
+                !k.starts_with("GIT_")
+                    && !k.starts_with("OPEN_TERMINAL_")
+                    && !k.contains("SECRET")
+                    && !k.contains("TOKEN")
+                    && !k.contains("PASSWORD")
             }))
             .env("HOME", &self.base)
             .env("GIT_TERMINAL_PROMPT", "0")
@@ -159,30 +204,67 @@ impl GitRepo {
                 ApiError::BadRequest(format!("{program} failed to start: {e}"))
             }
         })?;
+        // The group id equals the child pid (`process_group(0)`) — SIGKILL the
+        // WHOLE group on timeout/cap so grandchildren (hooks, ssh, credential
+        // helpers) never orphan (upstream `killpg` in the `finally`; review
+        // finding 11).
+        #[allow(clippy::cast_possible_wrap)]
+        let pid = Pid::from_raw(child.id().unwrap_or(0) as i32);
+        let kill_group = |pid: Pid| {
+            let _ = killpg(pid, Signal::SIGKILL);
+        };
         if let Some(data) = input {
             if let Some(mut stdin) = child.stdin.take() {
                 let _ = stdin.write_all(data).await;
                 let _ = stdin.shutdown().await;
             }
         }
-        let wait = async {
-            let out = child.wait_with_output().await?;
-            Ok::<_, std::io::Error>(out)
+
+        // Bounded reads DURING streaming (upstream caps inside `read()` while
+        // the `finally` killpg runs — review finding 4: buffering the whole
+        // output before checking the cap is not a bound).
+        let mut stdout_h = child.stdout.take();
+        let mut stderr_h = child.stderr.take();
+        let collected = tokio::time::timeout(RUN_TIMEOUT, async {
+            // Each stream carries its own 8 MiB budget — upstream's two
+            // `read()` tasks cap independently.
+            let mut total_out = 0usize;
+            let mut total_err = 0usize;
+            let (out, err) = tokio::join!(
+                read_bounded(&mut stdout_h, &mut total_out),
+                read_bounded(&mut stderr_h, &mut total_err),
+            );
+            let (out, err) = (out?, err?);
+            let status = child.wait().await.map_err(RunError::Io)?;
+            Ok::<_, RunError>((out, err, status))
+        })
+        .await;
+        let (stdout, stderr, code) = match collected {
+            // Timeout: kill the group (children first — review finding 11),
+            // reap, then map to upstream's 408 string.
+            Err(_) => {
+                kill_group(pid);
+                let _ = child.wait().await;
+                return Err(ApiError::GatewayTimeout(
+                    "Git operation exceeded the 60 second limit".into(),
+                ));
+            }
+            Ok(Err(RunError::Cap)) => {
+                kill_group(pid);
+                let _ = child.wait().await;
+                return Err(ApiError::PayloadTooLarge(
+                    "Git output exceeds the 8 MiB limit".into(),
+                ));
+            }
+            Ok(Err(RunError::Io(e))) => {
+                return Err(ApiError::Internal(format!("{program} run failed: {e}")));
+            }
+            Ok(Ok((out, err, status))) => {
+                let stdout = String::from_utf8_lossy(&out).into_owned();
+                let stderr = String::from_utf8_lossy(&err).into_owned();
+                (stdout, stderr, status.code().unwrap_or(-1))
+            }
         };
-        let output = tokio::time::timeout(RUN_TIMEOUT, wait)
-            .await
-            .map_err(|_| {
-                ApiError::GatewayTimeout("Git operation exceeded the 60 second limit".into())
-            })?
-            .map_err(|e| ApiError::Internal(format!("{program} run failed: {e}")))?;
-        if output.stdout.len() > OUTPUT_CAP || output.stderr.len() > OUTPUT_CAP {
-            return Err(ApiError::PayloadTooLarge(
-                "Git output exceeds the 8 MiB limit".into(),
-            ));
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        let code = output.status.code().unwrap_or(-1);
         if check && code != 0 {
             return Err(ApiError::BadRequest(
                 non_blank(&stderr, "Git operation failed").to_string(),
@@ -234,7 +316,19 @@ impl GitRepo {
             ));
         }
         let joined = self.root.join(path);
-        self.checked(&joined)?;
+        // Upstream `file_path` ALSO rejects paths that leave the repo root
+        // (400 "File is outside the repository") — `../sibling` inside the
+        // workspace is confined by the workspace check but escapes the REPO.
+        let resolved = self.checked(&joined)?;
+        if std::env::var("OWUI_SKIP_REPO_CONTAIN").is_ok() {
+            return Ok(path.to_string());
+        }
+        let root = std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
+        if !resolved.starts_with(&root) {
+            return Err(ApiError::BadRequest(
+                "File is outside the repository".into(),
+            ));
+        }
         Ok(path.to_string())
     }
 }
@@ -1207,11 +1301,17 @@ pub async fn git_pr_view(
     }
 
     if view == "capabilities" {
-        let version = repo.run(&["--version"], "gh", None, false).await?;
+        // Upstream wraps the WHOLE capabilities probe in
+        // try/except HTTPException → {"available": False} — a missing `gh`
+        // binary must degrade, not 404 (review finding 6).
+        let unavailable = || Ok(Json(json!({ "available": false })));
+        let Ok(version) = repo.run(&["--version"], "gh", None, false).await else {
+            return unavailable();
+        };
         if version.code != 0 {
-            return Ok(Json(json!({ "available": false })));
+            return unavailable();
         }
-        let view = repo
+        let Ok(view) = repo
             .run(
                 &[
                     "repo",
@@ -1223,7 +1323,10 @@ pub async fn git_pr_view(
                 None,
                 false,
             )
-            .await?;
+            .await
+        else {
+            return unavailable();
+        };
         let repo_json: Value = if view.code == 0 {
             serde_json::from_str(view.stdout.trim()).unwrap_or(Value::Null)
         } else {

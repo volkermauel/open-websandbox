@@ -1309,26 +1309,30 @@ async fn remove_if_eq(registry: &TerminalRegistry, id: &str, target: &Arc<Mutex<
 /// and `activity` frames stamp `last_activity`). Does NOT create a shell.
 async fn user_terminal(state: &AppState) -> Option<Arc<Mutex<Session>>> {
     let map = state.terminals.sessions.lock().await;
-    let mut best: Option<(std::time::SystemTime, Arc<Mutex<Session>>)> = None;
+    // Upstream ranks by (active, last_active) — an ACTIVE tab wins even with
+    // an older stamp (review finding 17).
+    let mut best: Option<(bool, std::time::SystemTime, Arc<Mutex<Session>>)> = None;
     for s in map.values().cloned().collect::<Vec<_>>() {
         if !is_alive(&s).await {
             continue;
         }
-        let stamp = s
-            .lock()
-            .await
+        let g = s.lock().await;
+        let active = g.active.lock().is_ok_and(|a| *a);
+        let stamp = g
             .last_activity
             .lock()
             .map(|t| std::time::SystemTime::now() - t.elapsed())
             .ok();
-        if let Some(stamp) = stamp {
-            let replace = best.as_ref().is_none_or(|(b, _)| stamp > *b);
-            if replace {
-                best = Some((stamp, s));
-            }
+        drop(g);
+        let Some(stamp) = stamp else { continue };
+        let replace = best.as_ref().is_none_or(|(b_active, b_stamp, _)| {
+            active && !*b_active || active == *b_active && stamp > *b_stamp
+        });
+        if replace {
+            best = Some((active, stamp, s));
         }
     }
-    best.map(|(_, s)| s)
+    best.map(|(_, _, s)| s)
 }
 
 /// `GET /api/terminals/user/output` — recent output from the user's active or
@@ -1355,7 +1359,7 @@ pub async fn read_user_terminal(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Some(session) = user_terminal(&state).await else {
-        return Err(ApiError::NotFound("No live user shell".to_string()));
+        return Err(ApiError::NotFound("No connected user shell".to_string()));
     };
     let output = {
         let g = session.lock().await;
@@ -1394,7 +1398,7 @@ pub async fn send_user_terminal_input(
     Json(req): Json<crate::processes::InputRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Some(session) = user_terminal(&state).await else {
-        return Err(ApiError::NotFound("No live user shell".to_string()));
+        return Err(ApiError::NotFound("No connected user shell".to_string()));
     };
     let stdin_tx = {
         let g = session.lock().await;

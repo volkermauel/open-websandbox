@@ -192,7 +192,7 @@ fn build_sample(workdir: &Path, previous: Option<&Counters>, counters: &mut Coun
         let idle = stat.get(3).copied().unwrap_or(0.0) + stat.get(4).copied().unwrap_or(0.0); // idle + iowait
         counters.cpu_total = Some(total);
         counters.cpu_idle = Some(idle);
-        let host_cores = cpu_count();
+        let host_cores = f64::from(u8::try_from(cpu_count()).unwrap_or(u8::MAX));
         let mut cores = host_cores;
         let mut scope = "host";
         if let Some(cg) = &group {
@@ -200,7 +200,7 @@ fn build_sample(workdir: &Path, previous: Option<&Counters>, counters: &mut Coun
                 cores = cores.min(cg_cores);
             }
             if cg.cpu_seconds.is_some() {
-                cores = cores.max(1);
+                cores = cores.max(1.0);
                 scope = "cgroup";
             }
         }
@@ -220,8 +220,7 @@ fn build_sample(workdir: &Path, previous: Option<&Counters>, counters: &mut Coun
                     if let Some(prev) = previous {
                         if prev.cgroup_path == cg.path {
                             let d = secs - prev.cgroup_cpu_seconds.unwrap_or(secs);
-                            percent =
-                                percent_of(d, counters.at.elapsed().as_secs_f64() * cores as f64);
+                            percent = percent_of(d, counters.at.elapsed().as_secs_f64() * cores);
                         }
                     }
                 }
@@ -442,7 +441,10 @@ fn parse_cpu_seconds(stat: &str) -> Option<f64> {
 #[derive(Debug, Default, Clone)]
 struct Cgroup {
     path: Option<String>,
-    cores: Option<u64>,
+    /// `cpu.max` quota/period as a FLOAT — fractional core limits (500m →
+    /// 0.5) truncate under integer division (upstream: `int/int` division;
+    /// review finding 12).
+    cores: Option<f64>,
     cpu_seconds: Option<f64>,
     memory_total: Option<u64>,
     memory_used: Option<u64>,
@@ -483,9 +485,9 @@ fn read_cgroup() -> Option<Cgroup> {
             let mut parts = line.split_whitespace();
             let quota = parts.next().unwrap_or("max");
             let period: u64 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(100_000);
-            if let Ok(q) = quota.parse::<u64>() {
-                if q > 0 {
-                    let cores = q / period;
+            if let Ok(q) = quota.parse::<f64>() {
+                if q > 0.0 && period > 0 {
+                    let cores = q / period as f64;
                     cg.cores = Some(cg.cores.map_or(cores, |c| c.min(cores)));
                 }
             }

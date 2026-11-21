@@ -88,7 +88,9 @@ const CLOSE_UNKNOWN: u16 = 4004;
 pub struct ProcessRegistry {
     processes: StdMutex<HashMap<String, Arc<Process>>>,
     /// Fires on spawn / finish / expiry — the `WS /execute` list stream.
-    changed: Notify,
+    /// Shared with every `Process` (`registry_changed`) so a completion
+    /// transition wakes the stream directly.
+    changed: Arc<Notify>,
 }
 
 impl ProcessRegistry {
@@ -206,6 +208,11 @@ pub(crate) struct Process {
     finished_at: StdMutex<Option<Instant>>,
     /// Fires on every output record and on completion (WS status stream + waits).
     changed: Notify,
+    /// The REGISTRY-level change stream (`WS /execute` list) — notified on
+    /// completion so the dock's list pushes the done/killed transition
+    /// immediately (upstream `on_finish=_notify_process_list` parity; review
+    /// finding 2).
+    registry_changed: Arc<Notify>,
     log: StdMutex<BoundedLog>,
     /// Serializes stdin writers; a tokio (async) mutex because writes await
     /// while holding it.
@@ -237,6 +244,9 @@ impl Process {
             *self.finished_at.lock().expect("finished_at lock") = Some(Instant::now());
         }
         self.changed.notify_waiters();
+        // The dock's list stream waits on the REGISTRY notify — a
+        // running→done/killed transition must push (review finding 2).
+        self.registry_changed.notify_waiters();
     }
 
     /// SIGTERM (or SIGKILL) the whole process group (`pgid == pid`, from
@@ -269,6 +279,7 @@ impl Process {
         // Close stdin so the child sees EOF if it survives SIGTERM long enough.
         self.stdin.lock().await.take();
         self.changed.notify_waiters();
+        self.registry_changed.notify_waiters();
     }
 
     /// The read-window snapshot — `log_response` parity (`status` reads omit
@@ -369,6 +380,10 @@ pub async fn execute(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let subdir = subdir_from(&headers);
     let base = request_base(&state.config.workdir, subdir)?;
+    // Divergence (docs/compatibility.md): upstream resolves a no-cwd run
+    // against the per-session cwd tracked from POST /files/cwd; our runtime
+    // has no session-cwd registry (one workspace per chat), so the default is
+    // the 0.17.7 `OPEN_TERMINAL_START_DIR` or the workspace base.
     let cwd = match req.cwd.as_deref() {
         Some(c) if !c.trim().is_empty() => safe_path_rel(c, &base)?,
         // 0.17.7 `OPEN_TERMINAL_START_DIR`: new commands open there (only
@@ -416,6 +431,7 @@ pub async fn execute(
         exit_code: StdMutex::new(None),
         finished_at: StdMutex::new(None),
         changed: Notify::new(),
+        registry_changed: Arc::clone(&state.processes.changed),
         log: StdMutex::new(BoundedLog::new()),
         stdin: tokio::sync::Mutex::new(stdin_h),
         pid,
@@ -465,8 +481,9 @@ pub async fn execute(
 }
 
 /// Resolve a caller-supplied `cwd` inside the workspace base (relative or
-/// absolute-inside-base, [`safe_path`] semantics) — upstream
-/// `fs.resolve_path(request.cwd, cwd=session_cwd)` parity.
+/// absolute-inside-base, [`safe_path`] semantics) — the confinement half of
+/// upstream's `fs.resolve_path(request.cwd, cwd=session_cwd)`; the session-cwd
+/// half is a documented divergence (no registry — see the handler).
 fn safe_path_rel(cwd: &str, base: &Path) -> Result<PathBuf, ApiError> {
     crate::safe_path::safe_path(cwd, base)
 }
@@ -709,9 +726,10 @@ pub async fn process_status(
     Json(snapshot).into_response()
 }
 
-/// Upstream bounds `tail` to 1..=1000 on the status endpoint.
+/// Upstream bounds `tail` to `ge=1` on the REST status endpoint (unbounded
+/// above; the WS variant is the 1..=1000-clamped one — review finding 10).
 fn clamp_tail(tail: Option<usize>) -> Option<usize> {
-    tail.map(|t| t.clamp(1, 1000)).filter(|t| *t >= 1)
+    tail.filter(|t| *t >= 1)
 }
 
 /// The status-stream pump: snapshot, wait for a change, stop at completion.
@@ -1207,6 +1225,7 @@ mod tests {
             exit_code: StdMutex::new(None),
             finished_at: StdMutex::new(None),
             changed: Notify::new(),
+            registry_changed: Arc::clone(&state.processes.changed),
             log: StdMutex::new(BoundedLog::new()),
             stdin: tokio::sync::Mutex::new(stdin),
             pid: child.id().unwrap_or(0),

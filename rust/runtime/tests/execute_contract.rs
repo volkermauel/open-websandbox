@@ -14,9 +14,119 @@ mod common;
 use std::time::{Duration, Instant};
 
 use axum::http::{Method, StatusCode};
+use futures_util::StreamExt;
 use serde_json::Value;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::Message;
 
 use common::Bearer;
+
+/// Open the `/execute` list stream with the per-session key.
+async fn connect_list_stream(
+    port: u16,
+    key: &str,
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+    use tokio_tungstenite::tungstenite::http::header;
+
+    let mut req = format!("ws://127.0.0.1:{port}/execute")
+        .into_client_request()
+        .unwrap();
+    req.headers_mut().insert(
+        header::AUTHORIZATION,
+        format!("Bearer {key}").parse().unwrap(),
+    );
+    tokio_tungstenite::connect_async(req)
+        .await
+        .expect("ws upgrade")
+        .0
+}
+
+/// Read TEXT frames until one carries `needle` (a substring of the JSON), or
+/// timeout.
+async fn wait_for(
+    stream: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    needle: &str,
+    timeout: std::time::Duration,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        match tokio::time::timeout(remaining, stream.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => {
+                if text.contains(needle) {
+                    return true;
+                }
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// The common::Env port + key are needed for WS; the harness exposes them via
+/// The list-stream test stands up its own isolated runtime server (fresh key
+/// + port), exactly like `terminals_contract.rs` does.
+
+#[tokio::test]
+async fn list_stream_pushes_the_done_transition() {
+    // Stand up an isolated runtime (fresh key + port).
+    let tmp = tempfile::TempDir::new().unwrap();
+    let workdir = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workdir).unwrap();
+    let key_path = tmp.path().join("api-key");
+    std::fs::write(&key_path, common::STRONG_KEY).unwrap();
+    let config = runtime::RuntimeConfig {
+        workdir: workdir.clone(),
+        runtime_key_file: key_path.clone(),
+        ..runtime::RuntimeConfig::default()
+    };
+    let state = runtime::AppState::new(config, runtime::SessionKeyStore::new(&key_path));
+    let app = runtime::build_router(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    // Subscribe to the list stream BEFORE the process exists.
+    let mut stream = connect_list_stream(port, common::STRONG_KEY).await;
+
+    // Spawn a command that finishes quickly (via the same runtime state —
+    // HTTP POST through the served router).
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://127.0.0.1:{port}/execute"))
+        .header("Authorization", format!("Bearer {}", common::STRONG_KEY))
+        .header("content-type", "application/json")
+        .body(r#"{"command":"echo stream-done"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    let started: Value = serde_json::from_str(&body).unwrap();
+    let id = started["id"].as_str().unwrap().to_owned();
+
+    // The stream must carry BOTH the running registration and the finished
+    // transition (review finding 2: the registry notify fires on finalize).
+    assert!(
+        wait_for(&mut stream, &id, std::time::Duration::from_secs(5)).await,
+        "spawn never appeared on the list stream"
+    );
+    assert!(
+        wait_for(
+            &mut stream,
+            "\"status\":\"done\"",
+            std::time::Duration::from_secs(5)
+        )
+        .await,
+        "the done transition was never pushed to the list stream"
+    );
+}
 
 /// POST /execute with an optional body override (`timeout` extension) and
 /// `?wait=` — asserts HTTP 200 and returns the snapshot.

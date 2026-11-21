@@ -128,18 +128,33 @@ stripped — the runtime hop stays per-session-Bearer):
   surface's `sudo -u` branch is likewise absent.
 - **Process logs are in memory** (8 MiB ring/process, oldest evicted) vs
   upstream's 50 MiB rotating on-disk JSONL — a sandbox pod's processes are
-  ephemeral and the log only feeds the dock/resume windows.
+  ephemeral and the log only feeds the dock/resume windows. The
+  `log_path` field upstream includes in the `/execute` responses is
+  therefore omitted (no on-disk log exists; OWUI does not read it).
+- **No per-session cwd registry**: upstream resolves a no-cwd `/execute`
+  against the working directory `POST /files/cwd` set for the session; our
+  runtime defaults to `OPEN_TERMINAL_START_DIR` or the workspace base
+  (explicit `cwd` in the body works identically). OWUI's git-clone flow
+  always sends an explicit cwd; the LLM `run_command` default directory can
+  differ from the FileNav selection.
 - **`/execute` never auto-kills upstream**; our runtime keeps the
   pre-stage-3 extension: a `timeout` body field kills the group at the
   deadline (`status: killed`, negative-signal exit code). OWUI never sends
   it; the e2e suite does.
 - **Terminal flow-control window = scrollback cap** (default 128 KiB) vs
   upstream's 256 KiB window over a larger history — the unacked bytes always
-  remain in our ring, so steady-state playback never truncates.
-- **`/events` is a fingerprint poll** (1 s; entries + dir mtime + nearest
-  `.git` HEAD/index markers) vs upstream's native recursive watchfiles
-  watcher. Same wire semantics (no filenames, `fs:ready`/`fs:change`), no
-  inotify dependency under gVisor.
+  remain in our ring, so steady-state playback never truncates. Terminal
+  WS input validation is also more permissive than upstream: a resume
+  `cursor` beyond the history end clamps to it (upstream closes 4000
+  "Invalid output cursor") and `ack{cursor}` accepts any u64 — self-harm
+  only, never a server failure.
+- **`/events` is a bounded-recursive fingerprint poll** (1 s; every path's
+  mtime + file sizes under the watched directory, `.git` trees skipped,
+  `.git/HEAD` + the RESOLVED branch-ref + `index`/`ORIG_HEAD` markers so
+  commits fire) vs upstream's native recursive watchfiles watcher. Same wire
+  semantics (no filenames, `fs:ready`/`fs:change`, empty subscribe =
+  unsubscribe); trees beyond 10 000 entries degrade to a bounded prefix —
+  no inotify dependency under gVisor.
 - **Python sentence in `/system`**: upstream's *"Python {version} is
   available."* renders only when a python3 probe succeeds (the workbench
   toolchain image ships python3; the prompt is byte-for-byte upstream there).
