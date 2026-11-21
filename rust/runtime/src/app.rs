@@ -19,6 +19,10 @@ use crate::files::{
     tool_download, tool_exists, tool_list, tool_list_root, tool_upload, upload, view_file,
     write_file,
 };
+use crate::git::{
+    git_action, git_available, git_branches, git_diff, git_issue_action, git_issue_view, git_log,
+    git_pr_action, git_pr_view, git_show, git_status, git_worktrees,
+};
 use crate::ports::{list_ports, port_proxy, port_proxy_path};
 use crate::processes::{execute, execute_get_or_ws, kill_process, process_status, send_input};
 use crate::skills::{list_skills, read_skill, read_skill_by_name};
@@ -57,9 +61,9 @@ async fn ok() -> axum::http::StatusCode {
 ///
 /// Defining a key here SHADOWS the desktop sidecar's claim of the same name
 /// (`merge_configs` only fills missing keys): the sidecar's `/git/*` acts on
-/// the *sidecar container's* filesystem, not our workspace, so that flag
-/// stays honestly `false` until the runtime itself serves the surface
-/// (stage 3 git work). `events` is `true` — the runtime serves the upstream
+/// the *sidecar container's* filesystem, not our workspace. The runtime's own
+/// `git` key tracks the sandbox's git binary (upstream
+/// `shutil.which("git")`) — the runtime serves the whole /git/* surface. `events` is `true` — the runtime serves the upstream
 /// fs/ports change stream itself (crate::events). `agents` stays `false`
 /// while the coding-agent surface is deferred (OWUI then simply offers no
 /// agent models on this connection).
@@ -69,7 +73,7 @@ fn runtime_config_json() -> serde_json::Value {
             "terminal": true,
             "notebooks": false,
             "system": true,
-            "git": false,
+            "git": git_available(),
             "events": true,
             "agents": false,
         }
@@ -195,6 +199,26 @@ pub fn build_router(state: AppState) -> Router {
         .route("/exists/{*file_path}", get(tool_exists))
         // LLM-tool upload (multipart) — writes the file to the workspace base.
         .route("/upload", post(tool_upload))
+        // open-terminal 0.17.x Git panel + GitHub workbench (hidden from the
+        // OpenAPI document upstream — OWUI's frontend calls these directly;
+        // `features.git` gates the panel on the sandbox's git binary).
+        .route("/git/status", get(git_status))
+        .route("/git/diff", get(git_diff))
+        .route("/git/log", get(git_log))
+        .route("/git/show", get(git_show))
+        .route("/git/branches", get(git_branches))
+        .route("/git/worktrees", get(git_worktrees))
+        .route(
+            "/git/{action}",
+            post(git_action).patch(git_action).delete(git_action),
+        )
+        // Same path segment, method-branched (axum route params must not
+        // differ by name on one path).
+        .route("/git/pr/{view}", get(git_pr_view).post(git_pr_action))
+        .route(
+            "/git/issue/{view}",
+            get(git_issue_view).post(git_issue_action),
+        )
         // open-terminal 0.9.0 ports + 0.12.2 session-owned proxy (#169 stage 2):
         // both fed by the same descendant-owned visibility scan.
         .route("/ports", get(list_ports))

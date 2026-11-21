@@ -15,6 +15,7 @@ pub mod desktop;
 pub mod error;
 pub mod events;
 pub mod files;
+pub mod git;
 pub mod metrics;
 pub mod openapi;
 pub mod ports;

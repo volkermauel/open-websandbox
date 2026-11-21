@@ -45,12 +45,12 @@ async fn api_config_is_unauthenticated_feature_discovery() {
     assert_eq!(
         doc,
         // Stage 3: `events` is `true` — the runtime serves the upstream
-        // fs/ports change stream itself. `git` stays honestly false (the
-        // desktop sidecar's claim is shadowed until the runtime serves its
-        // own /git/*); `agents` stays false (deferred surface).
+        // fs/ports change stream itself. `git` mirrors the sandbox's git
+        // binary probe (true on every dev/test image); `agents` stays false
+        // (deferred surface).
         serde_json::json!({
             "features": {"terminal": true, "notebooks": false, "system": true,
-                         "git": false, "events": true, "agents": false}
+                         "git": true, "events": true, "agents": false}
         })
     );
 }

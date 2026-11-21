@@ -42,7 +42,7 @@ const SIDECAR_KEY: &str = "sidecar-key-123";
 /// body, so a hit is unambiguous).
 const SIDECAR_FALLBACK_BODY: &str = "sidecar-fallback-body";
 /// The runtime's own flags (app.rs contract) — asserted verbatim below.
-const RUNTIME_FLAGS_JSON: &str = r#"{"features":{"terminal":true,"notebooks":false,"system":true,"git":false,"events":true,"agents":false}}"#;
+const RUNTIME_FLAGS_JSON: &str = r#"{"features":{"terminal":true,"notebooks":false,"system":true,"git":false,"events":true,"git":true,"agents":false}}"#;
 
 fn gated() -> bool {
     std::env::var("OWUI_WS_LIVE").is_ok_and(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
@@ -420,9 +420,12 @@ async fn api_config_merges_sidecar_flags_runtime_flags_win() {
     // filesystem — the runtime defines the key (honestly false until the
     // runtime serves the surface), and `merge_configs` only fills missing
     // keys, so the sidecar's `true` must NOT leak through.
+    // `git` follows the sandbox's own git binary probe (upstream
+    // `shutil.which("git")`) — the test environment has git, so the runtime's
+    // own TRUE wins over the sidecar's claim either way.
     assert_eq!(
-        features["git"], false,
-        "sidecar git claim must be shadowed by the runtime's flag"
+        features["git"], true,
+        "the runtime's own git flag (binary probe) wins"
     );
     // `events` is runtime-owned (stage 3): the runtime's own `true` wins —
     // it serves the upstream fs/ports stream itself now.
