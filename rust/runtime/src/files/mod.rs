@@ -43,7 +43,7 @@ pub(super) fn subdir_from(headers: &HeaderMap) -> Option<&str> {
         .filter(|s| !s.is_empty())
 }
 
-pub(super) fn base_of(state: &AppState, headers: &HeaderMap) -> Result<PathBuf, ApiError> {
+pub(crate) fn base_of(state: &AppState, headers: &HeaderMap) -> Result<PathBuf, ApiError> {
     request_base(&state.config.workdir, subdir_from(headers))
 }
 

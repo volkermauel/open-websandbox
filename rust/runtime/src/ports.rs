@@ -52,7 +52,7 @@ const RESPONSE_STRIP: &[&str] = &["transfer-encoding", "connection", "content-le
 #[derive(Debug, Serialize)]
 pub struct VisiblePort {
     /// TCP port number.
-    port: u16,
+    pub(crate) port: u16,
     /// Owning process id (never `None` for visible ports — unresolvable
     /// sockets are excluded, mirroring upstream's descendant filter).
     pid: Option<u32>,
@@ -194,7 +194,7 @@ async fn proxy_request(
 }
 
 /// Scan the session-visible ports (descendant-owned localhost listeners).
-async fn visible_ports() -> Vec<VisiblePort> {
+pub(crate) async fn visible_ports() -> Vec<VisiblePort> {
     tokio::task::spawn_blocking(scan_visible_ports)
         .await
         .unwrap_or_default()

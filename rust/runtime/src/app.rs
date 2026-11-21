@@ -10,9 +10,9 @@ use axum::routing::{delete, get, post, put};
 use axum::Router;
 
 use crate::desktop::{
-    desktop_audio_ws, desktop_browser_view, desktop_events_ws, desktop_fallback, desktop_stream_ws,
-    merged_api_config,
+    desktop_audio_ws, desktop_browser_view, desktop_fallback, desktop_stream_ws, merged_api_config,
 };
+use crate::events::events_ws;
 use crate::files::{
     archive, compare_files, delete_entry, display_file, get_cwd, glob_search, grep, list_dir,
     match_files, mkdir, move_entry, read_file, replace, search_files, serve_file, set_cwd,
@@ -56,11 +56,13 @@ async fn ok() -> axum::http::StatusCode {
 /// and implement neither notebooks.
 ///
 /// Defining a key here SHADOWS the desktop sidecar's claim of the same name
-/// (`merge_configs` only fills missing keys): the sidecar's `/git/*` and
-/// `/events` act on the *sidecar container's* filesystem, not our workspace,
-/// so those flags stay honestly `false` until the runtime itself serves the
-/// surface (stage 3). `agents` stays `false` while the coding-agent surface
-/// is deferred (OWUI then simply offers no agent models on this connection).
+/// (`merge_configs` only fills missing keys): the sidecar's `/git/*` acts on
+/// the *sidecar container's* filesystem, not our workspace, so that flag
+/// stays honestly `false` until the runtime itself serves the surface
+/// (stage 3 git work). `events` is `true` — the runtime serves the upstream
+/// fs/ports change stream itself (crate::events). `agents` stays `false`
+/// while the coding-agent surface is deferred (OWUI then simply offers no
+/// agent models on this connection).
 fn runtime_config_json() -> serde_json::Value {
     serde_json::json!({
         "features": {
@@ -68,7 +70,7 @@ fn runtime_config_json() -> serde_json::Value {
             "notebooks": false,
             "system": true,
             "git": false,
-            "events": false,
+            "events": true,
             "agents": false,
         }
     })
@@ -120,15 +122,17 @@ pub fn build_router(state: AppState) -> Router {
                 .head(desktop_audio_ws)
                 .options(desktop_audio_ws),
         )
+        // Stage 3: the runtime OWNS /events (upstream fs/ports change stream,
+        // `features.events`) — no longer a desktop-lane relay.
         .route(
             "/events",
-            get(desktop_events_ws)
-                .post(desktop_events_ws)
-                .put(desktop_events_ws)
-                .patch(desktop_events_ws)
-                .delete(desktop_events_ws)
-                .head(desktop_events_ws)
-                .options(desktop_events_ws),
+            get(events_ws)
+                .post(events_ws)
+                .put(events_ws)
+                .patch(events_ws)
+                .delete(events_ws)
+                .head(events_ws)
+                .options(events_ws),
         )
         .route(
             "/browser/view/{sid}/{token}/{channel}",

@@ -42,7 +42,7 @@ const SIDECAR_KEY: &str = "sidecar-key-123";
 /// body, so a hit is unambiguous).
 const SIDECAR_FALLBACK_BODY: &str = "sidecar-fallback-body";
 /// The runtime's own flags (app.rs contract) — asserted verbatim below.
-const RUNTIME_FLAGS_JSON: &str = r#"{"features":{"terminal":true,"notebooks":false,"system":true,"git":false,"events":false,"agents":false}}"#;
+const RUNTIME_FLAGS_JSON: &str = r#"{"features":{"terminal":true,"notebooks":false,"system":true,"git":false,"events":true,"agents":false}}"#;
 
 fn gated() -> bool {
     std::env::var("OWUI_WS_LIVE").is_ok_and(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
@@ -336,10 +336,12 @@ async fn non_upgrade_or_non_get_request_to_a_ws_route_forwards_like_fallback() {
     let env = desktop_env(&mock);
 
     // POST (no upgrade) on an explicit WS path: must forward, never 405.
+    // (`/events` is a RUNTIME-owned stage-3 route now — the desktop-lane
+    // representative here is `/desktop/stream`.)
     let resp = env
         .send_with(
             Method::POST,
-            "/events",
+            "/desktop/stream",
             &[("content-type", "text/plain")],
             Some(b"payload".to_vec()),
         )
@@ -347,7 +349,7 @@ async fn non_upgrade_or_non_get_request_to_a_ws_route_forwards_like_fallback() {
     assert_eq!(resp.status(), StatusCode::OK);
     let r = &mock.requests()[0];
     assert_eq!(r.method, "POST");
-    assert_eq!(r.path_and_query, "/events");
+    assert_eq!(r.path_and_query, "/desktop/stream");
     assert_eq!(r.body, "payload");
 }
 
@@ -414,17 +416,19 @@ async fn api_config_merges_sidecar_flags_runtime_flags_win() {
     // Sidecar-only flags added.
     assert_eq!(features["desktop"], true);
     assert_eq!(features["browser"], true);
-    // Stage-3 shadowing: the sidecar's `git`/`events` describe ITS container's
-    // filesystem — the runtime defines both keys (honestly false until the
+    // Stage-3 shadowing: the sidecar's `git` describes ITS container's
+    // filesystem — the runtime defines the key (honestly false until the
     // runtime serves the surface), and `merge_configs` only fills missing
     // keys, so the sidecar's `true` must NOT leak through.
     assert_eq!(
         features["git"], false,
         "sidecar git claim must be shadowed by the runtime's flag"
     );
+    // `events` is runtime-owned (stage 3): the runtime's own `true` wins —
+    // it serves the upstream fs/ports stream itself now.
     assert_eq!(
-        features["events"], false,
-        "sidecar events claim must be shadowed by the runtime's flag"
+        features["events"], true,
+        "the runtime's own events flag wins over the sidecar's"
     );
     assert_eq!(features["agents"], false, "deferred surface stays false");
     // Sidecar top-level keys added.
@@ -540,7 +544,6 @@ async fn ws_routes_require_the_runtime_key_for_plain_requests() {
     for path in [
         "/desktop/stream",
         "/desktop/audio",
-        "/events",
         "/browser/view/s-1/tok/ws",
     ] {
         for (label, bearer) in [
@@ -561,7 +564,13 @@ async fn ws_routes_require_the_runtime_key_for_plain_requests() {
     );
 
     let ok = env
-        .send_raw(Method::GET, "/events", common::Bearer::Default, None, None)
+        .send_raw(
+            Method::GET,
+            "/desktop/stream",
+            common::Bearer::Default,
+            None,
+            None,
+        )
         .await;
     assert_eq!(
         ok.status(),

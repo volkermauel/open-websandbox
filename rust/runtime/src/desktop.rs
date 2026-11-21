@@ -280,29 +280,6 @@ pub async fn desktop_audio_ws(
     .await
 }
 
-/// `GET /events` — the sidecar's event stream.
-pub async fn desktop_events_ws(
-    auth: Authed,
-    State(state): State<AppState>,
-    ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
-    query: RawQuery,
-    method: Method,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    desktop_ws_route(
-        auth,
-        state,
-        "/events".to_owned(),
-        ws,
-        query,
-        method,
-        headers,
-        body,
-    )
-    .await
-}
-
 /// `GET /browser/view/{sid}/{token}/{channel}` — the sidecar's browser-view
 /// signalling/stream surface (`channel` is passed through verbatim; the
 /// sidecar is the authority on which channels exist).
