@@ -131,6 +131,7 @@ pub struct ListQuery {
 #[utoipa::path(
     get,
     path = "/files/list",
+    operation_id = "list_files",
     tag = "files",
     params(ListQuery),
     security(("brokerBearer" = [])),
@@ -808,6 +809,7 @@ pub struct ReplaceRequest {
 #[utoipa::path(
     post,
     path = "/files/replace",
+    operation_id = "replace_file_content",
     tag = "files",
     request_body = ReplaceRequest,
     security(("brokerBearer" = [])),

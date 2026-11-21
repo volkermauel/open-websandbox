@@ -20,6 +20,10 @@
 //! * `DELETE /api/terminals/{id}` (Authed) → `200 {"status":"deleted"}` (idempotent;
 //!   also removes any flushed scrollback file so a later session with the same id
 //!   starts clean).
+//! * `GET /api/terminals/user/output` + `POST /api/terminals/user/input` (Authed)
+//!   — the open-terminal *user shell* surface: read recent output from / inject
+//!   text into the active-or-last-used session (does NOT create a shell; 404
+//!   when none exists, 409 when it has disconnected).
 //! * `GET /api/terminals/{id}` WebSocket (Authed at upgrade — 401 before the socket
 //!   is accepted): **1:1 binary/text frames** relayed byte-for-byte.
 //!   Inbound **binary** frames are raw stdin to the PTY; inbound **text** frames are
@@ -28,6 +32,35 @@
 //!   unknown/dead session is closed with code **4004**; a second concurrent attach
 //!   to a live session is closed with **4009**. On attach the scrollback tail is
 //!   replayed first (one binary frame), so a reattached client sees recent output.
+//!
+//! # Stage-3 protocol (open-terminal 0.17.x / OWUI 0.13.x XTerminal)
+//!
+//! The first TEXT frame (forwarded by the broker from OWUI's auth message) may
+//! carry `resume: true`, `cursor: <byte offset>`, `flow_control: true` and
+//! `process_info: true`:
+//!
+//! * **Resume** — replay the retained history from `cursor` as an
+//!   `{"type":"output","start","end","truncated"}` frame followed by one binary
+//!   chunk covering `[start,end)`. `cursor` is an ABSOLUTE byte offset into the
+//!   session's total output (`output_offset`); a cursor below the ring's eviction
+//!   boundary replays from the boundary with `truncated: true`.
+//! * **Flow control** — confirmed with `{"type":"flow_control"}`; the relay pauses
+//!   output whenever `cursor - acknowledged >= FLOW_WINDOW` (client `ack{cursor}`
+//!   frames release more). The window equals the scrollback cap so unacked bytes
+//!   always remain in the ring (upstream: 256 KiB window / larger history —
+//!   documented divergence). Without the confirm the client renders raw binary.
+//! * **Process titles** — `process_info` enables `{"type":"process","pid","name"}`
+//!   frames on foreground-process change (sampled ≤ 2×/s from
+//!   `/proc/<shell>/stat` field 8 → `/proc/<pgrp>/comm`), driving OWUI's tab
+//!   titles ("named after the running program").
+//! * **Chat binding** — a `chat{chat_id}` frame binds the session; the session
+//!   echoes `{"type":"chat","chat_id"}` or errors `Terminal already belongs to
+//!   another chat` (a sandbox pod IS one chat's machine — cross-chat rebind is
+//!   refused, matching upstream's reassignment rule).
+//! * `ping` frames are tolerated (ignored).
+//!
+//! Clients that skip the hello (legacy paths) get the pre-stage-3 behavior:
+//! raw ring replay + unbounded raw binary frames.
 //!
 //! # Session lifecycle — detach & resume (issue #129)
 //!
@@ -66,7 +99,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant, SystemTime};
 
-use axum::body::Bytes;
 use axum::extract::ws::rejection::WebSocketUpgradeRejection;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxumPath, State};
@@ -77,7 +109,6 @@ use nix::sys::signal::{killpg, Signal};
 use nix::unistd::Pid;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
-use serde_json::Value;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::spawn_blocking;
 
@@ -88,6 +119,11 @@ use crate::state::AppState;
 
 /// WebSocket close code for an unknown or already-ended session.
 const CLOSE_UNKNOWN: u16 = 4004;
+/// How long the relay waits for the stage-3 hello before falling back to the
+/// legacy raw-replay path. The broker forwards OWUI's auth frame immediately
+/// after its own handshake, so a hello-connected client never notices; a
+/// legacy/direct client pays one second before its raw tail replay.
+const HELLO_TIMEOUT: Duration = Duration::from_secs(1);
 /// WebSocket close code for a live session that already has an attached client.
 const CLOSE_BUSY: u16 = 4009;
 /// Interval between idle-detached sweeps (see [`spawn_detached_sweep`]).
@@ -128,9 +164,13 @@ impl TerminalRegistry {
 
 /// Bounded tail of recent PTY output, replayed to a reattaching client and
 /// flushed to the workspace on SIGTERM. Appended by the permanent reader pump.
+/// `total` counts every byte EVER pushed (the absolute end offset the stage-3
+/// resume cursor is measured against) — updated under the same lock as the
+/// buffer, so `(total, snapshot)` reads are always consistent.
 struct Scrollback {
     buf: Vec<u8>,
     cap: usize,
+    total: u64,
 }
 
 impl Scrollback {
@@ -138,12 +178,14 @@ impl Scrollback {
         Self {
             buf: Vec::new(),
             cap,
+            total: 0,
         }
     }
 
     /// Append `bytes`, evicting the OLDEST once `cap` is exceeded (the tail is
     /// what a reattaching client needs). `cap == 0` disables capture.
     fn push(&mut self, bytes: &[u8]) {
+        self.total += bytes.len() as u64;
         if self.cap == 0 || bytes.is_empty() {
             return;
         }
@@ -167,7 +209,20 @@ struct Session {
     created_at: String,
     pid: u32,
     /// Scrollback tail — appended by the reader pump, replayed on attach.
+    /// `ring.total` is the absolute end byte offset for stage-3 resume.
     ring: Arc<StdMutex<Scrollback>>,
+    /// The client's last `ack{cursor}` (stage-3 flow control) — updated by the
+    /// control path, read by the relay's output gate.
+    acknowledged: Arc<StdMutex<u64>>,
+    /// Wakes the output gate on a fresh `ack`.
+    ack_notify: Arc<tokio::sync::Notify>,
+    /// Chat binding (`chat{chat_id}` frames; seeded from POST X-Session-Id).
+    bound_chat: StdMutex<Option<String>>,
+    /// Last user-visible activity — attach + `activity` frames select the
+    /// "active or last-used" shell for `/api/terminals/user/*`.
+    last_activity: StdMutex<Instant>,
+    /// Whether an OWUI tab currently reports this shell as its active tab.
+    active: StdMutex<bool>,
     /// Sink of the attached WS relay (`None` while detached).
     out_tx: Arc<StdMutex<Option<mpsc::Sender<Vec<u8>>>>>,
     /// Feed of the permanent stdin pump — cloned per attached relay.
@@ -374,6 +429,14 @@ pub async fn create_terminal(
                     )));
                 }
             };
+            // Stage-3 chat binding: seed from X-Session-Id (the chat id) so a
+            // `chat{chat_id}` frame matching it is idempotent and a DIFFERENT
+            // chat is refused — a sandbox pod is one chat's machine.
+            if let Some(chat) = &session_id {
+                if let Ok(mut bound) = session.bound_chat.lock() {
+                    *bound = Some(chat.clone());
+                }
+            }
             let resp = CreateResponse {
                 id: id.clone(),
                 created_at: session.created_at.clone(),
@@ -439,7 +502,9 @@ fn spawn_pty(
     // Permanent output pump: drains the master forever. While a relay is
     // attached it forwards each chunk (blocking send = PTY backpressure, as
     // before); while detached it keeps draining into the scrollback ring so the
-    // shell never blocks on a terminal nobody is watching.
+    // shell never blocks on a terminal nobody is watching. Every chunk also
+    // advances `output_offset` — the absolute byte cursor stage-3 resume keys
+    // off.
     let reader = master.try_clone_reader().map_err(|e| format!("{e}"))?;
     let sink = Arc::new(StdMutex::new(None::<mpsc::Sender<Vec<u8>>>));
     let ring_out = Arc::clone(&ring);
@@ -480,6 +545,11 @@ fn spawn_pty(
         created_at: now_iso_utc(),
         pid,
         ring,
+        acknowledged: Arc::new(StdMutex::new(0)),
+        ack_notify: Arc::new(tokio::sync::Notify::new()),
+        bound_chat: StdMutex::new(None),
+        last_activity: StdMutex::new(Instant::now()),
+        active: StdMutex::new(false),
         out_tx: sink,
         stdin_tx,
         detached_since: StdMutex::new(None),
@@ -632,6 +702,11 @@ pub async fn kill_terminal(
 /// output keeps draining into the scrollback ring, and a later attach to the same
 /// id resumes it. The PTY side ending (shell exit / heartbeat-detected death)
 /// still tears the session down.
+///
+/// Stage-3 hello: the broker forwards OWUI's auth message (token stripped — the
+/// runtime authenticates at upgrade via the per-session Bearer) with the
+/// `resume`/`cursor`/`flow_control`/`process_info` block. A client that sends
+/// binary first (or nothing) gets the pre-stage-3 raw behavior.
 async fn relay(state: AppState, mut socket: WebSocket, id: String) {
     let Some(session) = state.terminals.sessions.lock().await.get(&id).cloned() else {
         close_unknown(&mut socket).await;
@@ -662,13 +737,98 @@ async fn relay(state: AppState, mut socket: WebSocket, id: String) {
         g.stdin_tx.clone()
     };
 
-    // Replay the scrollback tail first, so a reattaching client sees recent
-    // output (and, after a pod recreation, the flushed pre-eviction tail).
-    {
+    // --- stage-3 hello ------------------------------------------------------
+    // Wait briefly for the forwarded auth text frame. A binary frame first
+    // (legacy client keystrokes) is fed to the shell and disables the new
+    // protocol; silence falls back to raw replay too.
+    let hello = read_hello(&mut socket, &stdin_tx).await;
+
+    // Attach bookkeeping: activity stamp (user-shell selection) + active flag;
+    // clone the ack counter + notifier out of the session lock so the output
+    // gate below never needs the async lock.
+    let (ack_counter, ack_notify) = {
         let g = session.lock().await;
-        let replay = g.ring.lock().map(|r| r.snapshot()).unwrap_or_default();
-        if !replay.is_empty() {
-            let _ = socket.send(Message::Binary(Bytes::from(replay))).await;
+        *g.last_activity.lock().expect("last_activity lock") = Instant::now();
+        (Arc::clone(&g.acknowledged), Arc::clone(&g.ack_notify))
+    };
+
+    let mut cursor: u64 = hello.cursor.unwrap_or(0);
+    let mut acknowledged: u64 = cursor;
+    // The flow window equals the scrollback cap so unacked bytes always remain
+    // in the ring (no mid-stream `truncated` in the steady state — see module
+    // docs for the upstream divergence). Cap 0 disables capture ⇒ no resume.
+    let flow_window = u64::try_from(state.config.terminal_scrollback_bytes).unwrap_or(u64::MAX);
+    let mut flow_on = false;
+
+    // Replay: stage-3 clients get an `output{start,end,truncated}` frame plus
+    // one binary chunk from the cursor; legacy clients get the raw tail.
+    if hello.resume {
+        let (start, data, truncated) = history_window(&session, cursor).await;
+        let end = start + data.len() as u64;
+        if !data.is_empty() {
+            let frame = serde_json::json!({
+                "type": "output", "start": start, "end": end, "truncated": truncated
+            });
+            if socket
+                .send(Message::Text(frame.to_string().into()))
+                .await
+                .is_err()
+            {
+                return detach_or_teardown(&state, &session, &id, true).await;
+            }
+            if socket
+                .send(Message::Binary(axum::body::Bytes::from(data)))
+                .await
+                .is_err()
+            {
+                return detach_or_teardown(&state, &session, &id, true).await;
+            }
+            cursor = end;
+        }
+        // Flow control is confirmed AFTER the replay, exactly like upstream.
+        if hello.flow_control && flow_window > 0 {
+            flow_on = true;
+            // The gate measures cursor vs the session's acknowledged counter —
+            // seed it with the replayed end.
+            if let Ok(mut a) = ack_counter.lock() {
+                *a = cursor;
+            }
+            acknowledged = cursor;
+            if socket
+                .send(Message::Text(
+                    serde_json::json!({ "type": "flow_control" })
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .is_err()
+            {
+                return detach_or_teardown(&state, &session, &id, true).await;
+            }
+        }
+    } else {
+        // Legacy replay: one raw binary frame with the retained tail.
+        let replay = {
+            let g = session.lock().await;
+            g.ring.lock().map(|r| r.snapshot()).unwrap_or_default()
+        };
+        if !replay.is_empty()
+            && socket
+                .send(Message::Binary(axum::body::Bytes::from(replay)))
+                .await
+                .is_err()
+        {
+            return detach_or_teardown(&state, &session, &id, true).await;
+        }
+        // Everything emitted so far is consumed by this legacy client — keep
+        // the cursor parked at the current end so a later resume works.
+        cursor = {
+            let g = session.lock().await;
+            g.ring.lock().map_or(cursor, |r| r.total)
+        };
+        acknowledged = cursor;
+        if let Ok(mut a) = ack_counter.lock() {
+            *a = cursor;
         }
     }
 
@@ -676,6 +836,10 @@ async fn relay(state: AppState, mut socket: WebSocket, id: String) {
     // The first interval tick fires immediately; skip it so we don't tear down a
     // healthy session before its first output.
     heartbeat.tick().await;
+    // Foreground-process sampler (stage-3 `process_info`): ≤2×/s, frames on change.
+    let mut proc_sample = tokio::time::interval(Duration::from_millis(500));
+    proc_sample.tick().await; // skip the immediate tick
+    let mut last_fg: Option<(u32, String)> = None;
 
     // Which side ended the loop — a gone CLIENT detaches; a gone PTY tears down.
     let mut client_gone = false;
@@ -690,7 +854,15 @@ async fn relay(state: AppState, mut socket: WebSocket, id: String) {
                     let _ = stdin_tx.send(bytes.to_vec()).await;
                 }
                 Some(Ok(Message::Text(text))) => {
-                    apply_control(&text, &session).await;
+                    // `ack` updates the session's acknowledged counter (the gate
+                    // below re-reads it after the notify); `chat` may produce a
+                    // reply frame to send back.
+                    if let Some(reply) = apply_control(&text, &session).await {
+                        if socket.send(Message::Text(reply.to_string().into())).await.is_err() {
+                            client_gone = true;
+                            break;
+                        }
+                    }
                 }
                 Some(Ok(Message::Close(_)) | Err(_)) | None => {
                     client_gone = true;
@@ -702,13 +874,53 @@ async fn relay(state: AppState, mut socket: WebSocket, id: String) {
             // PTY → WS (stdout).
             chunk = out_rx.recv() => match chunk {
                 Some(c) => {
-                    if socket.send(Message::Binary(Bytes::from(c))).await.is_err() {
+                    if flow_on {
+                        // Gate on the client's acks: never get further ahead
+                        // than the window (the ring holds that much history).
+                        while cursor.saturating_sub(acknowledged) >= flow_window {
+                            let notified = ack_notify.notified();
+                            acknowledged = ack_counter.lock().map_or(acknowledged, |a| *a);
+                            if cursor.saturating_sub(acknowledged) < flow_window {
+                                break;
+                            }
+                            notified.await;
+                        }
+                    }
+                    let len = c.len() as u64;
+                    if flow_on {
+                        let frame = serde_json::json!({
+                            "type": "output", "start": cursor,
+                            "end": cursor + len, "truncated": false
+                        });
+                        if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
+                            client_gone = true;
+                            break;
+                        }
+                    }
+                    if socket.send(Message::Binary(axum::body::Bytes::from(c))).await.is_err() {
                         client_gone = true;
                         break;
                     }
+                    cursor += len;
                 }
                 None => break, // reader ended (shell exited → EOF/EIO)
             },
+            // Foreground-process change → title frame (stage-3 process_info).
+            _ = proc_sample.tick(), if hello.process_info => {
+                let current = foreground_process(&session).await;
+                if current != last_fg {
+                    last_fg = current.clone();
+                    if let Some((pid, name)) = &current {
+                        let frame = serde_json::json!({
+                            "type": "process", "pid": pid, "name": name
+                        });
+                        if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
+                            client_gone = true;
+                            break;
+                        }
+                    }
+                }
+            }
             // Heartbeat: catches a dead shell whose slave is still held open by a
             // backgrounded grandchild (no EOF reaches the master read).
             _ = heartbeat.tick() => {
@@ -719,11 +931,21 @@ async fn relay(state: AppState, mut socket: WebSocket, id: String) {
         }
     }
 
-    // --- detach / teardown -------------------------------------------------
+    detach_or_teardown(&state, &session, &id, client_gone).await;
+}
+
+/// Common exit path: a gone CLIENT detaches (shell lives on); anything else
+/// tears the session down.
+async fn detach_or_teardown(
+    state: &AppState,
+    session: &Arc<Mutex<Session>>,
+    id: &str,
+    client_gone: bool,
+) {
     // Drop our receiver FIRST so a reader pump parked on a full channel
-    // unblocks the instant we stop draining it.
-    drop(out_rx);
-    if client_gone && is_alive(&session).await {
+    // unblocks the instant we stop draining it — the caller already dropped
+    // `out_rx` (moved into the loop scope); clearing the sink is enough.
+    if client_gone && is_alive(session).await {
         // Detach (issue #129): the shell lives on — output keeps draining
         // into the scrollback and a reconnect to the same id resumes this PTY.
         let g = session.lock().await;
@@ -731,9 +953,103 @@ async fn relay(state: AppState, mut socket: WebSocket, id: String) {
         *g.detached_since.lock().expect("detached_since lock") = Some(Instant::now());
     } else {
         // PTY gone (shell exit / heartbeat) or unknown failure: full teardown.
-        remove_if_eq(&state.terminals, &id, &session).await;
-        teardown_one(session).await;
+        remove_if_eq(&state.terminals, id, session).await;
+        teardown_one(session.clone()).await;
     }
+}
+
+/// The stage-3 hello: the first TEXT frame's protocol fields. `cursor` is an
+/// absolute byte offset into the session's total output.
+#[derive(Debug, Default)]
+struct Hello {
+    resume: bool,
+    cursor: Option<u64>,
+    flow_control: bool,
+    process_info: bool,
+}
+
+/// Read the first frame with a short timeout. A TEXT frame parses as the
+/// forwarded auth payload (token ignored — auth ran at upgrade via the
+/// per-session Bearer); a BINARY frame is legacy keystrokes (fed to the shell);
+/// silence falls back to the legacy path. Returns the parsed hello + whether a
+/// binary frame was consumed.
+async fn read_hello(socket: &mut WebSocket, stdin_tx: &mpsc::Sender<Vec<u8>>) -> Hello {
+    let first = tokio::time::timeout(HELLO_TIMEOUT, socket.recv()).await;
+    match first {
+        Ok(Some(Ok(Message::Text(text)))) => {
+            let Ok(payload) = serde_json::from_str::<serde_json::Value>(&text) else {
+                return Hello::default();
+            };
+            // The broker forwards OWUI's auth frame; tolerate direct clients too.
+            if payload.get("type").and_then(|v| v.as_str()) == Some("auth") {
+                Hello {
+                    resume: payload.get("resume").and_then(serde_json::Value::as_bool)
+                        == Some(true),
+                    cursor: payload.get("cursor").and_then(serde_json::Value::as_u64),
+                    flow_control: payload
+                        .get("flow_control")
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true),
+                    process_info: payload
+                        .get("process_info")
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true),
+                }
+            } else {
+                Hello::default()
+            }
+        }
+        Ok(Some(Ok(Message::Binary(bytes)))) => {
+            // Legacy client: keystrokes arrived before any hello.
+            let _ = stdin_tx.send(bytes.to_vec()).await;
+            Hello::default()
+        }
+        _ => Hello::default(),
+    }
+}
+
+/// The retained history window from an absolute cursor: `(start, bytes,
+/// truncated)` — a cursor below the ring's eviction boundary replays from the
+/// boundary with `truncated: true` (upstream's `[Earlier output is no longer
+/// available]` contract). `(total, snapshot)` is read under ONE lock, so the
+/// start computation is always consistent with the buffer.
+async fn history_window(session: &Arc<Mutex<Session>>, cursor: u64) -> (u64, Vec<u8>, bool) {
+    let g = session.lock().await;
+    let (total, data) = g
+        .ring
+        .lock()
+        .map_or((0, Vec::new()), |r| (r.total, r.snapshot()));
+    let start = total.saturating_sub(data.len() as u64);
+    let from = cursor.max(start) as usize;
+    let clamped = from.min(data.len());
+    let bytes = data[clamped..].to_vec();
+    let truncated = cursor < start;
+    (start + clamped as u64, bytes, truncated)
+}
+
+/// The PTY's foreground process: `/proc/<shell>/stat` field 8 is the kernel's
+/// notion of the controlling terminal's foreground pgid — `tcgetpgrp(slave)`
+/// parity without touching the master fd. The NAME comes from the group
+/// leader's `/proc/<pgid>/comm`. `None` when either read fails (upstream
+/// simply omits the frame then).
+async fn foreground_process(session: &Arc<Mutex<Session>>) -> Option<(u32, String)> {
+    let pid = session.lock().await.pid;
+    let stat = tokio::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .await
+        .ok()?;
+    // Field 8 (1-indexed: pid, comm, state, ppid, pgrp, session, tty_nr, tpgid)
+    // sits after the parenthesised comm — split on the LAST ')'.
+    let tail = stat.rsplit_once(')').map(|(_, t)| t)?;
+    let fields: Vec<&str> = tail.split_whitespace().collect();
+    // fields[0] is `state` (field 3), so tpgid is fields[5].
+    let tpgid: u32 = fields.get(5)?.parse().ok()?;
+    if tpgid == 0 {
+        return None;
+    }
+    let comm = tokio::fs::read_to_string(format!("/proc/{tpgid}/comm"))
+        .await
+        .ok()?;
+    Some((tpgid, comm.trim().to_string()))
 }
 
 /// Gracefully close the socket with the 4004 (unknown/ended session) code.
@@ -893,40 +1209,77 @@ async fn sweep_once(state: &AppState) -> usize {
     reaped
 }
 
-/// Apply one inbound TEXT control frame. Only `resize` is honoured; an `auth` frame
-/// is tolerated (auth already ran at upgrade); anything else (incl. non-JSON) is
-/// ignored (tolerant of unknown frames).
-// reason: `rows`/`cols` are clamped to `u16::MAX` just above, so the narrowing
-// `u64`→`u16` cast never truncates a real value.
-#[allow(clippy::cast_possible_truncation)]
-async fn apply_control(text: &str, session: &Arc<Mutex<Session>>) {
-    let Ok(payload) = serde_json::from_str::<Value>(text) else {
-        return; // malformed → ignored
-    };
-    let Some(t) = payload.get("type").and_then(|v| v.as_str()) else {
-        return;
-    };
-    if t == "resize" {
-        // Tolerate missing/non-numeric fields
-        // (defaults 24/80, errors swallowed).
-        let rows = payload
-            .get("rows")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(24)
-            .clamp(1, u64::from(u16::MAX)) as u16;
-        let cols = payload
-            .get("cols")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(80)
-            .clamp(1, u64::from(u16::MAX)) as u16;
-        let _ = session.lock().await.master.resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        });
+/// Apply one inbound TEXT control frame. Honoured: `resize` (PTY size),
+/// `ack{cursor}` (stage-3 flow-control credit — updates the session counter and
+/// wakes the output gate), `activity{active}` (tab visibility → last_activity
+/// stamp + active flag for the user-shell surface), `chat{chat_id}` (chat
+/// binding — returns the reply frame to send). Tolerated-and-ignored: `auth`
+/// (auth ran at upgrade), `ping` keepalives, anything non-JSON.
+async fn apply_control(text: &str, session: &Arc<Mutex<Session>>) -> Option<serde_json::Value> {
+    let payload = serde_json::from_str::<serde_json::Value>(text).ok()?;
+    let t = payload.get("type").and_then(|v| v.as_str())?;
+    match t {
+        "resize" => {
+            // Tolerate missing/non-numeric fields
+            // (defaults 24/80, errors swallowed).
+            let rows = payload
+                .get("rows")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(24)
+                .clamp(1, u64::from(u16::MAX));
+            let cols = payload
+                .get("cols")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(80)
+                .clamp(1, u64::from(u16::MAX));
+            // reason: `rows`/`cols` are clamped to `u16::MAX` just above, so the
+            // narrowing `u64`→`u16` cast never truncates a real value.
+            #[allow(clippy::cast_possible_truncation)]
+            let _ = session.lock().await.master.resize(PtySize {
+                rows: rows as u16,
+                cols: cols as u16,
+                pixel_width: 0,
+                pixel_height: 0,
+            });
+            None
+        }
+        "ack" => {
+            let cursor = payload.get("cursor").and_then(serde_json::Value::as_u64)?;
+            let g = session.lock().await;
+            if let Ok(mut a) = g.acknowledged.lock() {
+                *a = cursor;
+            }
+            g.ack_notify.notify_waiters();
+            None
+        }
+        "activity" => {
+            let active = payload.get("active").and_then(serde_json::Value::as_bool)?;
+            let g = session.lock().await;
+            *g.last_activity.lock().expect("last_activity lock") = Instant::now();
+            *g.active.lock().expect("active lock") = active;
+            None
+        }
+        "chat" => {
+            let chat_id = payload.get("chat_id").and_then(serde_json::Value::as_str)?;
+            let g = session.lock().await;
+            let bound = g.bound_chat.lock().expect("bound_chat lock").clone();
+            match bound {
+                Some(existing) if existing == chat_id => {
+                    Some(serde_json::json!({ "type": "chat", "chat_id": chat_id }))
+                }
+                Some(_) => Some(serde_json::json!({
+                    "type": "chat",
+                    "error": "Terminal already belongs to another chat"
+                })),
+                None => {
+                    *g.bound_chat.lock().expect("bound_chat lock") = Some(chat_id.to_string());
+                    Some(serde_json::json!({ "type": "chat", "chat_id": chat_id }))
+                }
+            }
+        }
+        // "auth", "ping", unknown types: ignored.
+        _ => None,
     }
-    // "auth" + unknown types: ignored.
 }
 
 /// Remove `id` from the registry only if it still points at `target` (Arc identity).
@@ -938,6 +1291,114 @@ async fn remove_if_eq(registry: &TerminalRegistry, id: &str, target: &Arc<Mutex<
         true
     } else {
         false
+    }
+}
+
+// ---------------------------------------------------------------------------
+// /api/terminals/user/* — the open-terminal user-shell surface (baseline)
+// ---------------------------------------------------------------------------
+
+/// The ACTIVE-or-last-used session (upstream `_user_terminal`): among live
+/// sessions, the one an OWUI tab most recently reported activity for (attach
+/// and `activity` frames stamp `last_activity`). Does NOT create a shell.
+async fn user_terminal(state: &AppState) -> Option<Arc<Mutex<Session>>> {
+    let map = state.terminals.sessions.lock().await;
+    let mut best: Option<(std::time::SystemTime, Arc<Mutex<Session>>)> = None;
+    for s in map.values().cloned().collect::<Vec<_>>() {
+        if !is_alive(&s).await {
+            continue;
+        }
+        let stamp = s
+            .lock()
+            .await
+            .last_activity
+            .lock()
+            .map(|t| std::time::SystemTime::now() - t.elapsed())
+            .ok();
+        if let Some(stamp) = stamp {
+            let replace = best.as_ref().is_none_or(|(b, _)| stamp > *b);
+            if replace {
+                best = Some((stamp, s));
+            }
+        }
+    }
+    best.map(|(_, s)| s)
+}
+
+/// `GET /api/terminals/user/output` — recent output from the user's active or
+/// last-used shell (LLM tool surface; OWUI probes this to gate the
+/// `read_user_terminal` tool). Does not create a shell.
+///
+/// # Errors
+///
+/// 404 when no live session exists.
+#[utoipa::path(
+    get,
+    path = "/api/terminals/user/output",
+    operation_id = "read_user_terminal",
+    tag = "terminals",
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Recent PTY output", body = serde_json::Value),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 404, description = "No live user shell", body = shared::ErrorResponse)
+    )
+)]
+pub async fn read_user_terminal(
+    _auth: Authed,
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some(session) = user_terminal(&state).await else {
+        return Err(ApiError::NotFound("No live user shell".to_string()));
+    };
+    let output = {
+        let g = session.lock().await;
+        g.ring
+            .lock()
+            .map(|r| String::from_utf8_lossy(&r.snapshot()).into_owned())
+            .unwrap_or_default()
+    };
+    Ok(Json(serde_json::json!({ "output": output })))
+}
+
+/// `POST /api/terminals/user/input` — send literal text to the user's active
+/// or last-used shell (LLM tool surface; newlines submit). Does not wait for
+/// completion and does not create a shell.
+///
+/// # Errors
+///
+/// 404 with no live session, 409 when the shell has disconnected.
+#[utoipa::path(
+    post,
+    path = "/api/terminals/user/input",
+    operation_id = "send_user_terminal_input",
+    tag = "terminals",
+    request_body = crate::processes::InputRequest,
+    security(("brokerBearer" = [])),
+    responses(
+        (status = 200, description = "Input written", body = serde_json::Value),
+        (status = 401, body = shared::ErrorResponse),
+        (status = 404, description = "No live user shell", body = shared::ErrorResponse),
+        (status = 409, description = "User shell has disconnected", body = shared::ErrorResponse)
+    )
+)]
+pub async fn send_user_terminal_input(
+    _auth: Authed,
+    State(state): State<AppState>,
+    Json(req): Json<crate::processes::InputRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some(session) = user_terminal(&state).await else {
+        return Err(ApiError::NotFound("No live user shell".to_string()));
+    };
+    let stdin_tx = {
+        let g = session.lock().await;
+        g.stdin_tx.clone()
+    };
+    match stdin_tx.send(req.input.into_bytes()).await {
+        Ok(()) => Ok(Json(serde_json::json!({ "status": "ok" }))),
+        Err(_) => Err(ApiError::Conflict(
+            "User shell has disconnected".to_string(),
+        )),
     }
 }
 

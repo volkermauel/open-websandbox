@@ -25,7 +25,10 @@ use crate::skills::{list_skills, read_skill, read_skill_by_name};
 use crate::snapshot::{restore, snapshot};
 use crate::state::AppState;
 use crate::system::{get_info, get_system};
-use crate::terminals::{create_terminal, kill_terminal, list_terminals, terminal_get_or_ws};
+use crate::terminals::{
+    create_terminal, kill_terminal, list_terminals, read_user_terminal, send_user_terminal_input,
+    terminal_get_or_ws,
+};
 
 /// Health/info payload returned by `GET /`. Field order is fixed
 /// byte-for-byte (`status` first).
@@ -231,6 +234,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/restore", put(restore))
         // Interactive PTY terminals (D5): HTTP CRUD + WebSocket relay.
         .route("/api/terminals", post(create_terminal).get(list_terminals))
+        // Stage-3 baseline surface: the active-or-last-used shell (OWUI gates
+        // the LLM tools on this probe — read fails ⇒ tools removed).
+        .route("/api/terminals/user/output", get(read_user_terminal))
+        .route("/api/terminals/user/input", post(send_user_terminal_input))
         .route(
             "/api/terminals/{id}",
             get(terminal_get_or_ws).delete(kill_terminal),

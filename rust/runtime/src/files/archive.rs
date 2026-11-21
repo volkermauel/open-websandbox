@@ -79,6 +79,7 @@ fn upload_target_dir(directory: Option<&str>, base: &Path) -> Result<PathBuf, Ap
 #[utoipa::path(
     post,
     path = "/files/upload",
+    operation_id = "upload_file",
     tag = "files",
     params(UploadQuery),
     request_body(content = FileUpload, content_type = "multipart/form-data", description = "multipart `file` field written to `directory`/<basename>"),

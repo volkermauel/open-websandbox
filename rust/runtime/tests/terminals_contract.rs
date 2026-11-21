@@ -693,10 +693,18 @@ async fn ws_detach_resume_replays_scrollback() {
         "detach tore the session down"
     );
     // Reconnect (retrying briefly — the relay task needs a beat to detach).
+    // Stage-3 protocol: the client opens with the auth hello (the broker's
+    // forwarded shape — token blanked, auth ran at upgrade) and the FIRST
+    // frame after reattach is the `output{start,end,…}` header followed by the
+    // replayed scrollback tail.
     let mut ws2 = None;
     for _ in 0..40 {
         let mut c = ws_connect(srv.port, "/api/terminals/resume", Some(srv.key)).await;
-        // The FIRST frame after reattach is the replayed scrollback tail.
+        c.send(Message::Text(
+            r#"{"type":"auth","token":"","resume":true,"cursor":0,"flow_control":true}"#.into(),
+        ))
+        .await
+        .unwrap();
         let replayed = wait_for(&mut c, b"MARKER_A", 2.0).await;
         if replayed {
             ws2 = Some(c);

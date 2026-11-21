@@ -73,6 +73,8 @@ use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
         crate::terminals::list_terminals,
         crate::terminals::terminal_get_or_ws,
         crate::terminals::kill_terminal,
+        crate::terminals::read_user_terminal,
+        crate::terminals::send_user_terminal_input,
         crate::skills::list_skills,
         crate::skills::read_skill,
         crate::skills::read_skill_by_name

@@ -1626,6 +1626,116 @@
         ]
       }
     },
+    "/api/terminals/user/input": {
+      "post": {
+        "description": "# Errors\n\n404 with no live session, 409 when the shell has disconnected.",
+        "operationId": "send_user_terminal_input",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Input written"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No live user shell"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "User shell has disconnected"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`POST /api/terminals/user/input` — send literal text to the user's active\nor last-used shell (LLM tool surface; newlines submit). Does not wait for\ncompletion and does not create a shell.",
+        "tags": [
+          "terminals"
+        ]
+      }
+    },
+    "/api/terminals/user/output": {
+      "get": {
+        "description": "# Errors\n\n404 when no live session exists.",
+        "operationId": "read_user_terminal",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Recent PTY output"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No live user shell"
+          }
+        },
+        "security": [
+          {
+            "brokerBearer": []
+          }
+        ],
+        "summary": "`GET /api/terminals/user/output` — recent output from the user's active or\nlast-used shell (LLM tool surface; OWUI probes this to gate the\n`read_user_terminal` tool). Does not create a shell.",
+        "tags": [
+          "terminals"
+        ]
+      }
+    },
     "/api/terminals/{id}": {
       "delete": {
         "operationId": "kill_terminal",
@@ -2659,7 +2769,7 @@
     "/files/grep": {
       "get": {
         "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace or the\nregex is invalid, and [`ApiError::NotFound`] if the search path is missing.",
-        "operationId": "grep",
+        "operationId": "grep_search",
         "parameters": [
           {
             "in": "query",
@@ -2765,7 +2875,7 @@
     "/files/list": {
       "get": {
         "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace,\n[`ApiError::NotFound`] if it is missing or not a directory, and\n[`ApiError::Internal`] if the directory cannot be read.",
-        "operationId": "list_dir",
+        "operationId": "list_files",
         "parameters": [
           {
             "description": "Optional workspace-relative directory to list (defaults to `.`).",
@@ -3180,7 +3290,7 @@
     "/files/replace": {
       "post": {
         "description": "# Errors\n\nReturns [`ApiError::BadRequest`] if the path escapes the workspace, the\nread/write fails, or a replacement target is missing/ambiguous, and\n[`ApiError::NotFound`] if the file is missing.",
-        "operationId": "replace",
+        "operationId": "replace_file_content",
         "requestBody": {
           "content": {
             "application/json": {
@@ -3411,7 +3521,7 @@
     "/files/upload": {
       "post": {
         "description": "# Errors\n\nReturns [`ApiError::BadRequest`] on a multipart stream error, a disk\ncreate/read/write/sync failure, a path that escapes the workspace, or if no\n`file` part is present.",
-        "operationId": "upload",
+        "operationId": "upload_file",
         "parameters": [
           {
             "description": "Optional subdirectory under the workspace root to upload into.",
