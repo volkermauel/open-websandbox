@@ -1,6 +1,7 @@
 //! `files::io` — filesystem handlers, split out of the former `files.rs` (#102 D1).
 use super::{base_of, file_response, modified_secs};
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -21,6 +22,9 @@ pub struct Entry {
     kind: &'static str,
     size: u64,
     modified: f64,
+    /// Birth time in seconds since the epoch (open-terminal 0.17.x field;
+    /// `null` when the filesystem cannot report one).
+    created: Option<f64>,
     /// Whether the entry is writable (0.11.35 open-terminal contract: `access(W_OK)`).
     writable: bool,
 }
@@ -170,6 +174,7 @@ pub async fn list_dir(
             entries.push(entry);
         }
     }
+    fill_created_via_stat(&resolved, &mut entries);
     Ok(Json(ListResponse {
         dir: resolved.clone(),
         writable: super::is_writable(&resolved),
@@ -196,8 +201,67 @@ fn entry_for(p: &Path) -> Option<Entry> {
         kind: if is_dir { "directory" } else { "file" },
         size: meta.len(),
         modified: modified_secs(&meta),
+        // Birth time from the FOLLOWED stat (upstream listdir uses `os.stat`).
+        // `None` when the platform/FS cannot report it — the GNU-stat batch
+        // fallback in `fill_created_via_stat` runs after the listing.
+        created: std::fs::metadata(p)
+            .ok()
+            .and_then(|m| m.created().ok())
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs_f64()),
         writable: super::is_writable(p),
     })
+}
+
+/// Backfill `created` for entries whose filesystem reported no birth time via
+/// `statx` — the upstream fallback (GNU `stat -L --printf='%n\0%.9W\0'`,
+/// batched 256 names per invocation, `LC_ALL=C`, relative names under the
+/// listed directory). `%.9W` yields `0` when the FS has no birth time, which
+/// upstream maps to `null` (`float("0") or None`) — mirrored exactly.
+fn fill_created_via_stat(resolved: &Path, entries: &mut [Entry]) {
+    if entries.iter().all(|e| e.created.is_some()) {
+        return;
+    }
+    for chunk in entries.chunks_mut(256) {
+        let missing: Vec<&str> = chunk
+            .iter()
+            .filter(|e| e.created.is_none())
+            .map(|e| e.name.as_str())
+            .collect();
+        if missing.is_empty() {
+            continue;
+        }
+        let output = std::process::Command::new("stat")
+            .arg("-L")
+            .arg(r"--printf=%n\0%.9W\0")
+            .args(&missing)
+            .current_dir(resolved)
+            .env("LC_ALL", "C")
+            .output();
+        let Ok(out) = output else { return };
+        if !out.status.success() && out.stdout.is_empty() {
+            return;
+        }
+        let fields: Vec<&[u8]> = out.stdout.split(|b| *b == 0).collect();
+        let created: std::collections::HashMap<&[u8], f64> = fields
+            .chunks(2)
+            .filter_map(|pair| match pair {
+                [name, value] => std::str::from_utf8(value)
+                    .ok()
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .map(|v| (*name, v)),
+                _ => None,
+            })
+            .collect();
+        for entry in chunk.iter_mut() {
+            if entry.created.is_none() {
+                entry.created = created
+                    .get(entry.name.as_bytes())
+                    .copied()
+                    .filter(|v| *v > 0.0);
+            }
+        }
+    }
 }
 
 // --- /files/read -------------------------------------------------------------
@@ -449,7 +513,21 @@ pub async fn write_file(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let base = base_of(&state, &headers)?;
     let full = safe_path(&req.path, &base)?;
-    let data = req.content.into_bytes();
+    // `created` bool + diff base (open-terminal 0.17.x contract): whether the
+    // target existed BEFORE the write, and its previous TEXT (strict UTF-8 —
+    // binary files yield no patch, like upstream's `fs.read_text` catching
+    // UnicodeDecodeError).
+    let created = !full.exists();
+    let previous: Option<String> = if created {
+        None
+    } else {
+        tokio::fs::read(&full)
+            .await
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+    };
+    let new_text = req.content;
+    let data = new_text.clone().into_bytes();
     if let Some(parent) = full.parent() {
         if !parent.as_os_str().is_empty() {
             // Non-blocking I/O (issue #82): `tokio::fs` runs the syscall on the
@@ -472,7 +550,47 @@ pub async fn write_file(
     })
     .await
     .map_err(|e| ApiError::Internal(format!("write join failed: {e}")))??;
-    Ok(Json(serde_json::json!({ "path": full, "size": size })))
+    let mut result = serde_json::json!({ "path": full, "size": size, "created": created });
+    // Edit-diff card field (OWUI renders `patch` as added/removed lines). A new
+    // file's diff is the content itself, which the caller already has — the
+    // patch is computed only for overwrites, exactly like upstream.
+    if let Some(prev) = previous.as_deref() {
+        let display = full.display().to_string();
+        if let Some(patch) = edit_patch(&display, prev, &new_text) {
+            result["patch"] = serde_json::json!(patch);
+        }
+    }
+    Ok(Json(result))
+}
+
+/// Port of upstream `utils/fs.edit_patch` (open-terminal 0.17.20): a unified
+/// diff of `old`→`new` (`difflib.unified_diff`, context 3, `lineterm=""`),
+/// returned as `None` when the diff body would exceed the combined input size
+/// (`changes <= len(old) + len(new)` in characters) — OWUI then falls back to
+/// rendering the text itself. Identical inputs yield the empty string (an
+/// empty `difflib` generator), not a header-only stub.
+fn edit_patch(path: &str, old: &str, new: &str) -> Option<String> {
+    let diff = similar::TextDiff::from_lines(old, new);
+    // No hunks (identical inputs) → difflib's generator is empty → "".
+    if diff.grouped_ops(3).is_empty() {
+        return Some(String::new());
+    }
+    let unified = diff
+        .unified_diff()
+        .context_radius(3)
+        .header(path, path)
+        .to_string();
+    let lines: Vec<&str> = unified.lines().collect();
+    // Upstream skips the two `---`/`+++` header lines; Python `len()` counts
+    // characters, not bytes.
+    let changes: usize = lines
+        .iter()
+        .skip(2)
+        .filter(|line| !line.starts_with("@@"))
+        .map(|line| line.chars().count() + 1)
+        .sum();
+    let budget = old.chars().count() + new.chars().count();
+    (changes <= budget).then(|| lines.join("\n"))
 }
 
 // --- /files/mkdir ------------------------------------------------------------
@@ -716,18 +834,26 @@ pub async fn replace(
     let bytes = tokio::fs::read(&full)
         .await
         .map_err(|e| ApiError::BadRequest(format!("{e}")))?;
-    let mut content = String::from_utf8_lossy(&bytes).into_owned();
+    let original = String::from_utf8_lossy(&bytes).into_owned();
+    let mut content = original.clone();
     for chunk in &req.replacements {
         content = apply_replacement(content, chunk)?;
     }
+    // Edit-diff card field (open-terminal 0.17.20): the whole-edit diff, capped
+    // like upstream (`None` over the size budget ⇒ key omitted). Computed
+    // before the move into bytes.
+    let display = full.display().to_string();
+    let patch = edit_patch(&display, &original, &content);
     let data = content.into_bytes();
     // Non-blocking write (issue #82): was `std::fs::write`.
     tokio::fs::write(&full, &data)
         .await
         .map_err(|e| ApiError::BadRequest(format!("{e}")))?;
-    Ok(Json(
-        serde_json::json!({ "path": full, "size": data.len() }),
-    ))
+    let mut result = serde_json::json!({ "path": full, "size": data.len() });
+    if let Some(patch) = patch {
+        result["patch"] = serde_json::json!(patch);
+    }
+    Ok(Json(result))
 }
 
 /// Count non-overlapping occurrences of `target` in `segment` (`str.count`).
@@ -780,4 +906,55 @@ fn apply_replacement(content: String, chunk: &ReplacementChunk) -> Result<String
     rebuilt.extend(new_segment.split('\n'));
     rebuilt.extend_from_slice(&lines[end..]);
     Ok(rebuilt.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edit_patch_renders_a_unified_diff() {
+        // A one-line full replacement of equal-length text exceeds upstream's
+        // cap (24 > 12+10) — use a small in-budget edit instead.
+        let patch = edit_patch("note.md", "line1\nline2\nline3\n", "line1\nXX\nline3\n");
+        let patch = patch.expect("small diff under the size budget");
+        assert!(patch.starts_with("--- note.md\n+++ note.md\n"), "{patch:?}");
+        assert!(patch.contains("@@ -1,3 +1,3 @@"), "{patch:?}");
+        assert!(patch.contains("-line2\n+XX"), "{patch:?}");
+    }
+
+    #[test]
+    fn edit_patch_identical_input_yields_empty_string() {
+        // difflib's generator is empty for identical inputs — the patch key is
+        // "" (present), not a header-only stub and not omitted.
+        assert_eq!(edit_patch("f.txt", "same\n", "same\n"), Some(String::new()));
+    }
+
+    #[test]
+    fn edit_patch_none_over_the_size_budget() {
+        // Upstream cap: the diff body must not exceed len(old)+len(new) chars —
+        // a full rewrite triples the text, blowing the budget.
+        let old = "line\n".repeat(50);
+        let new = "replaced\n".repeat(50);
+        assert_eq!(edit_patch("big.txt", &old, &new), None);
+        // And a small tweak of a large file stays under it.
+        let tweaked = format!("{old}extra\n");
+        assert!(edit_patch("big.txt", &old, &tweaked).is_some());
+    }
+
+    #[test]
+    fn created_field_serializes_null_when_unknown() {
+        // The wire contract always carries the key (open-terminal emits
+        // `"created": null` when the FS has no birth time).
+        let entry = Entry {
+            name: "x".into(),
+            kind: "file",
+            size: 1,
+            modified: 0.0,
+            created: None,
+            writable: true,
+        };
+        let v = serde_json::to_value(&entry).unwrap();
+        assert!(v.get("created").is_some_and(serde_json::Value::is_null));
+    }
 }

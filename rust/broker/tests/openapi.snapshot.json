@@ -307,6 +307,14 @@
       "Entry": {
         "description": "One entry in a directory listing (name, type, size, modified time, writability).",
         "properties": {
+          "created": {
+            "description": "Birth time in seconds since the epoch (open-terminal 0.17.x field;\n`null` when the filesystem cannot report one).",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "modified": {
             "format": "double",
             "type": "number"
