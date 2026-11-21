@@ -39,8 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     times; `/system` serves the v0.17.21 prompt verbatim.
   - **0.17.7 knobs** — `OPEN_TERMINAL_START_DIR` and
     `OPEN_TERMINAL_SETUP_SCRIPT` (outcome visible in `/system/info`).
-  Compatibility tags move to `owui-v0.13.4` / `open-terminal-v0.17.21`; the
-  full matrix + divergences: `docs/compatibility.md`.
+  **Compatibility summary**: open-terminal **v0.17.21** implemented · Open
+  Web UI **v0.13.4** verified end-to-end · Terminals **0.4.x** (orchestrator
+  lane) deferred — plain Open Terminal connections unaffected. Compatibility
+  tags move to `owui-v0.13.4` / `open-terminal-v0.17.21`; the full matrix +
+  divergences: `docs/compatibility.md`.
 
 ### Fixed
 

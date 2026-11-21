@@ -2,11 +2,17 @@
 
 Open Web UI's *Open Terminal* experience is built against the reference
 sandbox server [open-terminal](https://github.com/open-webui/open-terminal).
-**open-websandbox is client-API compatible with open-terminal v0.17.21 (the
-stage-3 surface) for the matrix below** — verified against upstream `main` @
-`94dc004` (v0.17.21, 2026-11-21) and Open Web UI **v0.13.4**. The stage-1/2
-gap research (v0.12.3 era) is attached to issues #164, #169 and #195; the
-stage-3 gap analysis is `openspec/changes/open-terminal-compat-stage3/`.
+**Version compatibility (v0.4.0):**
+
+| Upstream | Version | Compatibility |
+|---|---|---|
+| [open-terminal](https://github.com/open-webui/open-terminal) | **v0.17.21** (`94dc004`) | ✅ implemented — the full matrix below (plain single-server contract) |
+| [Open Web UI](https://github.com/open-webui/open-webui) | **v0.13.4** | ✅ verified end-to-end (earlier: v0.11.4) |
+| [open-webui/terminals](https://github.com/open-webui/terminals) | 0.4.x | ❌ deferred — the template/scope orchestrator API is not implemented; plain Open Terminal connections are unaffected |
+
+The stage-1/2 gap research (v0.12.3 era) is attached to issues #164, #169 and
+#195; the stage-3 gap analysis is
+`openspec/changes/open-terminal-compat-stage3/`.
 
 Every released image carries two upstream-compatibility tags mirroring this
 matrix (stamped by `.github/workflows/release.yml`, bumped per release):
