@@ -44,9 +44,13 @@ async fn api_config_is_unauthenticated_feature_discovery() {
     let doc: Value = json(resp).await;
     assert_eq!(
         doc,
-        // `system` flipped true in stage 2 (#169): GET /system now exists.
+        // Stage 3: git/events/agents are honestly false — the runtime defines
+        // them to SHADOW the desktop sidecar's claims (its /git/* and /events
+        // act on the sidecar container, not our workspace); each flips true
+        // when the runtime itself serves the surface.
         serde_json::json!({
-            "features": {"terminal": true, "notebooks": false, "system": true}
+            "features": {"terminal": true, "notebooks": false, "system": true,
+                         "git": false, "events": false, "agents": false}
         })
     );
 }

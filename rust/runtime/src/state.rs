@@ -22,6 +22,8 @@ pub struct AppState {
     pub key_store: Arc<SessionKeyStore>,
     /// In-process PTY terminal sessions (`/api/terminals`).
     pub terminals: Arc<TerminalRegistry>,
+    /// Tracked background processes (`/execute` family, stage 3).
+    pub processes: Arc<crate::processes::ProcessRegistry>,
     /// D9 Prometheus metrics catalogue + registry (one per process).
     pub metrics: Arc<RuntimeMetrics>,
     /// Shared localhost HTTP client for `/proxy/{port}` (upstream's reused
@@ -45,6 +47,7 @@ impl AppState {
             config: Arc::new(config),
             key_store: Arc::new(key_store),
             terminals: Arc::new(TerminalRegistry::new()),
+            processes: Arc::new(crate::processes::ProcessRegistry::new()),
             metrics: RuntimeMetrics::new(),
             proxy_client: reqwest_proxy_client(),
             desktop_client: desktop_proxy_client(),

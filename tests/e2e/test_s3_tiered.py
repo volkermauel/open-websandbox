@@ -26,7 +26,8 @@ import uuid
 
 import httpx
 import pytest
-from conftest import (  # type: ignore[import-not-found]
+from conftest import (
+    exec_out,  # type: ignore[import-not-found]
     BROKER_URL,
     CLAIM_TIMEOUT,
     _claim_ready_session,
@@ -50,16 +51,16 @@ def _kubectl(args: list[str]) -> subprocess.CompletedProcess:
 
 
 def _write(c: httpx.Client, user: str, session: str, path: str, marker: str) -> None:
-    r = c.post("/execute", json={"command": f"echo {marker} > {path}"},
+    r = c.post("/execute?wait=120", json={"command": f"echo {marker} > {path}"},
                headers=headers_for(user, session), timeout=CLAIM_TIMEOUT)
-    assert r.status_code == 200 and r.json().get("exit_code") == 0, r.text
+    assert r.status_code == 200 and exec_out(r.json())[0] == 0, r.text
 
 
 def _read(c: httpx.Client, user: str, session: str, path: str) -> tuple[int, str]:
-    r = c.post("/execute", json={"command": f"cat {path}"},
+    r = c.post("/execute?wait=120", json={"command": f"cat {path}"},
                headers=headers_for(user, session), timeout=CLAIM_TIMEOUT)
     body = r.json() if r.status_code == 200 else {}
-    return body.get("exit_code", -1), body.get("stdout", "")
+    return exec_out(body)
 
 
 def _wait_offloaded(timeout: int = OFFLOAD_TIMEOUT) -> list[str]:

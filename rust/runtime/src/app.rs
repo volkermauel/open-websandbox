@@ -13,7 +13,6 @@ use crate::desktop::{
     desktop_audio_ws, desktop_browser_view, desktop_events_ws, desktop_fallback, desktop_stream_ws,
     merged_api_config,
 };
-use crate::execute::execute;
 use crate::files::{
     archive, compare_files, delete_entry, display_file, get_cwd, glob_search, grep, list_dir,
     match_files, mkdir, move_entry, read_file, replace, search_files, serve_file, set_cwd,
@@ -21,6 +20,7 @@ use crate::files::{
     write_file,
 };
 use crate::ports::{list_ports, port_proxy, port_proxy_path};
+use crate::processes::{execute, execute_get_or_ws, kill_process, process_status, send_input};
 use crate::skills::{list_skills, read_skill, read_skill_by_name};
 use crate::snapshot::{restore, snapshot};
 use crate::state::AppState;
@@ -48,14 +48,24 @@ async fn ok() -> axum::http::StatusCode {
 
 /// The runtime's OWN `/api/config` feature flags — the base document the
 /// desktop-sidecar merge (see [`crate::desktop::merged_api_config`]) builds on.
-/// We always serve terminals, serve the system-prompt endpoint (stage 2, #169)
+/// We always serve terminals and the system-prompt endpoint (stage 2, #169)
 /// and implement neither notebooks.
+///
+/// Defining a key here SHADOWS the desktop sidecar's claim of the same name
+/// (`merge_configs` only fills missing keys): the sidecar's `/git/*` and
+/// `/events` act on the *sidecar container's* filesystem, not our workspace,
+/// so those flags stay honestly `false` until the runtime itself serves the
+/// surface (stage 3). `agents` stays `false` while the coding-agent surface
+/// is deferred (OWUI then simply offers no agent models on this connection).
 fn runtime_config_json() -> serde_json::Value {
     serde_json::json!({
         "features": {
             "terminal": true,
             "notebooks": false,
             "system": true,
+            "git": false,
+            "events": false,
+            "agents": false,
         }
     })
 }
@@ -138,7 +148,13 @@ pub fn build_router(state: AppState) -> Router {
         // Gated routes: every handler declares `Authed` as its first extractor,
         // so each is individually fail-closed (a per-route auth
         // extractor).
-        .route("/execute", post(execute))
+        // Stage 3 background-process surface (open-terminal v0.17.x / OWUI
+        // 0.13.x caller contract): GET branches JSON list | WS list stream;
+        // /execute/{id}/status branches JSON window | WS output stream.
+        .route("/execute", post(execute).get(execute_get_or_ws))
+        .route("/execute/{id}/status", get(process_status))
+        .route("/execute/{id}/input", post(send_input))
+        .route("/execute/{id}", delete(kill_process))
         .route("/files/cwd", get(get_cwd).post(set_cwd))
         .route("/files/list", get(list_dir))
         .route("/files/read", get(read_file))

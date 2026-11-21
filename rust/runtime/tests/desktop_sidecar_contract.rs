@@ -42,8 +42,7 @@ const SIDECAR_KEY: &str = "sidecar-key-123";
 /// body, so a hit is unambiguous).
 const SIDECAR_FALLBACK_BODY: &str = "sidecar-fallback-body";
 /// The runtime's own flags (app.rs contract) — asserted verbatim below.
-const RUNTIME_FLAGS_JSON: &str =
-    r#"{"features":{"terminal":true,"notebooks":false,"system":true}}"#;
+const RUNTIME_FLAGS_JSON: &str = r#"{"features":{"terminal":true,"notebooks":false,"system":true,"git":false,"events":false,"agents":false}}"#;
 
 fn gated() -> bool {
     std::env::var("OWUI_WS_LIVE").is_ok_and(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
@@ -415,8 +414,19 @@ async fn api_config_merges_sidecar_flags_runtime_flags_win() {
     // Sidecar-only flags added.
     assert_eq!(features["desktop"], true);
     assert_eq!(features["browser"], true);
-    assert_eq!(features["git"], true);
-    assert_eq!(features["events"], true);
+    // Stage-3 shadowing: the sidecar's `git`/`events` describe ITS container's
+    // filesystem — the runtime defines both keys (honestly false until the
+    // runtime serves the surface), and `merge_configs` only fills missing
+    // keys, so the sidecar's `true` must NOT leak through.
+    assert_eq!(
+        features["git"], false,
+        "sidecar git claim must be shadowed by the runtime's flag"
+    );
+    assert_eq!(
+        features["events"], false,
+        "sidecar events claim must be shadowed by the runtime's flag"
+    );
+    assert_eq!(features["agents"], false, "deferred surface stays false");
     // Sidecar top-level keys added.
     assert_eq!(merged["auth"]["type"], "none");
     // The sidecar fetch authenticated with the shared bearer.

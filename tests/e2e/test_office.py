@@ -12,15 +12,16 @@ outside the mounted volumes.
 
 import shlex
 import uuid
+from conftest import exec_out
 
 
 def test_soffice_available(broker):
     """soffice is on PATH inside the sandbox and reports its version."""
-    r = broker.post("/execute", json={"command": "soffice --version"})
+    r = broker.post("/execute?wait=60", json={"command": "soffice --version"})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["exit_code"] == 0, body
-    assert "LibreOffice" in body["stdout"], body
+    assert exec_out(body)[0] == 0, body
+    assert "LibreOffice" in exec_out(body)[1], body
 
 
 def test_headless_document_conversion(broker):
@@ -39,18 +40,18 @@ def test_headless_document_conversion(broker):
         " && soffice --headless -env:UserInstallation=file:///tmp/lo"
         " --convert-to pdf --outdir /workspace /tmp/doc.fodt"
     )
-    r = broker.post("/execute", json={"command": cmd})
+    r = broker.post("/execute?wait=120", json={"command": cmd})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["exit_code"] == 0, body
-    assert "doc.pdf" in body["stdout"], body
+    assert exec_out(body)[0] == 0, body
+    assert "doc.pdf" in exec_out(body)[1], body
 
     # The produced artifact is a real PDF and carries the marker text content.
     check = broker.post(
-        "/execute", json={"command": "head -c 4 /workspace/doc.pdf && echo && wc -c < /workspace/doc.pdf"}
+        "/execute?wait=30", json={"command": "head -c 4 /workspace/doc.pdf && echo && wc -c < /workspace/doc.pdf"}
     )
     assert check.status_code == 200, check.text
     out = check.json()
-    assert out["exit_code"] == 0, out
-    assert "%PDF" in out["stdout"], out
-    assert int(out["stdout"].strip().splitlines()[-1]) > 1000, out
+    assert exec_out(out)[0] == 0, out
+    assert "%PDF" in exec_out(out)[1], out
+    assert int(exec_out(out)[1].strip().splitlines()[-1]) > 1000, out

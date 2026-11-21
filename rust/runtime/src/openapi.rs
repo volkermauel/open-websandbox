@@ -16,13 +16,13 @@ use shared::BearerAddon;
 use utoipa::OpenApi;
 
 // Schema types referenced by `components(schemas(...))` (bare names need them in scope).
-use crate::execute::{ExecuteRequest, ExecuteResponse};
 use crate::files::Segment;
 use crate::files::{
     ArchiveRequest, CompareFile, CompareHunk, CompareLine, CompareRequest, CompareResponse,
     ContentMatch, CwdRequest, Entry, FileUpload, ListResponse, MatchResult, MatchesResponse,
     MoveRequest, PathBody, ReplaceRequest, SearchResponse, SearchResult, WriteRequest,
 };
+use crate::processes::{ExecRequest, ExecResponse, InputRequest};
 use crate::skills::{SkillReadResponse, SkillSummary};
 use crate::snapshot::RestoreResponse;
 use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
@@ -36,7 +36,11 @@ use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        crate::execute::execute,
+        crate::processes::execute,
+        crate::processes::list_processes,
+        crate::processes::process_status,
+        crate::processes::send_input,
+        crate::processes::kill_process,
         crate::files::compare::compare_files,
         crate::files::io::get_cwd,
         crate::files::io::set_cwd,
@@ -74,7 +78,7 @@ use crate::terminals::{CreateResponse, DeleteResponse, TermInfo};
         crate::skills::read_skill_by_name
     ),
     components(schemas(
-        ExecuteRequest, ExecuteResponse, RestoreResponse,
+        ExecRequest, ExecResponse, InputRequest, RestoreResponse,
         TermInfo, CreateResponse, DeleteResponse,
         CwdRequest, WriteRequest, PathBody, MoveRequest, ReplaceRequest, ArchiveRequest, FileUpload,
         ListResponse, Entry,

@@ -23,6 +23,7 @@ pub mod client;
 pub mod config;
 pub mod desktop;
 pub mod error;
+pub mod execute_ws;
 pub mod leaser;
 pub mod metrics;
 pub mod proxy;

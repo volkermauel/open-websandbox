@@ -90,10 +90,16 @@ async fn system_returns_grounded_upstream_prompt() {
             "python sentence reads upstream-verbatim"
         );
     }
-    // Upstream-verbatim tail (em dash + closing sentence).
+    // Upstream-verbatim tail (em dash + tool-usage paragraph + the v0.17.x
+    // file-delivery paragraph).
     assert!(
-        prompt.ends_with("If a command produces no output, that typically means it succeeded."),
-        "prompt ends with the upstream tool-usage paragraph: {prompt:?}"
+        prompt.ends_with(
+            "When delivering created or updated files to the user, call display_file \
+             for each deliverable before your final response. Do not invent download \
+             links or use sandbox: URLs. After displaying the files, briefly confirm \
+             completion without repeating links."
+        ),
+        "prompt ends with the upstream delivery paragraph: {prompt:?}"
     );
     assert!(prompt.contains('\u{2014}'), "upstream em dash preserved");
 }

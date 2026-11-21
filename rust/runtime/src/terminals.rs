@@ -976,7 +976,7 @@ fn random_id() -> String {
 // reason: seconds since the Unix epoch fit in `i64` for all realistic dates
 // (i64::MAX ≈ year 292 billion), so the widening cast cannot lose the sign.
 #[allow(clippy::cast_possible_wrap)]
-fn now_iso_utc() -> String {
+pub(crate) fn now_iso_utc() -> String {
     let dur = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default();

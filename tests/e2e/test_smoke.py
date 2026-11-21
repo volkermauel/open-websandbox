@@ -8,6 +8,8 @@ in conftest (`ready_session`) and reused by every test through the `broker` clie
 """
 import uuid
 
+from conftest import exec_out
+
 
 def test_broker_healthz(broker):
     """Broker is up and serving its liveness endpoint."""
@@ -18,18 +20,18 @@ def test_broker_healthz(broker):
 def test_execute_echo(broker):
     """POST /execute runs a command and returns captured stdout + exit code."""
     marker = f"hello-e2e-{uuid.uuid4().hex[:6]}"
-    r = broker.post("/execute", json={"command": f"echo {marker}"})
+    r = broker.post("/execute?wait=30", json={"command": f"echo {marker}"})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["exit_code"] == 0, body
-    assert marker in body["stdout"], body
+    assert exec_out(body)[0] == 0, body
+    assert marker in exec_out(body)[1], body
 
 
 def test_execute_exit_code(broker):
     """A failing command surfaces a non-zero exit code (not an HTTP error)."""
-    r = broker.post("/execute", json={"command": "exit 7"})
+    r = broker.post("/execute?wait=30", json={"command": "exit 7"})
     assert r.status_code == 200, r.text
-    assert r.json()["exit_code"] == 7, r.json()
+    assert exec_out(r.json())[0] == 7, r.json()
 
 
 def test_files_write_then_read(broker):
@@ -46,8 +48,8 @@ def test_files_write_then_read(broker):
 def test_workspace_persists_across_requests(broker):
     """Within one session the workspace persists across separate requests."""
     token = f"persist-{uuid.uuid4().hex[:8]}"
-    w = broker.post("/execute", json={"command": f"echo {token} > /workspace/persist.txt"})
-    assert w.status_code == 200 and w.json()["exit_code"] == 0, w.json()
-    r = broker.post("/execute", json={"command": "cat /workspace/persist.txt"})
+    w = broker.post("/execute?wait=30", json={"command": f"echo {token} > /workspace/persist.txt"})
+    assert w.status_code == 200 and exec_out(w.json())[0] == 0, w.json()
+    r = broker.post("/execute?wait=30", json={"command": "cat /workspace/persist.txt"})
     assert r.status_code == 200, r.text
-    assert token in r.json()["stdout"], r.json()
+    assert token in exec_out(r.json())[1], r.json()

@@ -10,7 +10,7 @@
 use std::net::SocketAddr;
 use std::process::ExitCode;
 
-use runtime::{build_router, terminals, AppState, RuntimeConfig, SessionKeyStore};
+use runtime::{build_router, processes, terminals, AppState, RuntimeConfig, SessionKeyStore};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -37,6 +37,9 @@ async fn main() -> ExitCode {
     // been gone longer than TERMINAL_DETACH_TTL_SECS, so detached sessions never
     // leak up to MAX_TERMINAL_SESSIONS.
     let _sweep = terminals::spawn_detached_sweep(state.clone());
+    // Finished-process expiry sweep (stage 3, upstream `_maintenance_loop`
+    // parity): finished `/execute` entries leave the dock after 300 s.
+    let _process_sweep = processes::spawn_process_sweep(state.clone());
     let app = build_router(state.clone());
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
@@ -69,6 +72,9 @@ async fn main() -> ExitCode {
         _ = tokio::signal::ctrl_c() => {}
     }
     let flushed = terminals::flush_scrollbacks(&state).await;
+    // Stage 3: SIGKILL still-running `/execute` groups so nothing outlives the
+    // pod's control plane (bounded-tree kill, no orphaned children).
+    processes::kill_all_running(&state).await;
     tracing::info!(sessions = flushed, "terminal scrollback flushed; exiting");
     // D9 — best-effort flush of the OTLP batch processor on graceful exit.
     shared::shutdown_telemetry(otel_provider);

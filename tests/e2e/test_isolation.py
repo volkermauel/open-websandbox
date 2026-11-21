@@ -28,6 +28,7 @@ import subprocess
 import uuid
 
 import pytest
+from conftest import exec_out
 
 # Namespace the sandbox pods + per-session key Secrets live in (workflow RUNTIME_NS).
 RUNTIME_NS = os.environ.get("RUNTIME_NS", "agent-sandbox-runtime")
@@ -161,12 +162,12 @@ def test_peer_pod_8888_denied(require_broker, broker, second_broker):
     """
     # Resolve tenant B's sandbox pod IP from inside tenant B's sandbox.
     probe = second_broker.post(
-        "/execute",
+        "/execute?wait=30",
         json={"command": "hostname -I | tr ' ' '\\n' | grep -E '^[0-9.]+$' | head -n1"},
     )
     assert probe.status_code == 200, probe.text
-    assert probe.json().get("exit_code") == 0, probe.json()
-    peer_ip = probe.json()["stdout"].strip()
+    assert exec_out(probe.json())[0] == 0, probe.json()
+    peer_ip = exec_out(probe.json())[1].strip()
     assert re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", peer_ip), (
         f"could not determine a valid IPv4 peer pod IP: {peer_ip!r}"
     )
@@ -190,11 +191,11 @@ def test_peer_pod_8888_denied(require_broker, broker, second_broker):
         f"wget -q -T 8 --tries=1 -O /dev/null 'http://{peer_ip}:8888/' 2>/dev/null && connected=1\n"
         'test "$connected" = 1 && echo SANDBOX_CONNECTED_TO_PEER || echo PEER_8888_BLOCKED'
     )
-    ran = broker.post("/execute", json={"command": cmd})
+    ran = broker.post("/execute?wait=60", json={"command": cmd})
     assert ran.status_code == 200, ran.text
     body = ran.json()
-    assert body.get("exit_code") == 0, body
-    out = body.get("stdout", "")
+    assert exec_out(body)[0] == 0, body
+    out = exec_out(body)[1]
 
     assert "SANDBOX_CONNECTED_TO_PEER" not in out, (
         f"ISOLATION BROKEN: sandbox reached peer pod :8888 ({peer_ip})\n{out}"

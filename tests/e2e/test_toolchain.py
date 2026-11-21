@@ -20,7 +20,8 @@ from pathlib import Path
 
 import httpx
 import pytest
-from conftest import (  # noqa: E402
+from conftest import (
+    exec_out,  # noqa: E402
     BROKER_URL,
     TEST_USER,
     _claim_ready_session,
@@ -89,15 +90,15 @@ def test_sandbox_tools_reports_manifest_and_live_state():
     with httpx.Client(base_url=BROKER_URL, timeout=CLAIM_TIMEOUT) as client:
         _claim_ready_session(client, TEST_USER, session)
         r = client.post(
-            "/execute",
+            "/execute?wait=300",
             json={"command": "sandbox-tools | head -60"},
             headers=headers_for(TEST_USER, session),
         )
         assert r.status_code == 200, r.text[:200]
         body = r.json()
-        assert body["exit_code"] == 0, body
-        assert "Toolchain baked into this base image" in body["stdout"], body
-        assert "## Live state (probed now)" in body["stdout"], body
+        assert exec_out(body)[0] == 0, body
+        assert "Toolchain baked into this base image" in exec_out(body)[1], body
+        assert "## Live state (probed now)" in exec_out(body)[1], body
 
 
 @needs_broker
@@ -110,36 +111,36 @@ def test_sudo_apt_whitelist_allows_installs_denies_everything_else():
 
         # Allowed verb: apt-get install (writes the ephemeral rootfs).
         up = client.post(
-            "/execute",
+            "/execute?wait=300",
             json={"command": "sudo apt-get update -qq && sudo apt-get install -y figlet"},
             headers=hdrs,
         )
         assert up.status_code == 200, up.text[:200]
-        assert up.json()["exit_code"] == 0, up.json()
+        assert exec_out(up.json())[0] == 0, up.json()
 
         run = client.post(
-            "/execute", json={"command": "figlet hi"}, headers=hdrs
+            "/execute?wait=300", json={"command": "figlet hi"}, headers=hdrs
         )
         assert run.status_code == 200, run.text[:200]
         body = run.json()
-        assert body["exit_code"] == 0, body
-        assert "_" in body["stdout"], body  # figlet banner, not empty output
+        assert exec_out(body)[0] == 0, body
+        assert "_" in exec_out(body)[1], body  # figlet banner, not empty output
 
         # Denied verb: nothing but apt-get verbs is whitelisted. No NOPASSWD
         # rule matches `rm`, so sudo demands a password the locked sandbox
         # account does not have — non-interactive /execute has no tty either.
         denied = client.post(
-            "/execute", json={"command": "sudo rm /tmp/nope"}, headers=hdrs
+            "/execute?wait=300", json={"command": "sudo rm /tmp/nope"}, headers=hdrs
         )
         assert denied.status_code == 200, denied.text[:200]
         dbody = denied.json()
-        assert dbody["exit_code"] != 0, dbody
-        assert "password is required" in dbody["stderr"], dbody
+        assert exec_out(dbody)[0] != 0, dbody
+        assert "password is required" in (lambda b: "".join(r.get("data","") for r in b.get("output") or [] if r.get("type")=="stderr"))(dbody), dbody
         # ... and the file was never touched by privilege.
         probe = client.post(
-            "/execute", json={"command": "ls /tmp/nope 2>&1; true"}, headers=hdrs
+            "/execute?wait=300", json={"command": "ls /tmp/nope 2>&1; true"}, headers=hdrs
         )
-        assert "No such file or directory" in probe.json()["stdout"], probe.json()
+        assert "No such file or directory" in exec_out(probe.json())[1], probe.json()
 
 
 @needs_broker
@@ -153,15 +154,15 @@ def test_pip_target_install_and_pythonpath_import():
         # No --break-system-packages needed: EXTERNALLY-MANAGED is removed in
         # the image. `six` is a tiny pure-Python wheel (PyPI egress is allowed).
         up = client.post(
-            "/execute",
+            "/execute?wait=300",
             json={"command": "pip install --no-cache-dir --target /packages/py six"},
             headers=hdrs,
         )
         assert up.status_code == 200, up.text[:200]
-        assert up.json()["exit_code"] == 0, up.json()
+        assert exec_out(up.json())[0] == 0, up.json()
 
         run = client.post(
-            "/execute",
+            "/execute?wait=300",
             json={
                 "command": "PYTHONPATH=/packages/py python3 -c "
                 "'import six; print(\"six-ok\", six.__version__)'"
@@ -170,5 +171,5 @@ def test_pip_target_install_and_pythonpath_import():
         )
         assert run.status_code == 200, run.text[:200]
         body = run.json()
-        assert body["exit_code"] == 0, body
-        assert "six-ok" in body["stdout"], body
+        assert exec_out(body)[0] == 0, body
+        assert "six-ok" in exec_out(body)[1], body

@@ -73,7 +73,7 @@ pub struct RuntimeConfig {
     pub workdir: PathBuf,
     /// `RLIMIT_NPROC` applied to the runtime process (inherited by children).
     pub max_procs: u64,
-    /// Per-stream output cap (bytes / code points — see `execute::cap`).
+    /// Per-stream output cap (bytes / code points).
     pub max_output_bytes: usize,
     /// Default `/execute` timeout (seconds).
     pub default_timeout: u64,
