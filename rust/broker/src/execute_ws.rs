@@ -24,7 +24,7 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::extract::ws::rejection::WebSocketUpgradeRejection;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Query, State};
 use axum::http::{HeaderMap, Request};
 use axum::response::Response;
 
@@ -47,9 +47,9 @@ pub async fn execute_get_or_ws(
     if let Ok(upgrade) = ws {
         let identity = terminal_identity_no_path(&query, &headers, &state)?;
         let query_string = req.uri().query().unwrap_or("").to_owned();
-        return Ok(upgrade.on_upgrade(move |socket| {
-            relay_execute(socket, state, identity, "/execute", query_string)
-        }));
+        let path = req.uri().path().to_owned();
+        return Ok(upgrade
+            .on_upgrade(move |socket| relay_execute(socket, state, identity, path, query_string)));
     }
     crate::proxy::proxy_catch_all(crate::auth::Authed, State(state), req).await
 }
@@ -59,7 +59,6 @@ pub async fn execute_get_or_ws(
 pub async fn execute_status_get_or_ws(
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
     State(state): State<AppState>,
-    Path(_process_id): Path<String>,
     Query(query): Query<TerminalWsQuery>,
     headers: HeaderMap,
     req: Request<Body>,
@@ -67,15 +66,11 @@ pub async fn execute_status_get_or_ws(
     if let Ok(upgrade) = ws {
         let identity = terminal_identity_no_path(&query, &headers, &state)?;
         let query_string = req.uri().query().unwrap_or("").to_owned();
-        return Ok(upgrade.on_upgrade(move |socket| {
-            relay_execute(
-                socket,
-                state,
-                identity,
-                "/execute/{id}/status",
-                query_string,
-            )
-        }));
+        // Concrete request path: substitutes the real process id. The literal
+        // template "/execute/{id}/status" dialed a 404/4004 on every stream.
+        let path = req.uri().path().to_owned();
+        return Ok(upgrade
+            .on_upgrade(move |socket| relay_execute(socket, state, identity, path, query_string)));
     }
     crate::proxy::proxy_catch_all(crate::auth::Authed, State(state), req).await
 }
@@ -106,7 +101,7 @@ async fn relay_execute(
     socket: axum::extract::ws::WebSocket,
     state: AppState,
     identity: TerminalIdentity,
-    path: &'static str,
+    path: String,
     query_string: String,
 ) {
     // 1. first-message shared-secret auth (terminal contract).
@@ -124,7 +119,7 @@ async fn relay_execute(
     };
 
     let upstream_path = if query_string.is_empty() {
-        path.to_owned()
+        path
     } else {
         format!("{path}?{query_string}")
     };
