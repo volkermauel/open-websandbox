@@ -77,7 +77,7 @@ pub async fn execute_status_get_or_ws(
 
 /// Identity without a path-session fallback (desktop-relay semantics): the
 /// `/execute*` paths carry process ids, never the chat id.
-/// `upstream_path` always starts with `/` (the relay path consts), so the join
+/// `upstream_path` is the request path, so it always starts with `/`; the join
 /// must NOT add another slash — `ws://ip:8888//execute` 404s on the runtime
 /// (issue #219, production 2026-11-23: OWUI 0.13.4 processes dock dead).
 pub(crate) fn execute_upstream_url(pod_ip: &str, upstream_path: &str) -> String {
