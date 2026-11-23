@@ -24,7 +24,7 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::extract::ws::rejection::WebSocketUpgradeRejection;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Query, State};
 use axum::http::{HeaderMap, Request};
 use axum::response::Response;
 
@@ -47,9 +47,9 @@ pub async fn execute_get_or_ws(
     if let Ok(upgrade) = ws {
         let identity = terminal_identity_no_path(&query, &headers, &state)?;
         let query_string = req.uri().query().unwrap_or("").to_owned();
-        return Ok(upgrade.on_upgrade(move |socket| {
-            relay_execute(socket, state, identity, "/execute", query_string)
-        }));
+        let path = req.uri().path().to_owned();
+        return Ok(upgrade
+            .on_upgrade(move |socket| relay_execute(socket, state, identity, path, query_string)));
     }
     crate::proxy::proxy_catch_all(crate::auth::Authed, State(state), req).await
 }
@@ -59,7 +59,6 @@ pub async fn execute_get_or_ws(
 pub async fn execute_status_get_or_ws(
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
     State(state): State<AppState>,
-    Path(_process_id): Path<String>,
     Query(query): Query<TerminalWsQuery>,
     headers: HeaderMap,
     req: Request<Body>,
@@ -67,21 +66,27 @@ pub async fn execute_status_get_or_ws(
     if let Ok(upgrade) = ws {
         let identity = terminal_identity_no_path(&query, &headers, &state)?;
         let query_string = req.uri().query().unwrap_or("").to_owned();
-        return Ok(upgrade.on_upgrade(move |socket| {
-            relay_execute(
-                socket,
-                state,
-                identity,
-                "/execute/{id}/status",
-                query_string,
-            )
-        }));
+        // Concrete request path: substitutes the real process id. The literal
+        // template "/execute/{id}/status" dialed a 404/4004 on every stream.
+        let path = req.uri().path().to_owned();
+        return Ok(upgrade
+            .on_upgrade(move |socket| relay_execute(socket, state, identity, path, query_string)));
     }
     crate::proxy::proxy_catch_all(crate::auth::Authed, State(state), req).await
 }
 
 /// Identity without a path-session fallback (desktop-relay semantics): the
 /// `/execute*` paths carry process ids, never the chat id.
+/// `upstream_path` is the request path, so it always starts with `/`; the join
+/// must NOT add another slash — `ws://ip:8888//execute` 404s on the runtime
+/// (issue #219, production 2026-11-23: OWUI 0.13.4 processes dock dead).
+pub(crate) fn execute_upstream_url(pod_ip: &str, upstream_path: &str) -> String {
+    format!(
+        "ws://{pod_ip}:{}{upstream_path}",
+        crate::proxy::RUNTIME_PORT
+    )
+}
+
 fn terminal_identity_no_path(
     query: &TerminalWsQuery,
     headers: &HeaderMap,
@@ -96,7 +101,7 @@ async fn relay_execute(
     socket: axum::extract::ws::WebSocket,
     state: AppState,
     identity: TerminalIdentity,
-    path: &'static str,
+    path: String,
     query_string: String,
 ) {
     // 1. first-message shared-secret auth (terminal contract).
@@ -114,7 +119,7 @@ async fn relay_execute(
     };
 
     let upstream_path = if query_string.is_empty() {
-        path.to_owned()
+        path
     } else {
         format!("{path}?{query_string}")
     };
@@ -150,12 +155,7 @@ async fn relay_execute(
     };
 
     // 4. connect the runtime stream and relay frames until either side ends.
-    let upstream_url = format!(
-        "ws://{}:{}/{}",
-        resolved.pod_ip,
-        crate::proxy::RUNTIME_PORT,
-        upstream_path
-    );
+    let upstream_url = execute_upstream_url(&resolved.pod_ip, &upstream_path);
     relay_to_upstream_with_touch(
         client,
         &upstream_url,
@@ -164,4 +164,22 @@ async fn relay_execute(
         upstream_touch,
     )
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::execute_upstream_url;
+
+    #[test]
+    fn upstream_url_is_single_slashed() {
+        let url = execute_upstream_url("10.0.0.7", "/execute?user_id=u1");
+        assert_eq!(url, "ws://10.0.0.7:8888/execute?user_id=u1");
+        assert!(!url.contains("//e"), "double slash dials a 404: {url}");
+    }
+
+    #[test]
+    fn upstream_url_status_stream_single_slashed() {
+        let url = execute_upstream_url("10.0.0.7", "/execute/9/status?offset=0");
+        assert_eq!(url, "ws://10.0.0.7:8888/execute/9/status?offset=0");
+    }
 }
