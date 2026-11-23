@@ -82,6 +82,16 @@ pub async fn execute_status_get_or_ws(
 
 /// Identity without a path-session fallback (desktop-relay semantics): the
 /// `/execute*` paths carry process ids, never the chat id.
+/// `upstream_path` always starts with `/` (the relay path consts), so the join
+/// must NOT add another slash — `ws://ip:8888//execute` 404s on the runtime
+/// (issue #219, production 2026-11-23: OWUI 0.13.4 processes dock dead).
+pub(crate) fn execute_upstream_url(pod_ip: &str, upstream_path: &str) -> String {
+    format!(
+        "ws://{pod_ip}:{}{upstream_path}",
+        crate::proxy::RUNTIME_PORT
+    )
+}
+
 fn terminal_identity_no_path(
     query: &TerminalWsQuery,
     headers: &HeaderMap,
@@ -150,12 +160,7 @@ async fn relay_execute(
     };
 
     // 4. connect the runtime stream and relay frames until either side ends.
-    let upstream_url = format!(
-        "ws://{}:{}/{}",
-        resolved.pod_ip,
-        crate::proxy::RUNTIME_PORT,
-        upstream_path
-    );
+    let upstream_url = execute_upstream_url(&resolved.pod_ip, &upstream_path);
     relay_to_upstream_with_touch(
         client,
         &upstream_url,
@@ -164,4 +169,22 @@ async fn relay_execute(
         upstream_touch,
     )
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::execute_upstream_url;
+
+    #[test]
+    fn upstream_url_is_single_slashed() {
+        let url = execute_upstream_url("10.0.0.7", "/execute?user_id=u1");
+        assert_eq!(url, "ws://10.0.0.7:8888/execute?user_id=u1");
+        assert!(!url.contains("//e"), "double slash dials a 404: {url}");
+    }
+
+    #[test]
+    fn upstream_url_status_stream_single_slashed() {
+        let url = execute_upstream_url("10.0.0.7", "/execute/9/status?offset=0");
+        assert_eq!(url, "ws://10.0.0.7:8888/execute/9/status?offset=0");
+    }
 }
